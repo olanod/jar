@@ -297,6 +297,59 @@ If the PVM runs and produces correct side-effects but the state root doesn't
 match, the issue is likely in state serialization (`T(σ)`) or Merklization.
 Use `dump_state.py` to compare individual state components.
 
+### Sorted output ordering (LE bytes vs numeric)
+
+When the Gray Paper specifies "sorted" sequences keyed by service ID, the sort
+must be by **numeric** service ID value, not by the little-endian byte encoding.
+LE byte sort and numeric sort differ because LE reverses byte significance:
+`sid=2068330841 (0x7B483959)` encodes as `[0x59, 0x39, 0x48, 0x7B]` which
+sorts before `sid=1213618014 (0x4856575E)` → `[0x5E, 0x57, 0x56, 0x48]` in
+byte order, but numerically 1213618014 < 2068330841.
+
+This affected the accumulation output hash (θ) — the Keccak Merkle root over
+yield outputs was computed over incorrectly-sorted leaves.
+
+## Lessons Learned
+
+### 1. Use `compare_with_ref.py` as the primary diagnostic
+
+The single most effective debugging technique is comparing Grey's state KV pairs
+with a reference implementation (Jamzig) at the exact block where divergence
+starts. This immediately shows which state component(s) differ, often pointing
+directly to the root cause. For service accounts, field-level diffs (balance,
+gas, items, etc.) narrow the search even further.
+
+### 2. Memory access faults have highest priority in host calls
+
+The Gray Paper's host-call definitions list operations in a specific order. Memory
+reads come first, and if memory is inaccessible, the PVM must PANIC regardless of
+whether other checks (privilege, core validity, service existence) would also fail.
+This is not explicitly stated as a rule — it follows from the mathematical
+formulation where each condition is checked in sequence.
+
+### 3. Small differences cascade
+
+A single incorrect host-call return (HUH instead of PANIC) causes the PVM to
+continue executing with wrong state, which compounds through subsequent blocks.
+Blocks 64-67 all failed from the same root cause. Similarly, an incorrect sort
+order in the output hash caused every subsequent block with yields to diverge.
+
+### 4. Spec-level ambiguities are real
+
+The Gray Paper is mathematically precise but some definitions have edge cases:
+- `sbrk(0)` is undefined (min of empty set) — all implementations use a
+  heap-pointer tracking model instead
+- Check ordering in host calls is implicit in the equation structure, not
+  explicitly stated as a requirement
+
+### 5. Trace infrastructure matters
+
+Early debugging sessions were hampered by PVM trace files overwriting each other
+(fixed filename for multiple accumulations). Use unique filenames keyed on
+distinguishing parameters (service ID, timeslot, gas budget) to avoid this.
+
 ## Conformance Status
 
-See [README.md](../README.md) for current pass/fail counts.
+**101/101 blocks passing** on the `0.7.2/no_forks` trace (tiny config).
+
+See [README.md](../README.md) for current status.
