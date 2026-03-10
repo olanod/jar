@@ -7,3 +7,16 @@ defaultTargets = ["Jar"]
 [[lean_lib]]
 name = "Jar"
 roots = ["Jar"]
+
+[[require]]
+name = "verso"
+git = "https://github.com/leanprover/verso"
+rev = "v4.27.0"
+
+[[lean_lib]]
+name = "JarBook"
+roots = ["JarBook"]
+
+[[lean_exe]]
+name = "jarbook"
+root = "JarBookMain"

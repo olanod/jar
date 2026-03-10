@@ -189,7 +189,7 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
   let mkResult (regs' : PVM.Registers) (mem' : PVM.Memory) (gas' : Gas) : PVM.InvocationResult :=
     { exitReason := .hostCall callId  -- signals "continue" to the loop
       exitValue := if 7 < regs'.size then regs'[7]! else 0
-      gas := Int64.mk gas'
+      gas := Int64.ofUInt64 gas'
       registers := regs'
       memory := mem' }
   let setR7 (r : PVM.Registers) (v : UInt64) := setReg r 7 v
@@ -585,7 +585,7 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
         else
           -- Read memo from memory (W_T = 128 bytes)
           let memoBytes := match PVM.readByteArray mem memoPtr W_T with
-            | .ok m => m | _ => ByteArray.mk (Array.mkArray W_T 0)
+            | .ok m => m | _ => ByteArray.mk (Array.replicate W_T 0)
           let memoSeq : OctetSeq W_T := ⟨memoBytes, sorry⟩  -- size proof elided
           let xfer : DeferredTransfer := {
             source := ctx.serviceId, dest, amount
@@ -821,7 +821,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
       | some (prog, regs, mem) =>
         -- Run PVM with host-call dispatch via handleHostCall
         let (result, ctx') := PVM.runWithHostCalls AccContext
-          prog 0 regs mem (Int64.mk totalGas)
+          prog 0 regs mem (Int64.ofUInt64 totalGas)
           (fun callId gas regs' mem' c =>
             handleHostCall callId gas regs' mem' c)
           ctx

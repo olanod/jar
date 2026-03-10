@@ -39,7 +39,7 @@ def sext32 (x : UInt64) : UInt64 := sext 4 x
 
 /-- Convert unsigned 64-bit to signed interpretation. GP eq (158).
     sign(x) = x if x < 2^63, else x - 2^64. -/
-def toSigned (x : UInt64) : Int64 := Int64.mk x
+def toSigned (x : UInt64) : Int64 := Int64.ofUInt64 x
 
 /-- Convert signed back to unsigned. -/
 def toUnsigned (x : Int64) : UInt64 := x.toUInt64

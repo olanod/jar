@@ -69,7 +69,7 @@ def run (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory)
         | .continue pc' regs' mem' =>
           go pc' regs' mem' gas' fuel'
   -- Use gas as fuel bound (can't execute more steps than gas available)
-  go pc regs mem gas (gas.toNat + 1)
+  go pc regs mem gas (gas.toUInt64.toNat + 1)
 
 -- ============================================================================
 -- Standard Program Initialization — GP eq (A.37-A.43)
@@ -104,10 +104,10 @@ def initStandard (blob : ByteArray) (args : ByteArray)
   let bitmaskLen := (codeLen + 7) / 8
   let bitmask := if bitmaskStart + bitmaskLen <= blob.size then
     blob.extract bitmaskStart (bitmaskStart + bitmaskLen)
-  else ByteArray.mk (Array.mkArray bitmaskLen 0)
+  else ByteArray.mk (Array.replicate bitmaskLen 0)
 
   -- Build jump table (simplified: sequential entries from read-only data)
-  let jumpTable := Array.mkArray jumpEntries 0
+  let jumpTable := Array.replicate jumpEntries 0
 
   let prog : ProgramBlob := { code, bitmask, jumpTable := jumpTable.map UInt32.ofNat }
 
@@ -118,7 +118,7 @@ def initStandard (blob : ByteArray) (args : ByteArray)
   -- [2^32 - 2*Z_Z - Z_I, 2^32 - Z_Z - Z_I): stack (writable)
   -- [2^32 - Z_Z - Z_I, 2^32 - Z_Z - Z_I + |args|): arguments (read-only)
   let totalPages := 2^32 / Z_P
-  let access := Array.mkArray totalPages PageAccess.inaccessible
+  let access := Array.replicate totalPages PageAccess.inaccessible
   -- Mark read-only pages
   let roPageStart := Z_Z / Z_P
   let roPages := (roLen + Z_P - 1) / Z_P
@@ -161,7 +161,7 @@ def initStandard (blob : ByteArray) (args : ByteArray)
   -- Initialize memory contents (simplified: zero-filled, then copy data)
   -- In practice, we'd copy o, w, and args into the right locations.
   -- For now, use a sparse representation via ByteArray.
-  let memValue := ByteArray.mk (Array.mkArray (2^32) 0)
+  let memValue := ByteArray.mk (Array.replicate (2^32) 0)
   -- Copy read-only data
   let memValue := Id.run do
     let mut m := memValue
@@ -192,7 +192,7 @@ def initStandard (blob : ByteArray) (args : ByteArray)
   let memory : Memory := { value := memValue, access }
 
   -- Registers: GP eq (803-807)
-  let regs := Array.mkArray PVM_REGISTERS (0 : RegisterValue)
+  let regs := Array.replicate PVM_REGISTERS (0 : RegisterValue)
   let regs := regs.set! 0 (UInt64.ofNat (2^32 - 2^16))        -- PC base
   let regs := regs.set! 1 (UInt64.ofNat heapStart)              -- heap base
   let regs := regs.set! 7 (UInt64.ofNat stackBase)              -- stack pointer
@@ -230,7 +230,7 @@ def runWithHostCalls (ctx : Type) [Inhabited ctx]
           go pc result'.registers result'.memory result'.gas context' fuel'
         | _ => (result', context')
       | _ => (result, context)
-  go pc regs mem gas context (gas.toNat + 1)
+  go pc regs mem gas context (gas.toUInt64.toNat + 1)
 
 -- ============================================================================
 -- Standard Invocations — GP Appendix B
@@ -244,7 +244,7 @@ def invokeStd (blob : ByteArray) (gasLimit : Gas) (input : ByteArray)
   match initStandard blob input with
   | none => (0, .inr .panic)
   | some (prog, regs, mem) =>
-    let result := run prog 0 regs mem (Int64.mk gasLimit)
+    let result := run prog 0 regs mem (Int64.ofUInt64 gasLimit)
     match result.exitReason with
     | .halt =>
       -- Output is in memory at the address in reg[10], length in reg[11]

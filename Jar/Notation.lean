@@ -141,14 +141,11 @@ structure OctetSeq (n : Nat) where
   data : ByteArray
   size_eq : data.size = n
 
-instance : BEq ByteArray where
-  beq a b := a.data == b.data
-
 instance (n : Nat) : BEq (OctetSeq n) where
   beq a b := a.data == b.data
 
 instance (n : Nat) : Inhabited (OctetSeq n) where
-  default := ⟨⟨Array.mkArray n 0⟩, by simp [ByteArray.size, Array.size_mkArray]⟩
+  default := ⟨⟨.replicate n 0⟩, by simp [ByteArray.size]⟩
 
 -- ============================================================================
 -- §3.8 — Cryptographic types (algorithms in Jar.Crypto)

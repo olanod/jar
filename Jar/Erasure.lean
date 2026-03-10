@@ -56,7 +56,7 @@ opaque gfInv (a : GF16) : GF16 := 0
 
 /-- Cantor basis vectors v_0 through v_15 for GF(2^16).
     Used to convert between standard and Cantor basis representations. -/
-opaque cantorBasis : Array GF16 := Array.mkArray 16 0
+opaque cantorBasis : Array GF16 := Array.replicate 16 0
 
 /-- Convert a 16-bit natural to GF(2^16) element using Cantor basis.
     ĩ = Σ(j=0..15) i_j × v_j where i_j are the bits of i. -/
@@ -71,7 +71,7 @@ opaque toCantor (n : Nat) : GF16 := 0
     Output: 1023 chunks of 2k octets each.
     The first 342 chunks are the original data (systematic). -/
 opaque erasureCode (k : Nat) (data : ByteArray) : Array ByteArray :=
-  Array.mkArray totalCodewords ByteArray.empty
+  Array.replicate totalCodewords ByteArray.empty
 
 /-- R_k(chunks) : Recover original data from any 342 chunks. GP Appendix H eq (H.5).
     Input: at least 342 (chunk, index) pairs.

@@ -62,7 +62,7 @@ def updateParentStateRoot (bs : RecentHistory) (h : Header) : RecentHistory :=
   if hne : bs.blocks.size = 0 then bs
   else
     let idx := bs.blocks.size - 1
-    have hidx : idx < bs.blocks.size := Nat.sub_one_lt hne
+    have hidx : idx < bs.blocks.size := by omega
     let last := bs.blocks[idx]
     let last' : RecentBlockInfo := {
       headerHash := last.headerHash
@@ -388,7 +388,7 @@ def updateStatistics
     (accStats : Dict ServiceId ServiceStatistics) : ActivityStatistics :=
   let epochChanged := isEpochChange t t'
   let (cur, prev) := if epochChanged
-    then (Array.mkArray V ValidatorRecord.zero, pi.current)
+    then (Array.replicate V ValidatorRecord.zero, pi.current)
     else (pi.current, pi.previous)
 
   -- §13.1: Block author stats
@@ -434,7 +434,7 @@ def updateStatistics
 
   -- §13.2: Core statistics — compute from guarantees
   let coreStats := if epochChanged
-    then Array.mkArray C CoreStatistics.zero
+    then Array.replicate C CoreStatistics.zero
     else pi.coreStats
   let coreStats := e.guarantees.foldl (init := coreStats) fun cs g =>
     let cIdx := g.report.coreIndex.val
@@ -514,7 +514,7 @@ def validateHeader (s : State) (h : Header) : Bool :=
   let parentOk := if hn : s.recent.blocks.size = 0 then true
   else
     let idx := s.recent.blocks.size - 1
-    have : idx < s.recent.blocks.size := Nat.sub_one_lt hn
+    have : idx < s.recent.blocks.size := by omega
     let lastBlock := s.recent.blocks[idx]
     h.parent == lastBlock.headerHash
 

@@ -178,7 +178,7 @@ def readByteArray (m : Memory) (addr : UInt64) (n : Nat) : MemResult ByteArray :
     | .ok () =>
       let base := addr.toNat % (2^32)
       let bytes := Id.run do
-        let mut arr := ByteArray.mkEmpty n
+        let mut arr := ByteArray.emptyWithCapacity n
         for i in [:n] do
           let idx := (base + i) % (2^32)
           let b := if idx < m.value.size then m.value.get! idx else 0

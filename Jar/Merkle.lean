@@ -62,7 +62,7 @@ private def setBit (data : ByteArray) (bitIdx : Nat) (val : Bool) : ByteArray :=
     Bit 0 = 0 (branch marker). Bits 1-255 = left hash bits 1-255 (skip MSB).
     Bits 256-511 = all 256 bits of right hash. -/
 def encodeBranch (left right : Hash) : OctetSeq 64 :=
-  let out := ByteArray.mk (Array.mkArray 64 0)
+  let out := ByteArray.mk (Array.replicate 64 0)
   -- Bit 0 = 0 (already zero)
   -- Copy left hash bits 1..255 into output bits 1..255
   let out := Id.run do
@@ -82,7 +82,7 @@ def encodeBranch (left right : Hash) : OctetSeq 64 :=
     If |v| ≤ 32 (embedded): [1,0] ∥ |v|(6 bits) ∥ key(248 bits) ∥ v_padded(256 bits).
     If |v| > 32 (regular):  [1,1,0,0,0,0,0,0] ∥ key(248 bits) ∥ H(v)(256 bits). -/
 def encodeLeaf (key : OctetSeq 31) (value : ByteArray) : OctetSeq 64 :=
-  let out := ByteArray.mk (Array.mkArray 64 0)
+  let out := ByteArray.mk (Array.replicate 64 0)
   if value.size <= 32 then
     -- Embedded leaf
     -- Bit 0 = 1 (leaf), Bit 1 = 0 (embedded)
@@ -102,7 +102,7 @@ def encodeLeaf (key : OctetSeq 31) (value : ByteArray) : OctetSeq 64 :=
         o := setBit o (8 + i) (getBit key.data i)
       return o
     -- Bits 256-511: value zero-padded to 32 bytes
-    let padded := value ++ ByteArray.mk (Array.mkArray (32 - value.size) 0)
+    let padded := value ++ ByteArray.mk (Array.replicate (32 - value.size) 0)
     let out := Id.run do
       let mut o := out
       for i in [:256] do
@@ -218,7 +218,7 @@ def binaryMerkleRoot (items : Array Hash) : Hash :=
 def constDepthMerkleRoot (items : Array Hash) (depth : Nat) : Hash :=
   let targetSize := 2^depth
   let padded := if items.size < targetSize then
-    items ++ Array.mkArray (targetSize - items.size) Hash.zero
+    items ++ Array.replicate (targetSize - items.size) Hash.zero
   else items.extract 0 targetSize
   binaryMerkleRoot padded
 
