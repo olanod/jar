@@ -14,6 +14,12 @@ const BLOCKS_TOPIC: &str = "/jam/blocks/1";
 /// Gossipsub topic for finality votes.
 const FINALITY_TOPIC: &str = "/jam/finality/1";
 
+/// Gossipsub topic for work report guarantees.
+const GUARANTEES_TOPIC: &str = "/jam/guarantees/1";
+
+/// Gossipsub topic for availability assurances.
+const ASSURANCES_TOPIC: &str = "/jam/assurances/1";
+
 /// Messages that the network service can send to the node.
 #[derive(Debug, Clone)]
 pub enum NetworkEvent {
@@ -21,6 +27,10 @@ pub enum NetworkEvent {
     BlockReceived { data: Vec<u8>, source: PeerId },
     /// A finality vote was received from a peer.
     FinalityVote { data: Vec<u8>, source: PeerId },
+    /// A work report guarantee was received from a peer.
+    GuaranteeReceived { data: Vec<u8>, source: PeerId },
+    /// An availability assurance was received from a peer.
+    AssuranceReceived { data: Vec<u8>, source: PeerId },
 }
 
 /// Commands that the node can send to the network service.
@@ -30,6 +40,10 @@ pub enum NetworkCommand {
     BroadcastBlock { data: Vec<u8> },
     /// Broadcast a finality vote.
     BroadcastFinalityVote { data: Vec<u8> },
+    /// Broadcast a work report guarantee.
+    BroadcastGuarantee { data: Vec<u8> },
+    /// Broadcast an availability assurance.
+    BroadcastAssurance { data: Vec<u8> },
 }
 
 /// Configuration for the network service.
@@ -63,6 +77,8 @@ pub async fn start_network(
     // Subscribe to topics
     let blocks_topic = gossipsub::IdentTopic::new(BLOCKS_TOPIC);
     let finality_topic = gossipsub::IdentTopic::new(FINALITY_TOPIC);
+    let guarantees_topic = gossipsub::IdentTopic::new(GUARANTEES_TOPIC);
+    let assurances_topic = gossipsub::IdentTopic::new(ASSURANCES_TOPIC);
 
     swarm
         .behaviour_mut()
@@ -74,6 +90,16 @@ pub async fn start_network(
         .gossipsub
         .subscribe(&finality_topic)
         .map_err(|e| format!("Failed to subscribe to finality topic: {e}"))?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&guarantees_topic)
+        .map_err(|e| format!("Failed to subscribe to guarantees topic: {e}"))?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&assurances_topic)
+        .map_err(|e| format!("Failed to subscribe to assurances topic: {e}"))?;
 
     // Listen on the configured port
     let listen_addr: Multiaddr = format!("/ip4/127.0.0.1/tcp/{}", config.listen_port)
@@ -107,9 +133,14 @@ pub async fn start_network(
 
     // Spawn the network event loop
     let validator_index = config.validator_index;
+    let topics = TopicSet {
+        blocks: blocks_topic,
+        finality: finality_topic,
+        guarantees: guarantees_topic,
+        assurances: assurances_topic,
+    };
     tokio::spawn(async move {
-        run_network_loop(swarm, event_tx, cmd_rx, blocks_topic, finality_topic, validator_index)
-            .await;
+        run_network_loop(swarm, event_tx, cmd_rx, topics, validator_index).await;
     });
 
     Ok((event_rx, cmd_tx))
@@ -120,6 +151,14 @@ pub async fn start_network(
 struct JamBehaviour {
     gossipsub: gossipsub::Behaviour,
     identify: identify::Behaviour,
+}
+
+/// All gossipsub topics in one struct for passing around.
+struct TopicSet {
+    blocks: gossipsub::IdentTopic,
+    finality: gossipsub::IdentTopic,
+    guarantees: gossipsub::IdentTopic,
+    assurances: gossipsub::IdentTopic,
 }
 
 fn build_swarm() -> Result<Swarm<JamBehaviour>, Box<dyn std::error::Error + Send + Sync>> {
@@ -171,8 +210,7 @@ async fn run_network_loop(
     mut swarm: Swarm<JamBehaviour>,
     event_tx: mpsc::UnboundedSender<NetworkEvent>,
     mut cmd_rx: mpsc::UnboundedReceiver<NetworkCommand>,
-    blocks_topic: gossipsub::IdentTopic,
-    finality_topic: gossipsub::IdentTopic,
+    topics: TopicSet,
     validator_index: u16,
 ) {
     loop {
@@ -193,6 +231,16 @@ async fn run_network_loop(
                             });
                         } else if topic == FINALITY_TOPIC {
                             let _ = event_tx.send(NetworkEvent::FinalityVote {
+                                data: message.data,
+                                source: propagation_source,
+                            });
+                        } else if topic == GUARANTEES_TOPIC {
+                            let _ = event_tx.send(NetworkEvent::GuaranteeReceived {
+                                data: message.data,
+                                source: propagation_source,
+                            });
+                        } else if topic == ASSURANCES_TOPIC {
+                            let _ = event_tx.send(NetworkEvent::AssuranceReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
@@ -229,7 +277,7 @@ async fn run_network_loop(
                 match cmd {
                     NetworkCommand::BroadcastBlock { data } => {
                         if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            blocks_topic.clone(),
+                            topics.blocks.clone(),
                             data,
                         ) {
                             tracing::warn!(
@@ -241,11 +289,35 @@ async fn run_network_loop(
                     }
                     NetworkCommand::BroadcastFinalityVote { data } => {
                         if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            finality_topic.clone(),
+                            topics.finality.clone(),
                             data,
                         ) {
                             tracing::warn!(
                                 "Validator {} failed to publish finality vote: {}",
+                                validator_index,
+                                e
+                            );
+                        }
+                    }
+                    NetworkCommand::BroadcastGuarantee { data } => {
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
+                            topics.guarantees.clone(),
+                            data,
+                        ) {
+                            tracing::warn!(
+                                "Validator {} failed to publish guarantee: {}",
+                                validator_index,
+                                e
+                            );
+                        }
+                    }
+                    NetworkCommand::BroadcastAssurance { data } => {
+                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
+                            topics.assurances.clone(),
+                            data,
+                        ) {
+                            tracing::warn!(
+                                "Validator {} failed to publish assurance: {}",
                                 validator_index,
                                 e
                             );

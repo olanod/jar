@@ -6,14 +6,16 @@
 //! 3. Import blocks received from peers
 //! 4. Track finalization
 //! 5. Propagate blocks via the network
+//! 6. Process work packages and generate guarantees/assurances
 
+use crate::guarantor::{self, GuarantorState};
 use grey_codec::header_codec::compute_header_hash;
 use grey_consensus::authoring;
 use grey_consensus::genesis::ValidatorSecrets;
 use grey_network::service::{NetworkCommand, NetworkConfig, NetworkEvent};
 use grey_store::Store;
 use grey_types::config::Config;
-use grey_types::header::Block;
+use grey_types::header::{Assurance, Block, Guarantee};
 use grey_types::state::State;
 use grey_types::{BandersnatchPublicKey, Hash, Timeslot};
 use std::path::Path;
@@ -139,6 +141,11 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     let mut blocks_imported = 0u64;
     let genesis_time = config.genesis_time;
 
+    // Guarantor state: pending guarantees and availability tracking
+    let mut guarantor_state = GuarantorState::new();
+    // Collected assurances from peers for block inclusion
+    let mut collected_assurances: Vec<Assurance> = Vec::new();
+
     tracing::info!(
         "Validator {} node started, genesis_time={}",
         config.validator_index,
@@ -163,6 +170,34 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
 
                 // Only attempt authoring if this is a new slot we haven't authored yet
                 if current_slot > state.timeslot && current_slot > last_authored_slot {
+                    // Generate our own assurance before authoring
+                    let parent_hash = state
+                        .recent_blocks
+                        .headers
+                        .last()
+                        .map(|h| h.header_hash)
+                        .unwrap_or(Hash::ZERO);
+
+                    if let Some(my_assurance) = guarantor_state.generate_assurance(
+                        protocol,
+                        &parent_hash,
+                        config.validator_index,
+                        my_secrets,
+                        &state,
+                    ) {
+                        tracing::info!(
+                            "Validator {} generated assurance for {} cores",
+                            config.validator_index,
+                            my_assurance.bitfield.iter().map(|b| b.count_ones()).sum::<u32>()
+                        );
+                        // Broadcast our assurance
+                        let assurance_data = guarantor::encode_assurance(&my_assurance);
+                        let _ = net_commands.send(NetworkCommand::BroadcastAssurance {
+                            data: assurance_data,
+                        });
+                        collected_assurances.push(my_assurance);
+                    }
+
                     // Check if we are the slot author
                     if let Some(author_idx) = authoring::is_slot_author(
                         &state,
@@ -176,17 +211,36 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                             current_slot
                         );
 
+                        // Collect guarantees and assurances for this block
+                        let guarantees = guarantor_state.take_guarantees();
+                        let assurances = std::mem::take(&mut collected_assurances);
+
+                        if !guarantees.is_empty() {
+                            tracing::info!(
+                                "Including {} guarantees in block",
+                                guarantees.len()
+                            );
+                        }
+                        if !assurances.is_empty() {
+                            tracing::info!(
+                                "Including {} assurances in block",
+                                assurances.len()
+                            );
+                        }
+
                         // Compute state root (simplified: hash of timeslot for now)
                         let state_root = compute_state_root(&state);
 
-                        // Author block
-                        let block = authoring::author_block(
+                        // Author block with guarantees and assurances
+                        let block = authoring::author_block_with_extrinsics(
                             &state,
                             protocol,
                             current_slot,
                             author_idx,
                             my_secrets,
                             state_root,
+                            guarantees,
+                            assurances,
                         );
 
                         // Apply block to our state
@@ -319,6 +373,29 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                     NetworkEvent::FinalityVote { .. } => {
                         // Simplified: we don't process explicit finality votes yet
                     }
+                    NetworkEvent::GuaranteeReceived { data, source } => {
+                        tracing::info!(
+                            "Validator {} received guarantee from {}",
+                            config.validator_index,
+                            source
+                        );
+                        guarantor::handle_received_guarantee(
+                            &data,
+                            &mut guarantor_state,
+                            &store,
+                        );
+                    }
+                    NetworkEvent::AssuranceReceived { data, source } => {
+                        tracing::debug!(
+                            "Validator {} received assurance from {}",
+                            config.validator_index,
+                            source
+                        );
+                        guarantor::handle_received_assurance(
+                            &data,
+                            &mut collected_assurances,
+                        );
+                    }
                 }
             }
 
@@ -338,7 +415,27 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                 config.validator_index,
                                 hex::encode(&hash.0[..8])
                             );
-                            // TODO: queue for refinement in Phase 3
+
+                            // Deserialize the work package
+                            match serde_json::from_slice::<serde_json::Value>(&data) {
+                                Ok(_wp_json) => {
+                                    tracing::info!(
+                                        "Work package received (raw bytes: {} bytes). \
+                                         Full deserialization requires JAM codec work-package decode.",
+                                        data.len()
+                                    );
+                                    // TODO: Decode work package from JAM codec bytes
+                                    // and call guarantor::process_work_package()
+                                    // For now, log and continue — the refine pipeline
+                                    // is called when we have a proper WorkPackage struct.
+                                }
+                                Err(_) => {
+                                    tracing::info!(
+                                        "Work package: {} raw bytes (binary format)",
+                                        data.len()
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -425,4 +522,3 @@ fn decode_block_message(data: &[u8]) -> Option<(Block, Hash)> {
 
     Some((block, Hash(header_hash)))
 }
-

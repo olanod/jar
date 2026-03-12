@@ -3,6 +3,7 @@
 //! This is the main entry point for the Grey node implementation.
 //! See the Gray Paper v0.7.2 for the full specification.
 
+mod guarantor;
 mod node;
 mod testnet;
 
