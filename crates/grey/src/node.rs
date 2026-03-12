@@ -11,6 +11,7 @@
 use crate::audit::{self, AuditState};
 use crate::finality::{self, GrandpaState};
 use crate::guarantor::{self, GuarantorState};
+use crate::tickets::{self, TicketState};
 use grey_codec::header_codec::compute_header_hash;
 use grey_consensus::authoring;
 use grey_consensus::genesis::ValidatorSecrets;
@@ -121,6 +122,8 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     let mut collected_assurances: Vec<Assurance> = Vec::new();
     // Audit state: tranche-based audit of guaranteed work reports
     let mut audit_state = AuditState::new();
+    // Ticket state: Safrole ticket generation and collection
+    let mut ticket_state = TicketState::new();
 
     tracing::info!(
         "Validator {} node started, genesis_time={}",
@@ -174,6 +177,29 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         collected_assurances.push(my_assurance);
                     }
 
+                    // Generate and broadcast tickets if in submission window
+                    ticket_state.check_epoch(current_slot, protocol);
+                    if tickets::is_ticket_submission_window(current_slot, protocol) {
+                        let new_tickets = ticket_state.generate_tickets(
+                            protocol,
+                            &state,
+                            my_secrets,
+                        );
+                        for ticket in &new_tickets {
+                            let ticket_data = tickets::encode_ticket_proof(ticket);
+                            let _ = net_commands.send(NetworkCommand::BroadcastTicket {
+                                data: ticket_data,
+                            });
+                        }
+                        if !new_tickets.is_empty() {
+                            tracing::info!(
+                                "Validator {} generated {} ticket proofs",
+                                config.validator_index,
+                                new_tickets.len()
+                            );
+                        }
+                    }
+
                     // Check if we are the slot author
                     if let Some(author_idx) = authoring::is_slot_author(
                         &state,
@@ -207,7 +233,16 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         // Compute state root (simplified: hash of timeslot for now)
                         let state_root = compute_state_root(&state);
 
-                        // Author block with guarantees and assurances
+                        // Collect tickets for block inclusion
+                        let block_tickets = ticket_state.take_tickets_for_block(protocol);
+                        if !block_tickets.is_empty() {
+                            tracing::info!(
+                                "Including {} tickets in block",
+                                block_tickets.len()
+                            );
+                        }
+
+                        // Author block with guarantees, assurances, and tickets
                         let block = authoring::author_block_with_extrinsics(
                             &state,
                             protocol,
@@ -217,6 +252,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                             state_root,
                             guarantees,
                             assurances,
+                            block_tickets,
                         );
 
                         // Apply block to our state
@@ -580,6 +616,17 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                             encode_block_message(&block, &hash)
                         });
                         let _ = response_tx.send(block_data);
+                    }
+                    NetworkEvent::TicketReceived { data, source } => {
+                        if let Some(proof) = tickets::decode_ticket_proof(&data) {
+                            if ticket_state.add_ticket(proof, protocol, &state) {
+                                tracing::debug!(
+                                    "Validator {} received ticket from {}",
+                                    config.validator_index,
+                                    source
+                                );
+                            }
+                        }
                     }
                     NetworkEvent::PeerIdentified { peer_id, validator_index: vi } => {
                         tracing::info!(

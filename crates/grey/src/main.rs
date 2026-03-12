@@ -8,6 +8,7 @@ mod finality;
 mod guarantor;
 mod node;
 mod testnet;
+mod tickets;
 
 use clap::Parser;
 use grey_types::config::Config;

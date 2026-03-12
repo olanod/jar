@@ -226,7 +226,7 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
 
                 let block = grey_consensus::authoring::author_block_with_extrinsics(
                     &state, &config, slot, author_idx, s, state_root,
-                    guarantees, assurances,
+                    guarantees, assurances, vec![],
                 );
 
                 match grey_state::transition::apply_with_config(&state, &block, &config, &[]) {
