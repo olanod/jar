@@ -530,6 +530,11 @@ impl RecompiledPvm {
     pub fn set_gas(&mut self, gas: Gas) {
         self.ctx.gas = gas as i64;
     }
+
+    /// Get the native code bytes (for disassembly / debugging).
+    pub fn native_code_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.native_code.ptr, self.native_code.len) }
+    }
 }
 
 impl Drop for RecompiledPvm {

@@ -5,12 +5,21 @@ A JAM (Join-Accumulate Machine) blockchain node implementation in Rust, followin
 ## Highlights
 
 - **313 tests passing** across all crates, **101/101 conformance blocks**
-- **PVM interpreter faster than polkavm** — grey's from-scratch interpreter beats polkavm v0.30.0's interpreter on both compute and host-call workloads:
+- **PVM recompiler faster than polkavm's compiler** — grey's x86-64 JIT recompiler outperforms polkavm v0.30.0's compiler backend on both compute and host-call workloads (including compilation time in each iteration):
+
+  | Benchmark | Grey Recompiler | PolkaVM Compiler | Result |
+  |-----------|-----------------|------------------|--------|
+  | Fibonacci (1M iter) | 425 us | 445 us | **Grey 5% faster** |
+  | Host calls (100K ecalli) | 679 us | 3,331 us | **Grey 4.9x faster** |
+
+  Key optimizations: per-basic-block gas metering with fused `sub [mem], imm` + `js` (2 instructions), cold OOG stubs to keep PC stores off the hot path, `inc`/`dec` for +1/-1, register-mapped PVM state. Benchmarks include full compile+execute each iteration (realistic JAM model where each work-package is compiled fresh). See [docs/pvm-recompiler-optimization.md](docs/pvm-recompiler-optimization.md) for details.
+
+- **PVM interpreter also faster than polkavm** — grey's interpreter beats polkavm's interpreter:
 
   | Benchmark | Grey | PolkaVM | Result |
   |-----------|------|---------|--------|
-  | Fibonacci (1M iter) | 8.8ms | 9.1ms | **Grey 1.04x faster** |
-  | Host calls (100K ecalli) | 0.82ms | 2.5ms | **Grey 3.0x faster** |
+  | Fibonacci (1M iter) | 10.8 ms | 9.4 ms | PolkaVM 1.15x faster |
+  | Host calls (100K ecalli) | 0.91 ms | 2.6 ms | **Grey 2.9x faster** |
 
   Key optimizations: pre-decoded instruction cache, basic-block gas charging, inline flat-operand execution, pre-resolved branch targets. See [docs/pvm-interpreter-optimization.md](docs/pvm-interpreter-optimization.md) for details.
 
