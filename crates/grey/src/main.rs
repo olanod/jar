@@ -4,6 +4,7 @@
 //! See the Gray Paper v0.7.2 for the full specification.
 
 mod audit;
+mod chainspec;
 mod finality;
 mod guarantor;
 mod node;

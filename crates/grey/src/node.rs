@@ -131,12 +131,38 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
         genesis_time
     );
 
+    // Graceful shutdown signal
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
+
     // Main loop: check timeslots every 500ms
     let mut interval = tokio::time::interval(Duration::from_millis(500));
     let mut last_authored_slot: Timeslot = 0;
 
     loop {
         tokio::select! {
+            _ = &mut shutdown => {
+                tracing::info!(
+                    "Validator {} received shutdown signal, flushing state...",
+                    config.validator_index
+                );
+                // Persist final head state
+                let head_hash = state
+                    .recent_blocks
+                    .headers
+                    .last()
+                    .map(|h| h.header_hash)
+                    .unwrap_or(Hash::ZERO);
+                let _ = store.set_head(&head_hash, state.timeslot);
+                tracing::info!(
+                    "Validator {} shutdown complete. Authored={}, Imported={}, Finalized=slot {}",
+                    config.validator_index,
+                    blocks_authored,
+                    blocks_imported,
+                    grandpa.finalized_slot
+                );
+                break;
+            }
             _ = interval.tick() => {
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
