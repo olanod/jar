@@ -226,11 +226,13 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_compressed(&mut self, _inst: u16, _addr: u64) -> Result<(), TranspileError> {
-        // Compressed instruction support is optional for now.
-        // Emit fallthrough (nop) as placeholder.
-        self.emit_inst(1);
-        Ok(())
+    fn translate_compressed(&mut self, _inst: u16, addr: u64) -> Result<(), TranspileError> {
+        // JAM PVM uses rv64em (no C extension). Compressed instructions should
+        // not appear in properly compiled service code.
+        Err(TranspileError::UnsupportedInstruction {
+            offset: addr as usize,
+            detail: "compressed (RV64C) instructions are not supported — compile with -march=rv64em".into(),
+        })
     }
 
     fn translate_branch(&mut self, funct3: u32, rs1: u8, rs2: u8, target: u64) -> Result<(), TranspileError> {

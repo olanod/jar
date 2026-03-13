@@ -120,7 +120,7 @@ pub fn process_work_package(
     let core_index = determine_core(config, state, package);
 
     // 1. Run the refine pipeline
-    let report = refine::process_work_package(config, package, &ctx, core_index)
+    let mut report = refine::process_work_package(config, package, &ctx, core_index)
         .map_err(|e| format!("refine failed: {}", e))?;
 
     // 2. Erasure-code the work package bundle
@@ -131,8 +131,9 @@ pub fn process_work_package(
     let chunks = grey_erasure::encode(&erasure_params, &bundle)
         .map_err(|e| format!("erasure encoding failed: {}", e))?;
 
-    // 3. Compute erasure root from chunks
+    // 3. Compute erasure root from chunks and update the report
     let erasure_root = compute_erasure_root(&chunks);
+    report.package_spec.erasure_root = erasure_root;
 
     // 4. Store all chunks locally
     let encoded_report = report.encode();

@@ -212,6 +212,12 @@ impl Elf {
         let mut code_sections = Vec::new();
         let mut ro_data = Vec::new();
         let mut rw_data = Vec::new();
+        let mut symbols = Vec::new();
+
+        // Track symtab for symbol parsing
+        let mut symtab_off = 0usize;
+        let mut symtab_sz = 0usize;
+        let mut symtab_link = 0usize;
 
         // Get string table
         let strtab = if sh_strndx < sh_count && sh_offset + sh_strndx * sh_size + sh_size <= data.len() {
@@ -237,6 +243,14 @@ impl Elf {
             let sh_addr = u64::from_le_bytes(data[sh + 16..sh + 24].try_into().unwrap());
             let sh_off = u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap()) as usize;
             let sh_sz = u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize;
+            let sh_link_val = u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap()) as usize;
+
+            // SHT_SYMTAB = 2
+            if sh_type == 2 {
+                symtab_off = sh_off;
+                symtab_sz = sh_sz;
+                symtab_link = sh_link_val;
+            }
 
             let name = get_string(strtab, name_off);
 
@@ -264,6 +278,41 @@ impl Elf {
             }
         }
 
+        // Parse ELF64 symbol table (24-byte entries)
+        if symtab_sz > 0 && symtab_link < sh_count {
+            let sym_strtab_sh = sh_offset + symtab_link * sh_size;
+            if sym_strtab_sh + sh_size <= data.len() {
+                let sym_strtab_off = u64::from_le_bytes(
+                    data[sym_strtab_sh + 24..sym_strtab_sh + 32].try_into().unwrap(),
+                ) as usize;
+                let sym_strtab_sz = u64::from_le_bytes(
+                    data[sym_strtab_sh + 32..sym_strtab_sh + 40].try_into().unwrap(),
+                ) as usize;
+                if sym_strtab_off + sym_strtab_sz <= data.len() {
+                    let sym_strtab = &data[sym_strtab_off..sym_strtab_off + sym_strtab_sz];
+                    // ELF64 symbol entry: 24 bytes
+                    // [0..4] st_name, [4] st_info, [5] st_other, [6..8] st_shndx,
+                    // [8..16] st_value, [16..24] st_size
+                    let sym_count = symtab_sz / 24;
+                    for j in 0..sym_count {
+                        let sym = symtab_off + j * 24;
+                        if sym + 24 > data.len() { break; }
+                        let st_name = u32::from_le_bytes(data[sym..sym + 4].try_into().unwrap()) as usize;
+                        let st_info = data[sym + 4];
+                        let st_value = u64::from_le_bytes(data[sym + 8..sym + 16].try_into().unwrap());
+                        let st_type = st_info & 0xF;
+                        let st_bind = st_info >> 4;
+                        if (st_type == 2 || st_type == 0) && (st_bind == 1 || st_bind == 2) && st_value != 0 {
+                            let name = get_string(sym_strtab, st_name);
+                            if !name.is_empty() && !name.starts_with('$') {
+                                symbols.push((name.to_string(), st_value));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(Elf {
             is_64bit: true,
             code_sections,
@@ -272,7 +321,7 @@ impl Elf {
             heap_pages: 4,
             stack_size: 4096,
             entry_point,
-            symbols: vec![], // TODO: ELF64 symbol parsing
+            symbols,
         })
     }
 }

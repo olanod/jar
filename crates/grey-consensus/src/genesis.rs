@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 pub struct ValidatorSecrets {
     pub ed25519: grey_crypto::Ed25519Keypair,
     pub bandersnatch: grey_crypto::BandersnatchKeypair,
+    pub bls: grey_crypto::BlsKeypair,
     pub index: u16,
 }
 
@@ -28,9 +29,15 @@ pub fn make_validator_secrets(index: u16) -> ValidatorSecrets {
     band_seed[1] = (index >> 8) as u8;
     band_seed[31] = 0xBA; // marker for bandersnatch
 
+    let mut bls_seed = [0u8; 32];
+    bls_seed[0] = index as u8;
+    bls_seed[1] = (index >> 8) as u8;
+    bls_seed[31] = 0xBB; // marker for BLS
+
     ValidatorSecrets {
         ed25519: grey_crypto::Ed25519Keypair::from_seed(&ed_seed),
         bandersnatch: grey_crypto::BandersnatchKeypair::from_seed(&band_seed),
+        bls: grey_crypto::BlsKeypair::from_seed(&bls_seed),
         index,
     }
 }
@@ -40,10 +47,7 @@ pub fn make_validator_key(secrets: &ValidatorSecrets) -> ValidatorKey {
     let bandersnatch = BandersnatchPublicKey(secrets.bandersnatch.public_key_bytes());
     let ed25519 = secrets.ed25519.public_key();
 
-    // BLS key: for test purposes, use a deterministic placeholder
-    let mut bls_bytes = [0u8; 144];
-    bls_bytes[0] = secrets.index as u8;
-    bls_bytes[1] = (secrets.index >> 8) as u8;
+    let bls_bytes = secrets.bls.public_key_bytes();
 
     // Metadata: encode the validator index and a dummy network address
     let mut metadata = [0u8; 128];

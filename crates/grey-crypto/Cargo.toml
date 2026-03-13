@@ -12,6 +12,7 @@ sha3 = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 ark-vrf = { workspace = true }
+blst = { workspace = true }
 
 [dev-dependencies]
 hex = { workspace = true }
