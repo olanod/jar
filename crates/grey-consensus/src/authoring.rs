@@ -17,15 +17,37 @@ const ENTROPY_CONTEXT: &[u8] = b"jam_entropy";
 /// Fallback seal context string (Appendix I.4.5: X_F = $jam_fallback_seal).
 const FALLBACK_SEAL_CONTEXT: &[u8] = b"jam_fallback_seal";
 
+/// Ticket seal context string (Appendix I.4.5: X_T = $jam_ticket_seal).
+/// Used for both ticket generation (Ring VRF) and ticket-mode block sealing.
+const TICKET_SEAL_CONTEXT: &[u8] = b"jam_ticket_seal";
+
 /// Check if a validator is the block author for a given timeslot.
 ///
 /// Returns the author's index in the validator set if they should author,
 /// or None if they are not the slot leader.
+///
+/// In fallback mode, only the public key is needed. In ticket mode, the
+/// keypair is required to compute VRF outputs for ticket ownership detection.
 pub fn is_slot_author(
     state: &State,
     config: &Config,
     timeslot: Timeslot,
     bandersnatch_pubkey: &BandersnatchPublicKey,
+) -> Option<u16> {
+    is_slot_author_with_keypair(state, config, timeslot, bandersnatch_pubkey, None)
+}
+
+/// Check if a validator is the block author, with optional keypair for ticket mode.
+///
+/// When `keypair` is provided and the seal-key series is in ticket mode,
+/// computes VRF outputs for each attempt and checks if any match the slot's ticket.
+/// Returns `(validator_index, ticket_attempt)` on match.
+pub fn is_slot_author_with_keypair(
+    state: &State,
+    config: &Config,
+    timeslot: Timeslot,
+    bandersnatch_pubkey: &BandersnatchPublicKey,
+    keypair: Option<&grey_crypto::BandersnatchKeypair>,
 ) -> Option<u16> {
     let slot_in_epoch = timeslot % config.epoch_length;
 
@@ -45,16 +67,33 @@ pub fn is_slot_author(
             None
         }
         SealKeySeries::Tickets(tickets) => {
-            if (slot_in_epoch as usize) < tickets.len() {
-                let _ticket = &tickets[slot_in_epoch as usize];
-                // In ticket mode, the ticket holder is the author.
-                // For now, fallback to checking validator index from ticket.
-                // Ticket-based authoring requires Ring VRF proof of ownership.
-                // For the test network, this is not implemented.
-                None
-            } else {
-                None
+            let kp = keypair?;
+            if (slot_in_epoch as usize) >= tickets.len() {
+                return None;
             }
+            let ticket = &tickets[slot_in_epoch as usize];
+            let eta2 = &state.entropy[2];
+
+            // For each attempt (0..N), compute VRF output and check against ticket ID
+            for attempt in 0..config.tickets_per_validator as u8 {
+                let mut vrf_input = Vec::with_capacity(48);
+                vrf_input.extend_from_slice(TICKET_SEAL_CONTEXT);
+                vrf_input.extend_from_slice(&eta2.0);
+                vrf_input.push(attempt);
+
+                if let Some(ticket_id) = kp.vrf_output_for_input(&vrf_input) {
+                    if ticket_id == ticket.id.0 {
+                        // We own this ticket — find our validator index
+                        let pk_bytes = kp.public_key_bytes();
+                        for (i, v) in state.current_validators.iter().enumerate() {
+                            if v.bandersnatch.0 == pk_bytes {
+                                return Some(i as u16);
+                            }
+                        }
+                    }
+                }
+            }
+            None
         }
     }
 }
@@ -161,8 +200,15 @@ pub fn author_block_with_extrinsics(
     };
 
     // Compute seal: sign the unsigned header hash
+    // In fallback mode: input = X_F ⌢ E4(timeslot) ⌢ unsigned_header_hash
+    // In ticket mode: input = X_T ⌢ E4(timeslot) ⌢ unsigned_header_hash
     let unsigned_hash = compute_unsigned_header_hash_bytes(&header);
-    let seal_input = build_seal_vrf_input(timeslot, &unsigned_hash);
+    let is_ticket_mode = matches!(&state.safrole.seal_key_series, SealKeySeries::Tickets(_));
+    let seal_input = if is_ticket_mode {
+        build_ticket_seal_vrf_input(timeslot, &unsigned_hash)
+    } else {
+        build_seal_vrf_input(timeslot, &unsigned_hash)
+    };
     let seal_bytes = secrets.bandersnatch.seal_sign(&seal_input, b"");
     header.seal = BandersnatchSignature(seal_bytes);
 
@@ -177,10 +223,19 @@ fn build_entropy_vrf_input(timeslot: Timeslot) -> Vec<u8> {
     input
 }
 
-/// Build VRF input for fallback seal: X_F ++ unsigned_header_hash.
+/// Build VRF input for fallback seal: X_F ++ E4(timeslot) ++ unsigned_header_hash.
 fn build_seal_vrf_input(timeslot: Timeslot, unsigned_header_hash: &[u8]) -> Vec<u8> {
     let mut input = Vec::with_capacity(FALLBACK_SEAL_CONTEXT.len() + 4 + unsigned_header_hash.len());
     input.extend_from_slice(FALLBACK_SEAL_CONTEXT);
+    input.extend_from_slice(&timeslot.to_le_bytes());
+    input.extend_from_slice(unsigned_header_hash);
+    input
+}
+
+/// Build VRF input for ticket-mode seal: X_T ++ E4(timeslot) ++ unsigned_header_hash.
+fn build_ticket_seal_vrf_input(timeslot: Timeslot, unsigned_header_hash: &[u8]) -> Vec<u8> {
+    let mut input = Vec::with_capacity(TICKET_SEAL_CONTEXT.len() + 4 + unsigned_header_hash.len());
+    input.extend_from_slice(TICKET_SEAL_CONTEXT);
     input.extend_from_slice(&timeslot.to_le_bytes());
     input.extend_from_slice(unsigned_header_hash);
     input
@@ -305,5 +360,107 @@ mod tests {
             }
         }
         panic!("No author found for timeslot 1");
+    }
+
+    #[test]
+    fn test_ticket_mode_author_detection() {
+        let config = Config::tiny();
+        let (mut state, secrets) = genesis::create_genesis(&config);
+
+        // Compute ticket IDs for each validator and each attempt,
+        // then build a ticket-mode seal key series.
+        let eta2 = &state.entropy[2];
+        let mut all_tickets: Vec<(Ticket, usize)> = Vec::new(); // (ticket, validator_idx)
+
+        for (vi, s) in secrets.iter().enumerate() {
+            for attempt in 0..config.tickets_per_validator as u8 {
+                let mut vrf_input = Vec::new();
+                vrf_input.extend_from_slice(TICKET_SEAL_CONTEXT);
+                vrf_input.extend_from_slice(&eta2.0);
+                vrf_input.push(attempt);
+
+                if let Some(ticket_id) = s.bandersnatch.vrf_output_for_input(&vrf_input) {
+                    all_tickets.push((
+                        Ticket { id: Hash(ticket_id), attempt },
+                        vi,
+                    ));
+                }
+            }
+        }
+
+        // Sort by ticket ID (as bytes) and take E tickets
+        all_tickets.sort_by(|a, b| a.0.id.0.cmp(&b.0.id.0));
+        let epoch_tickets: Vec<Ticket> = all_tickets.iter()
+            .take(config.epoch_length as usize)
+            .map(|(t, _)| t.clone())
+            .collect();
+
+        // Switch state to ticket mode
+        state.safrole.seal_key_series = SealKeySeries::Tickets(epoch_tickets);
+
+        // Now check that each slot finds the correct author
+        let mut found_any = false;
+        for timeslot in 0..config.epoch_length.min(all_tickets.len() as u32) {
+            for s in &secrets {
+                let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
+                if let Some(idx) = is_slot_author_with_keypair(
+                    &state, &config, timeslot, &pk, Some(&s.bandersnatch),
+                ) {
+                    found_any = true;
+                    assert!(idx < config.validators_count);
+                    break;
+                }
+            }
+        }
+        assert!(found_any, "Should find at least one author in ticket mode");
+    }
+
+    #[test]
+    fn test_ticket_mode_block_authoring() {
+        let config = Config::tiny();
+        let (mut state, secrets) = genesis::create_genesis(&config);
+
+        // Build ticket-mode seal key series (same as above)
+        let eta2 = &state.entropy[2];
+        let mut all_tickets: Vec<(Ticket, usize)> = Vec::new();
+
+        for (vi, s) in secrets.iter().enumerate() {
+            for attempt in 0..config.tickets_per_validator as u8 {
+                let mut vrf_input = Vec::new();
+                vrf_input.extend_from_slice(TICKET_SEAL_CONTEXT);
+                vrf_input.extend_from_slice(&eta2.0);
+                vrf_input.push(attempt);
+
+                if let Some(ticket_id) = s.bandersnatch.vrf_output_for_input(&vrf_input) {
+                    all_tickets.push((
+                        Ticket { id: Hash(ticket_id), attempt },
+                        vi,
+                    ));
+                }
+            }
+        }
+        all_tickets.sort_by(|a, b| a.0.id.0.cmp(&b.0.id.0));
+        let epoch_tickets: Vec<Ticket> = all_tickets.iter()
+            .take(config.epoch_length as usize)
+            .map(|(t, _)| t.clone())
+            .collect();
+        state.safrole.seal_key_series = SealKeySeries::Tickets(epoch_tickets);
+
+        // Find the author for slot 0 and author a block
+        let timeslot = 1; // slot 1 to advance from genesis timeslot 0
+        for s in &secrets {
+            let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
+            if let Some(author_idx) = is_slot_author_with_keypair(
+                &state, &config, timeslot, &pk, Some(&s.bandersnatch),
+            ) {
+                let block = author_block(&state, &config, timeslot, author_idx, s, Hash::ZERO);
+                assert_eq!(block.header.timeslot, timeslot);
+                assert_eq!(block.header.author_index, author_idx);
+                // The seal should be non-zero (a valid VRF signature)
+                assert_ne!(block.header.seal.0, [0u8; 96]);
+                return;
+            }
+        }
+        panic!("No author found for timeslot 1 in ticket mode");
     }
 }

@@ -237,7 +237,7 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
         for s in &secrets {
             let pk = grey_types::BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
             if let Some(author_idx) =
-                grey_consensus::authoring::is_slot_author(&state, &config, slot, &pk)
+                grey_consensus::authoring::is_slot_author_with_keypair(&state, &config, slot, &pk, Some(&s.bandersnatch))
             {
                 // Compute state root
                 let state_root = {

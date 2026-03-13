@@ -298,11 +298,12 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                     }
 
                     // Check if we are the slot author
-                    if let Some(author_idx) = authoring::is_slot_author(
+                    if let Some(author_idx) = authoring::is_slot_author_with_keypair(
                         &state,
                         protocol,
                         current_slot,
                         &my_bandersnatch,
+                        Some(&my_secrets.bandersnatch),
                     ) {
                         tracing::info!(
                             "=== Validator {} IS SLOT AUTHOR for slot {} ===",
