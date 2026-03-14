@@ -13,8 +13,8 @@ namespace Jar.Test.Statistics
 open Jar
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- Flattened Statistics State (matches test vector JSON shape)

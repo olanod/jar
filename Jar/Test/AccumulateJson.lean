@@ -15,8 +15,8 @@ open Lean (Json ToJson FromJson toJson fromJson?)
 open Jar Jar.Json Jar.Test.Accumulate
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- Grey-format parsers for Work types (different field names from Jar.Json)

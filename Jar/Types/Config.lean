@@ -4,7 +4,7 @@
 Runtime-configurable protocol parameters supporting multiple variants
 (full GP v0.7.2, tiny test config, custom variants).
 
-Parameters that differ across variants live in `Config`. Parameters that
+Parameters that differ across variants live in `Params`. Parameters that
 are identical across all known variants remain as global defs in `Constants.lean`.
 -/
 
@@ -16,7 +16,7 @@ namespace Jar
 
 /-- Protocol configuration: parameters that differ across variants.
     Verified against `grey/crates/grey-types/src/config.rs`. -/
-structure Config where
+structure Params where
   -- Consensus & Validators
   /-- V : Total number of validators. -/
   V : Nat
@@ -78,7 +78,7 @@ structure Config where
 -- ============================================================================
 
 /-- Positivity proofs required for Fin types to be inhabited. -/
-structure Config.Valid (cfg : Config) : Prop where
+structure Params.Valid (cfg : Params) : Prop where
   hV : 0 < cfg.V
   hC : 0 < cfg.C
   hE : 0 < cfg.E
@@ -92,15 +92,15 @@ structure Config.Valid (cfg : Config) : Prop where
     Used by struct types and Fin-based index aliases.
     Extended by `JamVariant` (in `Jar/Variant.lean`) to add PVM function fields. -/
 class JamConfig where
-  config : Config
-  valid : Config.Valid config
+  config : Params
+  valid : Params.Valid config
 
 -- ============================================================================
 -- Standard Configurations
 -- ============================================================================
 
 /-- Full specification constants (Gray Paper v0.7.2). -/
-def Config.full : Config where
+def Params.full : Params where
   V := 1023; C := 341; E := 600; N_TICKETS := 2
   Y_TAIL := 500; K_MAX_TICKETS := 16; R_ROTATION := 10; H_RECENT := 8
   G_A := 10_000_000; G_I := 50_000_000; G_R := 5_000_000_000; G_T := 3_500_000_000
@@ -111,8 +111,8 @@ def Config.full : Config where
   W_P := 6
 
 /-- Tiny test configuration.
-    Verified against `grey/crates/grey-types/src/config.rs` Config::tiny(). -/
-def Config.tiny : Config where
+    Verified against `grey/crates/grey-types/src/config.rs` Config::tiny() (Rust side). -/
+def Params.tiny : Params where
   V := 6; C := 2; E := 12; N_TICKETS := 3
   Y_TAIL := 10; K_MAX_TICKETS := 3; R_ROTATION := 4; H_RECENT := 8
   G_A := 10_000_000; G_I := 50_000_000; G_R := 1_000_000_000; G_T := 20_000_000
@@ -126,13 +126,13 @@ def Config.tiny : Config where
 -- Validity Proofs
 -- ============================================================================
 
-theorem Config.full_valid : Config.Valid Config.full where
+theorem Params.full_valid : Params.Valid Params.full where
   hV := by decide
   hC := by decide
   hE := by decide
   hN := by decide
 
-theorem Config.tiny_valid : Config.Valid Config.tiny where
+theorem Params.tiny_valid : Params.Valid Params.tiny where
   hV := by decide
   hC := by decide
   hE := by decide
@@ -143,6 +143,6 @@ theorem Config.tiny_valid : Config.Valid Config.tiny where
 -- ============================================================================
 
 /-- Access config field via JamConfig typeclass. -/
-abbrev cfg [j : JamConfig] : Config := j.config
+abbrev cfg [j : JamConfig] : Params := j.config
 
 end Jar

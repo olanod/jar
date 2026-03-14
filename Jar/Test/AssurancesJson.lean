@@ -13,8 +13,8 @@ open Lean (Json ToJson FromJson toJson fromJson?)
 open Jar Jar.Json Jar.Test.Assurances
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- JSON instances for assurances test types

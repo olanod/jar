@@ -16,8 +16,8 @@ namespace Jar.Test.Safrole
 open Jar Jar.Crypto Jar.Consensus
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- Flattened Safrole State (matches test vector JSON shape)

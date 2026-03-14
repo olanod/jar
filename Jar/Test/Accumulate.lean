@@ -21,8 +21,8 @@ namespace Jar.Test.Accumulate
 open Jar Jar.Crypto Jar.Accumulation
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 /-- Build config blob for tiny config, matching Rust Config::tiny().encode_config_blob().
     Format: B_I(8) B_L(8) B_S(8) C(2) D(4) E(4) G_A(8) G_I(8) G_R(8) G_T(8)

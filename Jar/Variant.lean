@@ -16,8 +16,8 @@ Functions that call the PVM (accumulation, services) use `[JamVariant]`.
 Define a variant by creating a `JamVariant` instance:
 ```lean
 instance : JamVariant where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 ```
@@ -45,15 +45,15 @@ class JamVariant extends JamConfig where
 
 /-- Full GP v0.7.2 variant with standard PVM interpreter. -/
 instance JamVariant.full : JamVariant where
-  config := Config.full
-  valid := Config.full_valid
+  config := Params.full
+  valid := Params.full_valid
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 
 /-- Tiny test variant with standard PVM interpreter. -/
 instance JamVariant.tiny : JamVariant where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 

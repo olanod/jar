@@ -14,8 +14,8 @@ open Jar
 open Plausible Plausible.Arbitrary Plausible.Gen
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- ByteArray

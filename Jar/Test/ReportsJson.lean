@@ -15,8 +15,8 @@ open Lean (Json ToJson FromJson toJson fromJson?)
 open Jar Jar.Json Jar.Crypto Jar.Codec Jar.Test.Reports
 
 instance : JamConfig where
-  config := Config.tiny
-  valid := Config.tiny_valid
+  config := Params.tiny
+  valid := Params.tiny_valid
 
 -- ============================================================================
 -- Work report encoding for reportHash computation
