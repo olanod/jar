@@ -125,9 +125,10 @@ impl Drop for NativeCode {
 struct FlatMemory {
     /// mmap'd 4GB backing buffer.
     buf: *mut u8,
-    /// Permission table: 1 byte per 4KB page (2^20 = 1,048,576 entries).
+    /// Permission table: mmap'd 1MB (1 byte per 4KB page, 2^20 entries).
     /// 0=inaccessible, 1=read-only, 2=read-write.
-    perms: Vec<u8>,
+    /// Using mmap instead of Vec for lazy zero-initialization.
+    perms: *mut u8,
 }
 
 const FLAT_BUF_SIZE: usize = 1 << 32; // 4GB virtual
@@ -136,6 +137,8 @@ const NUM_PAGES: usize = 1 << 20;     // 2^20 = 1M pages
 impl FlatMemory {
     /// Create a flat memory from the interpreter's Memory struct.
     fn new(memory: &Memory) -> Option<Self> {
+        // mmap both the 4GB data buffer and 1MB permission table.
+        // MAP_NORESERVE ensures only touched pages consume physical memory.
         let buf = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -151,7 +154,21 @@ impl FlatMemory {
         }
         let buf = buf as *mut u8;
 
-        let mut perms = vec![0u8; NUM_PAGES];
+        let perms = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                NUM_PAGES,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_ANONYMOUS | libc::MAP_PRIVATE | libc::MAP_NORESERVE,
+                -1,
+                0,
+            )
+        };
+        if perms == libc::MAP_FAILED {
+            unsafe { libc::munmap(buf as *mut libc::c_void, FLAT_BUF_SIZE); }
+            return None;
+        }
+        let perms = perms as *mut u8;
 
         // Copy page data and permissions from Memory
         for (page_idx, access, data) in memory.pages_iter() {
@@ -161,9 +178,8 @@ impl FlatMemory {
                 crate::memory::PageAccess::ReadWrite => 2,
             };
             if (page_idx as usize) < NUM_PAGES {
-                perms[page_idx as usize] = perm;
+                unsafe { *perms.add(page_idx as usize) = perm; }
             }
-            // Copy data into flat buffer
             let offset = (page_idx as usize) * 4096;
             if offset + data.len() <= FLAT_BUF_SIZE {
                 unsafe {
@@ -203,7 +219,7 @@ impl FlatMemory {
                 crate::memory::PageAccess::ReadWrite => 2,
             };
             if (page_idx as usize) < NUM_PAGES {
-                self.perms[page_idx as usize] = perm;
+                unsafe { *self.perms.add(page_idx as usize) = perm; }
             }
             let offset = (page_idx as usize) * 4096;
             if offset + data.len() <= FLAT_BUF_SIZE {
@@ -213,19 +229,13 @@ impl FlatMemory {
             }
         }
     }
-
-    /// Update permission for a page (called from sbrk_helper).
-    fn set_perm(&mut self, page: u32, perm: u8) {
-        if (page as usize) < NUM_PAGES {
-            self.perms[page as usize] = perm;
-        }
-    }
 }
 
 impl Drop for FlatMemory {
     fn drop(&mut self) {
         unsafe {
             libc::munmap(self.buf as *mut libc::c_void, FLAT_BUF_SIZE);
+            libc::munmap(self.perms as *mut libc::c_void, NUM_PAGES);
         }
     }
 }
@@ -552,7 +562,7 @@ impl RecompiledPvm {
         let flat_memory = FlatMemory::new(unsafe { &*memory_ptr });
         if let Some(ref fm) = flat_memory {
             ctx.flat_buf = fm.buf;
-            ctx.flat_perms = fm.perms.as_ptr();
+            ctx.flat_perms = fm.perms;
         }
 
         let mut result = Self {
@@ -586,7 +596,7 @@ impl RecompiledPvm {
         if self.needs_flat_sync {
             if let Some(ref mut fm) = self.flat_memory {
                 fm.sync_from(unsafe { &*self.ctx.memory });
-                self.ctx.flat_perms = fm.perms.as_ptr();
+                self.ctx.flat_perms = fm.perms;
             }
             self.needs_flat_sync = false;
         }
