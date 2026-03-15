@@ -403,7 +403,17 @@ def runBlockTest [JamConfig] (inputPath : System.FilePath) : IO TestResult := do
       let expectedPostRoot ← IO.ofExcept (@fromJson? Hash _ (← IO.ofExcept (postStateJson.getObjVal? "state_root")))
 
       -- Compute Merkle root of posterior state
-      let computedRoot := @StateSerialization.computeStateRoot _ postState
+      -- Include opaque service data entries (storage/preimages) that pass through unchanged
+      let postKvs := (@StateSerialization.serializeState _ postState).map fun (k, v) => (k.data, v)
+      let byteArrayLt (a b : ByteArray) : Bool :=
+        let len := min a.size b.size
+        Id.run do
+          for i in [:len] do
+            if a.get! i < b.get! i then return true
+            if a.get! i > b.get! i then return false
+          return a.size < b.size
+      let allPostKvs := (postKvs ++ opaqueData).qsort fun (k1, _) (k2, _) => byteArrayLt k1 k2
+      let computedRoot := Merkle.trieRoot (allPostKvs.map fun (k, v) => ((⟨k, sorry⟩ : OctetSeq 31), v))
 
       if computedRoot == expectedPostRoot then
         IO.println s!"  PASS {name}"
@@ -412,6 +422,35 @@ def runBlockTest [JamConfig] (inputPath : System.FilePath) : IO TestResult := do
         IO.println s!"  FAIL {name}: post_state root mismatch"
         IO.println s!"    expected: {bytesToHex expectedPostRoot.data}"
         IO.println s!"    got:      {bytesToHex computedRoot.data}"
+        -- Compare individual KVs with expected post_state keyvals
+        match postStateJson.getObjVal? "keyvals" with
+        | .ok kvJson =>
+          match parseKeyvals kvJson with
+          | .ok expectedKvs =>
+            let ourKvs := allPostKvs
+            -- Show first few diffs (compare by key index)
+            let mut diffCount := 0
+            for i in [:min expectedKvs.size ourKvs.size] do
+              let (ek, ev) := expectedKvs[i]!
+              let (ok, ov) := ourKvs[i]!
+              if ek != ok then
+                if diffCount < 3 then
+                  IO.println s!"    kv[{i}] KEY: exp={bytesToHex ek |>.take 16}.. got={bytesToHex ok |>.take 16}.."
+                diffCount := diffCount + 1
+              else if ev != ov then
+                if diffCount < 3 then
+                  let idx := ek.get! 0
+                  IO.println s!"    kv[{i}] idx={idx} VAL: exp_len={ev.size} got_len={ov.size}"
+                  for j in [:min ev.size ov.size] do
+                    if ev.get! j != ov.get! j then
+                      IO.println s!"      first diff at byte {j}"
+                      break
+                diffCount := diffCount + 1
+            if diffCount > 3 then
+              IO.println s!"    ... {diffCount - 3} more diffs"
+            IO.println s!"    expected {expectedKvs.size} kvs, got {ourKvs.size} kvs"
+          | .error _ => pure ()
+        | .error _ => pure ()
         return .fail
   | none =>
     if isError then
