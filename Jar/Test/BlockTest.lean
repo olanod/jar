@@ -132,7 +132,21 @@ private def workReportFromTraceJson (j : Json) : Except String WorkReport := do
   let authorizerHash ← @fromJson? Hash _ (← j.getObjVal? "authorizer_hash")
   let authGasUsed ← @fromJson? Gas _ (← j.getObjVal? "auth_gas_used")
   let authOutput ← @fromJson? ByteArray _ (← j.getObjVal? "auth_output")
-  let segmentRootLookup ← @fromJson? (Dict Hash Hash) _ (← j.getObjVal? "segment_root_lookup")
+  let segmentRootLookup : Dict Hash Hash ← do
+    let srl ← j.getObjVal? "segment_root_lookup"
+    match srl with
+    | Json.arr items =>
+      -- Array of [key, value] pairs or {key, value} objects
+      let mut d : Dict Hash Hash := Dict.empty
+      for item in items do
+        match item with
+        | Json.arr #[k, v] =>
+          let key ← @fromJson? Hash _ k
+          let val ← @fromJson? Hash _ v
+          d := d.insert key val
+        | _ => pure ()  -- skip malformed
+      pure d
+    | _ => @fromJson? (Dict Hash Hash) _ srl
   let resultsJson ← j.getObjVal? "results"
   let digests ← match resultsJson with
     | Json.arr items => items.toList.mapM workDigestFromTraceJson |>.map List.toArray
@@ -337,6 +351,14 @@ def runBlockTest [JamConfig] (inputPath : System.FilePath) : IO TestResult := do
   let (state, opaqueData) ← match stateOpt with
     | some (s, od) => pure (s, od)
     | none =>
+      -- Diagnose: try deserializing each KV individually
+      for (key, value) in keyvals do
+        let idx := key.get! 0
+        if idx >= 1 && idx <= 16 then
+          -- Try individual component deserialization
+          let ok := (@StateSerialization.deserializeState _ #[(key, value)]).isSome
+          if !ok then
+            IO.println s!"  DEBUG deser FAIL on idx={idx} val_len={value.size}"
       IO.println s!"  FAIL {name}: failed to deserialize pre_state from keyvals"
       return .fail
 
