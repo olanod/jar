@@ -349,6 +349,7 @@ structure AccumulationResult where
   accQueue : Array (Array (WorkReport × Array Hash))
   accHistory : Array (Array Hash)
   accStats : Dict ServiceId ServiceStatistics
+  remainingOpaqueData : Array (ByteArray × ByteArray) := #[]
   exitReasons : Array (ServiceId × String) := #[]
 
 /-- Perform accumulation of newly available work reports. GP §12.
@@ -405,6 +406,7 @@ def performAccumulation
     accQueue := s.accQueue
     accHistory := accHistory'''
     accStats := accStats
+    remainingOpaqueData := result.remainingOpaqueData
     exitReasons := result.exitReasons }
 
 -- ============================================================================
@@ -773,9 +775,10 @@ def stateTransition (s : State) (b : Block) : Option State := do
   }
 
 /-- State transition with opaque data for PVM accumulation (for block-level testing).
-    Returns (state, available_count) for debugging. -/
+    Returns (state, (available_count, exit_reasons, remaining_opaque)) for debugging. -/
 def stateTransitionWithOpaque (s : State) (b : Block)
-    (opaqueData : Array (ByteArray × ByteArray)) : Option (State × Nat) := do
+    (opaqueData : Array (ByteArray × ByteArray))
+    : Option (State × (Nat × Array (ServiceId × String) × Array (ByteArray × ByteArray))) := do
   let h := b.header
   let ext := b.extrinsic
   guard (validateHeaderNoSeal s h)
@@ -816,7 +819,7 @@ def stateTransitionWithOpaque (s : State) (b : Block)
     statistics := pi'
     accQueue := accResult.accQueue
     accHistory := accResult.accHistory
-  }, available.size)
+  }, (available.size, accResult.exitReasons, accResult.remainingOpaqueData))
 
 /-- State transition without seal/VRF verification (for block-level testing). -/
 def stateTransitionNoSealCheck (s : State) (b : Block) : Option State := do

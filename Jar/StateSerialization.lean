@@ -402,23 +402,12 @@ private def serializeAccumulationOutputs (outputs : AccumulationOutputs) : ByteA
 private def serializeServiceAccount (account : ServiceAccount) (_sid : ServiceId)
     : ByteArray := Id.run do
   let mut buf := ByteArray.empty
-  -- Compute o and i from actual storage/preimage data when available,
-  -- fall back to preserved values when storage is opaque (empty after deser).
-  let storageLen := account.storage.entries.length
-  let preimageInfoLen := account.preimageInfo.entries.length
-  let preimagesLen := account.preimages.entries.length
-  let hasData := storageLen > 0 || preimageInfoLen > 0 || preimagesLen > 0
-  let footprint : Nat := if hasData then
-      account.preimageInfo.entries.foldl (init := 0) (fun acc ((_, len), _) =>
-        acc + 81 + len.toNat)
-      + account.storage.entries.foldl (init := 0) (fun acc (k, v) =>
-        acc + 34 + k.size + v.size)
-    else account.totalFootprint
-  let itemCount : Nat := if hasData then
-      2 * preimageInfoLen + storageLen
-    else account.created.toNat  -- preserved accumulation_counter
-  let preimCount : Nat := if hasData then preimagesLen
-    else account.preimageCount
+  -- Use preserved totalFootprint/created/preimageCount values.
+  -- These are maintained incrementally during accumulation host calls
+  -- (write updates created=items and totalFootprint, solicit/forget update preimageInfo counts).
+  let footprint := account.totalFootprint
+  let itemCount := account.created.toNat  -- a_i: item count
+  let preimCount := account.preimageCount -- a_p (but actually stores preimage count for serialization)
   buf := buf ++ ByteArray.mk #[0]  -- version
   buf := buf ++ account.codeHash.data
   buf := buf ++ encodeFixedNat 8 account.balance.toNat

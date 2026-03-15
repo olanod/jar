@@ -584,7 +584,13 @@ def runBlockTestDirSeq [JamConfig] (dir : String) : IO UInt32 := do
 
     -- Run transition with opaque data for PVM accumulation
     let result := @stateTransitionWithOpaque _ state block opaqueData
-    let postStateOpt := result.map Prod.fst
+    let exitReasons : Array (ServiceId × String) := match result with
+      | some r => r.2.2.1
+      | none => #[]
+    let remainingOpaque : Array (ByteArray × ByteArray) := match result with
+      | some r => r.2.2.2
+      | none => opaqueData
+    let postStateOpt : Option State := result.map (·.1)
 
     match postStateOpt with
     | some postState =>
@@ -604,14 +610,24 @@ def runBlockTestDirSeq [JamConfig] (dir : String) : IO UInt32 := do
               if a.get! i < b.get! i then return true
               if a.get! i > b.get! i then return false
             return a.size < b.size
-        -- Filter opaqueData to remove entries whose keys appear in postKvs
+        -- Use remaining opaque data from accumulation (consumed entries already removed).
+        -- Additionally filter out any entries whose keys now appear in serialized state
+        -- (e.g., storage entries promoted during accumulation).
         let postKeys := postKvs.map Prod.fst
-        let filteredOpaque := opaqueData.filter fun (k, _) =>
+        let filteredOpaque := remainingOpaque.filter fun (k, _) =>
           !postKeys.any (· == k)
         let allPostKvs := (postKvs ++ filteredOpaque).qsort fun (k1, _) (k2, _) => byteArrayLt k1 k2
         let computedRoot := Merkle.trieRoot (allPostKvs.map fun (k, v) => ((⟨k, sorry⟩ : OctetSeq 31), v))
         if computedRoot == expectedPostRoot then
           IO.println s!"  PASS {name}"
+          -- Print exit reasons for blocks with accumulation
+          if exitReasons.size > 0 then
+            for (sid, reason) in exitReasons do
+              -- Only show first 100 chars of reason
+              let short := if reason.length > 100 then (reason.toList.take 100 |> String.mk) ++ "..." else reason
+              IO.println s!"    acc svc={sid}: {short}"
+            for (sid, acct) in postState.services.entries.toArray do
+              IO.println s!"    svc {sid}: storage={acct.storage.size} items={acct.created} footprint={acct.totalFootprint}"
           passed := passed + 1
           currentState := some (postState, filteredOpaque)
         else
@@ -619,8 +635,12 @@ def runBlockTestDirSeq [JamConfig] (dir : String) : IO UInt32 := do
           IO.println s!"    expected: {bytesToHex expectedPostRoot.data}"
           IO.println s!"    got:      {bytesToHex computedRoot.data}"
           IO.println s!"    total KVs: {allPostKvs.size} (serialized={postKvs.size} opaque={filteredOpaque.size})"
-          pure ()
-          pure ()
+          pure () -- debug placeholder
+          for (sid, reason) in exitReasons do
+            IO.println s!"    acc svc={sid}: {reason}"
+          -- Debug: show service storage state
+          for (sid, acct) in postState.services.entries.toArray do
+            IO.println s!"    svc {sid}: storage={acct.storage.size} preimages={acct.preimages.size} preimageInfo={acct.preimageInfo.size} bal={acct.balance} parent={acct.parent} created={acct.created} footprint={acct.totalFootprint} lastAcc={acct.lastAccumulation} preimCount={acct.preimageCount} gratis={acct.gratis}"
           -- Debug: show serialized component sizes and hashes
           let mut opaqueByIdx : Array (Nat × Nat) := #[]
           for (k, _v) in filteredOpaque do

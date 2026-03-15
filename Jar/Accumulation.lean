@@ -98,6 +98,8 @@ structure AccOneOutput where
   yieldHash : Option Hash
   gasUsed : Gas
   provisions : Array (ServiceId × ByteArray)
+  /-- Updated opaque data (entries consumed during accumulation removed). -/
+  opaqueData : Array (ByteArray × ByteArray) := #[]
   /-- Debug: exit reason string for tracing. -/
   exitReasonStr : String := ""
   /-- Debug: host call log entries. -/
@@ -165,6 +167,81 @@ instance : Inhabited AccContext where
   }
 
 -- ============================================================================
+-- Opaque Data Helpers
+-- ============================================================================
+
+/-- Look up an entry in opaque data by state key, returning the value and the
+    opaque data array with that entry removed (promotion). -/
+private def opaquePromote (opaqueData : Array (ByteArray × ByteArray))
+    (stateKey : OctetSeq 31) : Option (ByteArray × Array (ByteArray × ByteArray)) :=
+  -- Find matching entry by linear scan
+  let found := opaqueData.findSome? fun (k, v) =>
+    if k == stateKey.data then some v else none
+  match found with
+  | none => none
+  | some v =>
+    -- Remove the first matching entry
+    let opaqueData' := opaqueData.filter fun (k, _) => k != stateKey.data
+    some (v, opaqueData')
+
+/-- Promote a storage entry from opaque data into a service account's structured storage.
+    Returns updated (account, opaqueData) or none if not found. -/
+private def promoteStorage (acct : ServiceAccount) (opaqueData : Array (ByteArray × ByteArray))
+    (targetSid : ServiceId) (keyBytes : ByteArray)
+    : Option (ServiceAccount × Array (ByteArray × ByteArray)) :=
+  let stateKey := StateSerialization.stateKeyForServiceData targetSid
+    (StateSerialization.storageHashArg keyBytes)
+  match opaquePromote opaqueData stateKey with
+  | none => none
+  | some (v, opaqueData') =>
+    let acct' := { acct with storage := acct.storage.insert keyBytes v }
+    some (acct', opaqueData')
+
+/-- Promote a preimage lookup entry from opaque data into a service account's preimage store.
+    Returns updated (account, opaqueData) or none if not found. -/
+private def promotePreimageLookup (acct : ServiceAccount) (opaqueData : Array (ByteArray × ByteArray))
+    (targetSid : ServiceId) (hash : Hash)
+    : Option (ServiceAccount × Array (ByteArray × ByteArray)) :=
+  let stateKey := StateSerialization.stateKeyForServiceData targetSid
+    (StateSerialization.preimageHashArg hash)
+  match opaquePromote opaqueData stateKey with
+  | none => none
+  | some (v, opaqueData') =>
+    let acct' := { acct with preimages := acct.preimages.insert hash v }
+    some (acct', opaqueData')
+
+/-- Decode preimage info timeslots from raw bytes (compact-encoded count + E_4 each).
+    This matches Grey's deserialization of preimage_info values. -/
+private def decodePreimageInfoTimeslots (data : ByteArray) : Array Timeslot :=
+  match Codec.Decoder.run (fun s => do
+    let (count, s) ← Codec.decodeNatD s
+    let mut timeslots : Array Timeslot := #[]
+    let mut state := s
+    for _ in [:count] do
+      match Codec.decodeFixedNatD 4 state with
+      | some (ts, s') =>
+        timeslots := timeslots.push (UInt32.ofNat ts)
+        state := s'
+      | none => break
+    return (timeslots, state)) data with
+  | some ts => ts
+  | none => #[]
+
+/-- Promote a preimage info entry from opaque data into a service account's preimage info.
+    Returns updated (account, opaqueData) or none if not found. -/
+private def promotePreimageInfo (acct : ServiceAccount) (opaqueData : Array (ByteArray × ByteArray))
+    (targetSid : ServiceId) (hash : Hash) (blobLen : UInt32)
+    : Option (ServiceAccount × Array (ByteArray × ByteArray)) :=
+  let stateKey := StateSerialization.stateKeyForServiceData targetSid
+    (StateSerialization.preimageInfoHashArg blobLen hash)
+  match opaquePromote opaqueData stateKey with
+  | none => none
+  | some (v, opaqueData') =>
+    let timeslots := decodePreimageInfoTimeslots v
+    let acct' := { acct with preimageInfo := acct.preimageInfo.insert (hash, blobLen) timeslots }
+    some (acct', opaqueData')
+
+-- ============================================================================
 -- Host-Call Gas Cost — GP Appendix B
 -- ============================================================================
 
@@ -189,20 +266,10 @@ private def setReg (regs : PVM.Registers) (i : Nat) (v : UInt64) : PVM.Registers
       min_memo_gas(8) ‖ total_octets(8) ‖ items(4) ‖ deposit_offset(8) ‖
       created(4) ‖ last_acc(4) ‖ parent(4) = 96 bytes -/
 private def encodeAccountInfo (acct : ServiceAccount) : ByteArray :=
-  -- Use actual storage/preimage maps if populated, otherwise fall back to
-  -- preserved serialized values (totalFootprint, created=itemCount).
-  let storageLen := acct.storage.size
-  let preimageInfoLen := acct.preimageInfo.size
-  let hasData := storageLen > 0 || preimageInfoLen > 0 || acct.preimages.size > 0
-  let totalItems := if hasData then
-      2 * preimageInfoLen + storageLen
-    else acct.created.toNat  -- preserved item count (a_i stored in 'created' field)
-  let totalBytes := if hasData then
-      acct.preimageInfo.entries.foldl (init := 0) fun acc ((_, len), _) =>
-        acc + 81 + len.toNat
-      + acct.storage.entries.foldl (init := 0) fun acc (k, v) =>
-        acc + 34 + k.size + v.size
-    else acct.totalFootprint
+  -- Use preserved totalFootprint/created values, maintained incrementally
+  -- during accumulation host calls.
+  let totalItems := acct.created.toNat  -- a_i: item count
+  let totalBytes := acct.totalFootprint -- a_o: total storage footprint
   -- Compute threshold: B_S + B_I * items + B_L * bytes - deposit_offset
   let minBal := B_S + B_I * totalItems + B_L * totalBytes
   let threshold := minBal - min acct.gratis.toNat minBal
@@ -306,11 +373,22 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
         let regs' := setR7 regs PVM.RESULT_NONE
         (mkResult regs' mem gas', ctx)
       | some acct =>
+        -- Try structured preimages first, then promote from opaque data
+        let (acct, ctx) :=
+          if acct.preimages.lookup h |>.isSome then (acct, ctx)
+          else match promotePreimageLookup acct ctx.opaqueData targetSid h with
+            | some (acct', opaqueData') =>
+              (acct', { ctx with opaqueData := opaqueData' })
+            | none => (acct, ctx)
         match acct.preimages.lookup h with
         | none =>
           let regs' := setR7 regs PVM.RESULT_NONE
           (mkResult regs' mem gas', ctx)
         | some preimage =>
+          -- Update accounts with promoted preimage
+          let accounts' := ctx.state.accounts.insert targetSid acct
+          let state' := { ctx.state with accounts := accounts' }
+          let ctx' := { ctx with state := state' }
           let vLen := preimage.size
           let f := min offset vLen
           let l := min maxLen (vLen - f)
@@ -319,13 +397,13 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
             match PVM.writeByteArray mem outPtr toWrite with
             | .ok mem' =>
               let regs' := setR7 regs (UInt64.ofNat vLen)
-              (mkResult regs' mem' gas', ctx)
+              (mkResult regs' mem' gas', ctx')
             | _ =>
               let regs' := setR7 regs PVM.RESULT_OOB
-              (mkResult regs' mem gas', ctx)
+              (mkResult regs' mem gas', ctx')
           else
             let regs' := setR7 regs (UInt64.ofNat vLen)
-            (mkResult regs' mem gas', ctx)
+            (mkResult regs' mem gas', ctx')
     | _ =>
       let regs' := setR7 regs PVM.RESULT_OOB
       (mkResult regs' mem gas', ctx)
@@ -352,28 +430,21 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
         (mkResult regs' mem gas', ctx)
       | some acct =>
         -- Look up in structured storage first, then fall back to opaqueData
-        let valOpt : Option (ByteArray × AccContext) :=
-          match acct.storage.lookup keyBytes with
-          | some v => some (v, ctx)
-          | none =>
-            -- Fall back to opaqueData: compute state key and look up
-            let stateKey := StateSerialization.stateKeyForServiceData targetSid
-              (StateSerialization.storageHashArg keyBytes)
-            let found := ctx.opaqueData.findSome? fun (k, v) =>
-              if k == stateKey.data then some v else (none : Option ByteArray)
-            match found with
-            | some v =>
-              -- Promote to structured storage
-              let acct' := { acct with storage := acct.storage.insert keyBytes v }
-              let accounts' := ctx.state.accounts.insert targetSid acct'
-              let state' := { ctx.state with accounts := accounts' }
-              some (v, { ctx with state := state' })
-            | none => none
-        match valOpt with
+        let (acct, ctx) :=
+          if acct.storage.lookup keyBytes |>.isSome then (acct, ctx)
+          else match promoteStorage acct ctx.opaqueData targetSid keyBytes with
+            | some (acct', opaqueData') =>
+              (acct', { ctx with opaqueData := opaqueData' })
+            | none => (acct, ctx)
+        match acct.storage.lookup keyBytes with
         | none =>
           let regs' := setR7 regs PVM.RESULT_NONE
           (mkResult regs' mem gas', ctx)
-        | some (val, ctx') =>
+        | some val =>
+          -- Update accounts with promoted storage
+          let accounts' := ctx.state.accounts.insert targetSid acct
+          let state' := { ctx.state with accounts := accounts' }
+          let ctx' := { ctx with state := state' }
           let vLen := val.size
           let f := min offset vLen
           let l := min maxLen (vLen - f)
@@ -408,20 +479,48 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
         let regs' := setR7 regs PVM.RESULT_NONE
         (mkResult regs' mem gas', ctx)
       | some acct =>
-        let oldLen : UInt64 := match acct.storage.lookup keyBytes with
+        -- Promote from opaque data if not in structured storage
+        let (acct, ctx) :=
+          if acct.storage.lookup keyBytes |>.isSome then (acct, ctx)
+          else match promoteStorage acct ctx.opaqueData ctx.serviceId keyBytes with
+            | some (acct', opaqueData') =>
+              (acct', { ctx with opaqueData := opaqueData' })
+            | none => (acct, ctx)
+        let oldVal := acct.storage.lookup keyBytes
+        let oldLen : UInt64 := match oldVal with
           | some v => UInt64.ofNat v.size
           | none => PVM.RESULT_NONE
         if valLen == 0 then
           -- Delete the key
-          let acct' := { acct with storage := acct.storage.erase keyBytes }
-          let accounts' := ctx.state.accounts.insert ctx.serviceId acct'
-          let state' := { ctx.state with accounts := accounts' }
-          let regs' := setR7 regs oldLen
-          (mkResult regs' mem gas', { ctx with state := state' })
+          match oldVal with
+          | some oldV =>
+            let oldSize := 34 + keyBytes.size + oldV.size
+            let acct' := { acct with
+              storage := acct.storage.erase keyBytes
+              created := acct.created - 1  -- items -= 1
+              totalFootprint := acct.totalFootprint - oldSize }
+            let accounts' := ctx.state.accounts.insert ctx.serviceId acct'
+            let state' := { ctx.state with accounts := accounts' }
+            let regs' := setR7 regs oldLen
+            (mkResult regs' mem gas', { ctx with state := state' })
+          | none =>
+            -- Key didn't exist, nothing to delete
+            let regs' := setR7 regs oldLen
+            (mkResult regs' mem gas', ctx)
         else
           match PVM.readByteArray mem valPtr valLen with
           | .ok valBytes =>
-            let acct' := { acct with storage := acct.storage.insert keyBytes valBytes }
+            let newSize := 34 + keyBytes.size + valBytes.size
+            let (items', footprint') := match oldVal with
+              | some oldV =>
+                let oldSize := 34 + keyBytes.size + oldV.size
+                (acct.created, acct.totalFootprint - oldSize + newSize)
+              | none =>
+                (acct.created + 1, acct.totalFootprint + newSize)
+            let acct' := { acct with
+              storage := acct.storage.insert keyBytes valBytes
+              created := items'
+              totalFootprint := footprint' }
             let accounts' := ctx.state.accounts.insert ctx.serviceId acct'
             let state' := { ctx.state with accounts := accounts' }
             let regs' := setR7 regs oldLen
@@ -622,9 +721,12 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
         balance := 0
         minAccGas
         minOnTransferGas
-        created := ctx.timeslot
-        lastAccumulation := 0
-        parent := ctx.serviceId
+        -- Field mapping: created=a_i(items), lastAccumulation=a_r(creation slot),
+        -- parent=a_a(last acc slot), preimageCount=a_p(parent svc)
+        created := 0                               -- a_i: item count = 0
+        lastAccumulation := UInt32.ofNat ctx.timeslot.toNat  -- a_r: creation timeslot
+        parent := 0                                -- a_a: last acc slot = 0
+        preimageCount := ctx.serviceId.toNat        -- a_p: parent service ID
       }
       let accounts' := ctx.state.accounts.insert newId newAcct
       let state' := { ctx.state with accounts := accounts' }
@@ -932,7 +1034,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
   | none =>
     -- Service doesn't exist: no-op
     { postState := ps, deferredTransfers := #[], yieldHash := none,
-      gasUsed := 0, provisions := #[] }
+      gasUsed := 0, provisions := #[], opaqueData }
   | some acct =>
     -- Compute total gas available
     let operandGas := operands.foldl (init := (0 : UInt64)) fun acc op => acc + op.gasLimit
@@ -967,6 +1069,20 @@ def accone (ps : PartialState) (serviceId : ServiceId)
           id := sThreshold + ((id - sThreshold + 1) % range)
         return id
 
+    -- Look up service code blob from preimage store, falling back to opaque data
+    -- If found in opaque, promote to preimage store and remove from opaqueData
+    -- Use acct' (which has credited transfer balance) as the base
+    let acctCredited := acct'
+    let (codeOpt, acctFinal, opaqueData') := match acctCredited.preimages.lookup acctCredited.codeHash with
+      | some blob => (some blob, acctCredited, opaqueData)
+      | none =>
+        match promotePreimageLookup acctCredited opaqueData serviceId acctCredited.codeHash with
+        | some (acctPromoted, opaqueData') =>
+          (acctPromoted.preimages.lookup acctCredited.codeHash, acctPromoted, opaqueData')
+        | none => (none, acctCredited, opaqueData)
+    -- Update accounts with promoted code blob (preserving credited balance)
+    let ps := { ps with accounts := ps.accounts.insert serviceId acctFinal }
+
     -- Build accumulation context
     let ctx : AccContext := {
       serviceId
@@ -983,24 +1099,16 @@ def accone (ps : PartialState) (serviceId : ServiceId)
       configBlob
       itemsBlob
       items
-      opaqueData
+      opaqueData := opaqueData'
     }
 
-    -- Look up service code blob from preimage store, falling back to opaque data
-    let codeOpt := match acct.preimages.lookup acct.codeHash with
-      | some blob => some blob
-      | none =>
-        -- Try opaque data: compute expected key C(s, E_4(2^32-2) ++ code_hash)
-        let codeKey := StateSerialization.stateKeyForServiceData serviceId
-          (StateSerialization.preimageHashArg acct.codeHash)
-        opaqueData.findSome? fun (k, v) => if k == codeKey.data then some v else none
     let _ := ()
     match codeOpt with
     | none =>
       -- Code not available: service cannot accumulate
       let _ := ()
       { postState := ps, deferredTransfers := #[], yieldHash := none,
-        gasUsed := totalGas, provisions := #[] }
+        gasUsed := totalGas, provisions := #[], opaqueData := opaqueData' }
     | some codeBlob =>
       -- Encode accumulation arguments
       let itemCount := transfers.size + operands.size
@@ -1012,7 +1120,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
         -- Invalid program blob: panic
         let _ := ()
         { postState := ps, deferredTransfers := #[], yieldHash := none,
-          gasUsed := totalGas, provisions := #[] }
+          gasUsed := totalGas, provisions := #[], opaqueData := opaqueData' }
       | some (prog, regs, mem) =>
         -- Verify args were written correctly to PVM memory
         let argBase := PVM.getReg regs 7
@@ -1067,6 +1175,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
           yieldHash := ctx'.yieldHash
           gasUsed
           provisions := ctx'.provisions
+          opaqueData := ctx'.opaqueData
           exitReasonStr := exitStr
           hostCallLog := ctx'.hostCallLog }
 
@@ -1106,7 +1215,7 @@ def accpar (ps : PartialState) (reports : Array WorkReport)
     (transfers : Array DeferredTransfer) (freeGasMap : Dict ServiceId Gas)
     (timeslot : Timeslot) (entropy : Hash) (configBlob : ByteArray)
     (opaqueData : Array (ByteArray × ByteArray) := #[])
-    : PartialState × Array DeferredTransfer × Array (ServiceId × Hash) × Dict ServiceId Gas × Array (ServiceId × String) :=
+    : PartialState × Array DeferredTransfer × Array (ServiceId × Hash) × Dict ServiceId Gas × Array (ServiceId × String) × Array (ByteArray × ByteArray) :=
   let operandGroups := groupByService reports
   let transferGroups := groupTransfersByDest transfers
 
@@ -1114,16 +1223,17 @@ def accpar (ps : PartialState) (reports : Array WorkReport)
   let serviceIds := ((operandGroups.keys ++ transferGroups.keys).eraseDups).mergeSort (· < ·)
 
   -- Accumulate each service
-  let (ps', allTransfers, allYields, gasMap, exitReasons) := serviceIds.foldl
-    (init := (ps, #[], #[], Dict.empty (K := ServiceId) (V := Gas), #[]))
-    fun (ps, xfers, yields, gm, exits) sid =>
+  let (ps', allTransfers, allYields, gasMap, exitReasons, opaqueData') := serviceIds.foldl
+    (init := (ps, #[], #[], Dict.empty (K := ServiceId) (V := Gas), #[], opaqueData))
+    fun (ps, xfers, yields, gm, exits, od) sid =>
       let ops := match operandGroups.lookup sid with | some o => o | none => #[]
       let txs := match transferGroups.lookup sid with | some t => t | none => #[]
       let freeGas := match freeGasMap.lookup sid with | some g => g | none => 0
       let (itemsBlob, items) := buildItemsBlob ops txs
       let result := accone ps sid ops txs freeGas timeslot entropy configBlob
-        itemsBlob items opaqueData
+        itemsBlob items od
       let ps' := result.postState
+      let od' := result.opaqueData
       let xfers' := xfers ++ result.deferredTransfers
       let logStr := if result.hostCallLog.size > 0
         then " hostCalls=[" ++ String.intercalate "; " result.hostCallLog.toList ++ "]"
@@ -1133,8 +1243,8 @@ def accpar (ps : PartialState) (reports : Array WorkReport)
         | some h => yields.push (sid, h)
         | none => yields
       let gm' := gm.insert sid (UInt64.ofNat result.gasUsed.toNat)
-      (ps', xfers', yields', gm', exits')
-  (ps', allTransfers, allYields, gasMap, exitReasons)
+      (ps', xfers', yields', gm', exits', od')
+  (ps', allTransfers, allYields, gasMap, exitReasons, opaqueData')
 
 -- ============================================================================
 -- accseq — Sequential Accumulation — GP eq:accseq
@@ -1148,28 +1258,31 @@ def accseq (_gasLimit : Gas) (reports : Array WorkReport)
     (ps : PartialState) (freeGasMap : Dict ServiceId Gas)
     (timeslot : Timeslot) (entropy : Hash) (configBlob : ByteArray)
     (opaqueData : Array (ByteArray × ByteArray) := #[])
-    : Nat × PartialState × Array (ServiceId × Hash) × Dict ServiceId Gas × Array (ServiceId × String) :=
+    : Nat × PartialState × Array (ServiceId × Hash) × Dict ServiceId Gas × Array (ServiceId × String) × Array (ByteArray × ByteArray) :=
   -- Round 1: accumulate work-report operands + initial deferred transfers
-  let (ps1, newXfers1, yields1, gasMap1, exits1) := accpar ps reports initialTransfers freeGasMap timeslot entropy configBlob opaqueData
+  let (ps1, newXfers1, yields1, gasMap1, exits1, od1) := accpar ps reports initialTransfers freeGasMap timeslot entropy configBlob opaqueData
 
   -- Round 2: process deferred transfers generated in round 1
   if newXfers1.size == 0 then
-    (reports.size, ps1, yields1, gasMap1, exits1)
+    (reports.size, ps1, yields1, gasMap1, exits1, od1)
   else
-    let (ps2, newXfers2, yields2, gasMap2, exits2) := accpar ps1 #[] newXfers1 Dict.empty timeslot entropy configBlob opaqueData
+    let (ps2, newXfers2, yields2, gasMap2, exits2, od2) := accpar ps1 #[] newXfers1 Dict.empty timeslot entropy configBlob od1
     let allYields := yields1 ++ yields2
+    -- Merge gas maps by ADDING values (not replacing)
     let gasMapFinal := gasMap2.entries.foldl (init := gasMap1) fun acc (k, v) =>
-      acc.insert k v
+      let existing := match acc.lookup k with | some g => g | none => 0
+      acc.insert k (existing + v)
 
     -- Round 3: process any further deferred transfers (last round)
     if newXfers2.size == 0 then
-      (reports.size, ps2, allYields, gasMapFinal, exits1 ++ exits2)
+      (reports.size, ps2, allYields, gasMapFinal, exits1 ++ exits2, od2)
     else
-      let (ps3, _, yields3, gasMap3, exits3) := accpar ps2 #[] newXfers2 Dict.empty timeslot entropy configBlob opaqueData
+      let (ps3, _, yields3, gasMap3, exits3, od3) := accpar ps2 #[] newXfers2 Dict.empty timeslot entropy configBlob od2
       let finalYields := allYields ++ yields3
       let gasMapFinal' := gasMap3.entries.foldl (init := gasMapFinal) fun acc (k, v) =>
-        acc.insert k v
-      (reports.size, ps3, finalYields, gasMapFinal', exits1 ++ exits2 ++ exits3)
+        let existing := match acc.lookup k with | some g => g | none => 0
+        acc.insert k (existing + v)
+      (reports.size, ps3, finalYields, gasMapFinal', exits1 ++ exits2 ++ exits3, od3)
 
 -- ============================================================================
 -- Top-Level Accumulation — GP §12
@@ -1189,6 +1302,8 @@ structure AccumulationResult where
   outputs : Array (ServiceId × Hash)
   /-- Per-service gas usage. -/
   gasUsage : Dict ServiceId Gas
+  /-- Remaining opaque data after accumulation (consumed entries removed). -/
+  remainingOpaqueData : Array (ByteArray × ByteArray) := #[]
   /-- Debug: per-service exit reason strings. -/
   exitReasons : Array (ServiceId × String) := #[]
 
@@ -1254,7 +1369,7 @@ def accumulate (state : State) (reports : Array WorkReport)
 
   let configBlob := buildConfigBlob
 
-  let (_, ps', outputs, gasUsage, exitReasons) := accseq
+  let (_, ps', outputs, gasUsage, exitReasons, remainingOpaque) := accseq
     (UInt64.ofNat G_T) reports #[] ps freeGasMap timeslot
     state.entropy.current configBlob opaqueData
 
@@ -1270,6 +1385,7 @@ def accumulate (state : State) (reports : Array WorkReport)
     stagingKeys := ps'.stagingKeys
     outputs
     gasUsage
+    remainingOpaqueData := remainingOpaque
     exitReasons }
 
 end Jar.Accumulation
