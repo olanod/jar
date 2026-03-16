@@ -1090,14 +1090,18 @@ def stateTransitionWithOpaque (s : State) (b : Block)
   guard (validateGuaranteeIndices ext.guarantees)
   -- Block import validation: guarantee timeslots not in future
   guard (validateGuaranteeTimeslots ext.guarantees t')
-  -- Block import validation: guarantee credential signatures
-  -- GP: each guarantee should be checked against the validator set for the epoch
-  -- in which it was created. Current implementation is overly permissive: accepts
-  -- if signatures verify against ANY of {current, next, previous} validator sets.
-  -- TODO: determine epoch from guarantee context and use the precise validator set.
-  guard (validateGuaranteeSignatures ext.guarantees s.currentValidators ||
-         validateGuaranteeSignatures ext.guarantees kappa' ||
-         validateGuaranteeSignatures ext.guarantees s.previousValidators)
+  -- Block import validation: guarantee credential signatures. GP eq (11.22).
+  -- Each guarantee is checked against the validator set for its creation epoch.
+  guard (ext.guarantees.all fun g =>
+    let gEpoch := epochIndex g.timeslot
+    let blockEpoch := epochIndex t'
+    let validators :=
+      if gEpoch == blockEpoch then kappa'
+      else if gEpoch + 1 == blockEpoch then
+        if isEpochChange s.timeslot t' then s.currentValidators
+        else s.previousValidators
+      else s.previousValidators  -- fallback for older guarantees
+    validateGuaranteeSignatures #[g] validators)
   -- Block import validation: guarantee report context anchor must be in recent history
   guard (ext.guarantees.all fun g =>
     s.recent.blocks.any fun bi => bi.headerHash == g.report.context.anchorHash)
