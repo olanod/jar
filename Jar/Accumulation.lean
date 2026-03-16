@@ -129,8 +129,9 @@ structure AccContext where
   timeslot : Timeslot
   /-- Next service ID for new service creation. -/
   nextServiceId : ServiceId
-  /-- Checkpoint state: full partial state + opaque data (for OOG/panic revert). -/
-  checkpoint : Option (PartialState × Array (ByteArray × ByteArray))
+  /-- Checkpoint state: full context (for OOG/panic revert).
+      Saves (partialState, opaqueData, yieldHash, transfers, provisions). -/
+  checkpoint : Option (PartialState × Array (ByteArray × ByteArray) × Option Hash × Array DeferredTransfer × Array (ServiceId × ByteArray))
   /-- Entropy η'₀ for fetch mode 1. -/
   entropy : Hash
   /-- Protocol configuration blob for fetch mode 0. -/
@@ -735,8 +736,9 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
       (mkPanic regs mem gas', ctx)
 
   -- ===== checkpoint (17): Save accumulation checkpoint =====
+  -- GP: y ← x. Save the full regular context so it can be restored on panic/OOG.
   | 17 =>
-    let ctx' := { ctx with checkpoint := some (ctx.state, ctx.opaqueData) }
+    let ctx' := { ctx with checkpoint := some (ctx.state, ctx.opaqueData, ctx.yieldHash, ctx.transfers, ctx.provisions) }
     let regs' := setR7 regs gas'
     (mkResult regs' mem gas', ctx')
 
@@ -1407,10 +1409,8 @@ def accone (ps : PartialState) (serviceId : ServiceId)
             -- Panic/OOG/fault: revert to checkpoint (exceptional dimension)
             -- GP: y (exceptional context) is returned for non-halt exits
             match ctx'.checkpoint with
-            | some (savedState, savedOpaque) =>
-              (savedState,
-               (#[] : Array DeferredTransfer), (none : Option Hash),
-               (#[] : Array (ServiceId × ByteArray)), savedOpaque)
+            | some (savedState, savedOpaque, savedYield, savedTransfers, savedProvisions) =>
+              (savedState, savedTransfers, savedYield, savedProvisions, savedOpaque)
             | none =>
               (ps, #[], none, #[], opaqueData')
         -- Note: a_a (last accumulation timeslot) is updated in the δ‡ step

@@ -1102,6 +1102,18 @@ def stateTransitionWithOpaque (s : State) (b : Block)
   let psi' := updateJudgments s.judgments ext.disputes
   let rhoDag := reportsPostJudgment s.pendingReports psi'.bad
   let (rhoDDag, available) := reportsPostAssurance rhoDag ext.assurances t'
+  -- GP §11: Guarantee validity — core must be free after assurance processing (ρ‡[c] = ∅)
+  guard (ext.guarantees.all fun g =>
+    let c := g.report.coreIndex.val
+    if hc : c < rhoDDag.size then
+      match rhoDDag[c] with
+      | none => true
+      | some _ => false
+    else true)
+  -- GP §11: Work package must not have been reported in recent history
+  guard (ext.guarantees.all fun g =>
+    !(s.recent.blocks.any fun bi =>
+      bi.reportedPackages.lookup g.report.availSpec.packageHash |>.isSome))
   let rho' := reportsPostGuarantees rhoDDag ext.guarantees t'
   let bDag := updateParentStateRoot s.recent h
   let accResult := performAccumulation available s t' opaqueData eta'
