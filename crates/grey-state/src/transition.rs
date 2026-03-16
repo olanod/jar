@@ -384,10 +384,7 @@ fn process_preimages(
                     *service_id, &hash, data.len() as u32,
                 );
                 if let Some(opaque_entry) = opaque_data.iter().find(|(k, _)| *k == state_key) {
-                    let timeslots: Vec<grey_types::Timeslot> = opaque_entry.1
-                        .chunks_exact(4)
-                        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                        .collect();
+                    let timeslots = crate::accumulate::decode_preimage_info_timeslots(&opaque_entry.1);
                     account.preimage_info.insert(key, timeslots);
                 }
             }

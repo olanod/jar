@@ -13,6 +13,29 @@ use grey_types::work::{WorkReport, WorkResult};
 use grey_types::{Gas, Hash, ServiceId, Timeslot};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Decode preimage_info timeslots from compact-encoded raw bytes.
+/// Format: compact_len(count) + count × E_4(timeslot).
+pub fn decode_preimage_info_timeslots(data: &[u8]) -> Vec<Timeslot> {
+    if data.is_empty() {
+        return vec![];
+    }
+    let mut pos = 0;
+    let count = match grey_codec::decode_compact_at(data, &mut pos) {
+        Ok(n) => n as usize,
+        Err(_) => return vec![],
+    };
+    let mut timeslots = Vec::with_capacity(count);
+    for _ in 0..count {
+        if pos + 4 > data.len() {
+            break;
+        }
+        let t = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+        pos += 4;
+        timeslots.push(t);
+    }
+    timeslots
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -1625,23 +1648,21 @@ fn host_solicit(pvm: &mut PvmInstance, ctx: &mut AccContext, timeslot: Timeslot)
                 ctx.service_id, &hash, z,
             );
             if let Some(v) = account.opaque_data.remove(&state_key) {
-                // Decode timeslots from raw bytes (4 bytes LE each)
-                let timeslots: Vec<Timeslot> = v
-                    .chunks_exact(4)
-                    .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
+                // Decode timeslots: compact-encoded count + 4-byte LE timeslots
+                let timeslots = decode_preimage_info_timeslots(&v);
                 account.preimage_info.insert(key, timeslots);
             }
         }
 
         if let Some(ts) = account.preimage_info.get(&key) {
-            if ts.len() == 2 {
-                // Already has [x, y] — append t to get [x, y, t]
+            let n = ts.len();
+            if n == 1 || n == 2 {
+                // Has 1 or 2 timeslots — append τ' (GP: |l| ∈ {1,2} → l ++ [τ'])
                 let mut new_ts = ts.clone();
                 new_ts.push(timeslot);
                 account.preimage_info.insert(key, new_ts);
             } else {
-                // Already solicited with different state
+                // Empty (already solicited) or 3+ (max reached) → HUH
                 pvm.set_reg(7, HOST_HUH);
                 return true;
             }
@@ -1698,10 +1719,8 @@ fn host_forget(pvm: &mut PvmInstance, ctx: &mut AccContext, timeslot: Timeslot, 
                 ctx.service_id, &hash, z,
             );
             if let Some(v) = account.opaque_data.remove(&state_key) {
-                let timeslots: Vec<Timeslot> = v
-                    .chunks_exact(4)
-                    .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                    .collect();
+                // Decode timeslots: compact-encoded count + 4-byte LE timeslots
+                let timeslots = decode_preimage_info_timeslots(&v);
                 account.preimage_info.insert(key, timeslots);
             }
         }
@@ -1787,10 +1806,8 @@ fn host_provide(pvm: &mut PvmInstance, ctx: &mut AccContext) -> bool {
             target, &hash, z,
         );
         if let Some(v) = account.opaque_data.remove(&state_key) {
-            let timeslots: Vec<Timeslot> = v
-                .chunks_exact(4)
-                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-                .collect();
+            // Decode timeslots: compact-encoded count + 4-byte LE timeslots
+            let timeslots = decode_preimage_info_timeslots(&v);
             account.preimage_info.insert(key, timeslots);
         }
     }
