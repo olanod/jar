@@ -2625,7 +2625,9 @@ pub fn run_accumulation(
     let accumulated_sids: std::collections::BTreeSet<ServiceId> =
         acc_output.accumulation_stats.keys().copied().collect();
 
-    // Collect remaining opaque data from all service accounts
+    // Collect remaining opaque data from all service accounts after accumulation.
+    // Ejected services are removed from acc_state.accounts, so their opaque data
+    // is correctly excluded.
     let mut remaining_opaque: Vec<([u8; 31], Vec<u8>)> = Vec::new();
     for (_, acc) in &acc_state.accounts {
         for (k, v) in &acc.opaque_data {
