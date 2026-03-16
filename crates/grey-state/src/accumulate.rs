@@ -721,6 +721,7 @@ fn handle_host_call(
     };
 
 
+
     let result = match id {
         0 => host_gas(pvm, regular),
         1 => host_fetch(pvm, fetch_ctx),
@@ -752,6 +753,7 @@ fn handle_host_call(
             true
         }
     };
+
     result
 }
 

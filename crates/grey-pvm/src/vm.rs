@@ -1443,7 +1443,13 @@ impl Pvm {
     pub fn run(&mut self) -> (ExitReason, Gas) {
         let initial_gas = self.gas;
 
+        // Use step-by-step path: basic-block gas metering has an off-by-one
+        // when entering at a non-zero PC (e.g., pc=5 for accumulation).
+        // TODO: Fix basic-block metering to handle mid-block entry correctly.
+        return self.run_stepping(initial_gas);
+
         // If tracing is enabled, fall back to the slow step-by-step path
+        #[allow(unreachable_code)]
         if self.tracing_enabled {
             return self.run_stepping(initial_gas);
         }
