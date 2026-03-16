@@ -51,7 +51,7 @@ pub fn apply_with_config(state: &State, block: &Block, config: &Config, opaque_d
     clear_disputed_reports(&mut new_state, &extrinsic.disputes, config);
 
     // Step 4: Safrole sub-transition (Section 6)
-    apply_safrole(&mut new_state, header, config, prior_timeslot);
+    apply_safrole(&mut new_state, header, &block.extrinsic.tickets, config, prior_timeslot);
 
     // Step 5: Process availability assurances (Section 11.2)
     let available_reports = process_assurances(&mut new_state, &extrinsic.assurances, header.timeslot, config);
@@ -204,6 +204,7 @@ fn clear_disputed_reports(
 fn apply_safrole(
     state: &mut State,
     header: &grey_types::header::Header,
+    tickets: &[grey_types::header::TicketProof],
     config: &Config,
     prior_timeslot: u32,
 ) {
@@ -229,10 +230,26 @@ fn apply_safrole(
     let input = crate::safrole::SafroleInput {
         slot: header.timeslot,
         entropy: vrf_output,
-        extrinsic: vec![], // Ticket processing handled separately for now
+        extrinsic: tickets.to_vec(),
     };
 
-    match crate::safrole::process_safrole(config, &input, &safrole_pre, None) {
+    let ring_size = safrole_pre.gamma_k.len();
+    let verifier = move |tp: &grey_types::header::TicketProof,
+                         gamma_z: &grey_types::BandersnatchRingRoot,
+                         eta2: &Hash,
+                         attempt: u8|
+                         -> Option<Hash> {
+        let ticket_id_bytes = grey_crypto::bandersnatch::verify_ticket(
+            ring_size,
+            &gamma_z.0,
+            &eta2.0,
+            attempt,
+            &tp.proof,
+        )?;
+        Some(Hash(ticket_id_bytes))
+    };
+
+    match crate::safrole::process_safrole(config, &input, &safrole_pre, Some(&verifier)) {
         Ok(output) => {
             state.entropy = output.state.eta;
             state.previous_validators = output.state.lambda;
@@ -449,10 +466,11 @@ fn rotate_auth_pool(
 pub fn debug_apply_safrole(
     state: &mut State,
     header: &grey_types::header::Header,
+    tickets: &[grey_types::header::TicketProof],
     config: &Config,
     prior_timeslot: u32,
 ) {
-    apply_safrole(state, header, config, prior_timeslot);
+    apply_safrole(state, header, tickets, config, prior_timeslot);
 }
 
 pub fn debug_process_assurances(

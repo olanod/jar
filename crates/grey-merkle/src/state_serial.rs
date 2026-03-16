@@ -408,13 +408,15 @@ fn serialize_validators(validators: &[grey_types::validator::ValidatorKey]) -> V
 
 /// C(10): ρ pending_reports — C fixed-size array of ¿(report, E_4(timeslot)).
 fn serialize_pending_reports(reports: &[Option<PendingReport>]) -> Vec<u8> {
+    use grey_codec::Encode;
     let mut buf = Vec::new();
     for report in reports {
         match report {
             None => buf.push(0),
             Some(pr) => {
                 buf.push(1);
-                serialize_work_report_state(&pr.report, &mut buf);
+                // Use standard block encoding E(r ∈ R) for work reports in state
+                pr.report.encode_to(&mut buf);
                 buf.extend_from_slice(&pr.timeslot.to_le_bytes());
             }
         }
@@ -520,11 +522,13 @@ fn serialize_validator_records_e4(
 fn serialize_accumulation_queue(
     queue: &[Vec<(grey_types::work::WorkReport, Vec<Hash>)>],
 ) -> Vec<u8> {
+    use grey_codec::Encode;
     let mut buf = Vec::new();
     for slot in queue {
         encode_compact(slot.len() as u64, &mut buf);
         for (report, deps) in slot {
-            serialize_work_report_state(report, &mut buf);
+            // Use standard block encoding E(r ∈ R) for work reports
+            report.encode_to(&mut buf);
             // ↕ sorted dependency hashes
             encode_compact(deps.len() as u64, &mut buf);
             for hash in deps {
@@ -556,63 +560,6 @@ fn serialize_accumulation_outputs(outputs: &[(ServiceId, Hash)]) -> Vec<u8> {
         buf.extend_from_slice(&hash.0);
     }
     buf
-}
-
-/// C(255, s): service account metadata.
-/// Serialize a WorkReport for state context using fixed-width fields.
-/// This matches the format expected by `deserialize_work_report`:
-/// - core_index as E_2 (fixed 2 bytes), NOT compact
-/// - auth_gas_used as E_8 (fixed 8 bytes), NOT compact
-/// - WorkDigest RefineLoad fields as fixed-width, NOT compact
-fn serialize_work_report_state(report: &grey_types::work::WorkReport, buf: &mut Vec<u8>) {
-    use grey_codec::Encode;
-
-    // package_spec and context use standard fixed-width codec
-    report.package_spec.encode_to(buf);
-    report.context.encode_to(buf);
-
-    // core_index: E_2 (fixed 2 bytes)
-    buf.extend_from_slice(&report.core_index.to_le_bytes());
-
-    // authorizer_hash: 32 bytes
-    buf.extend_from_slice(&report.authorizer_hash.0);
-
-    // auth_gas_used: E_8 (fixed 8 bytes)
-    buf.extend_from_slice(&report.auth_gas_used.to_le_bytes());
-
-    // auth_output: ↕ length-prefixed blob
-    report.auth_output.encode_to(buf);
-
-    // segment_root_lookup: dictionary
-    report.segment_root_lookup.encode_to(buf);
-
-    // results: ↕ length-prefixed sequence of WorkDigest
-    encode_compact(report.results.len() as u64, buf);
-    for digest in &report.results {
-        serialize_work_digest_state(digest, buf);
-    }
-}
-
-/// Serialize a WorkDigest for state context using fixed-width RefineLoad fields.
-/// This matches the format expected by `deserialize_work_digest_state`.
-fn serialize_work_digest_state(digest: &grey_types::work::WorkDigest, buf: &mut Vec<u8>) {
-    use grey_codec::Encode;
-
-    // Fixed-width fields
-    buf.extend_from_slice(&digest.service_id.to_le_bytes());
-    buf.extend_from_slice(&digest.code_hash.0);
-    buf.extend_from_slice(&digest.payload_hash.0);
-    buf.extend_from_slice(&digest.accumulate_gas.to_le_bytes());
-
-    // WorkResult uses standard codec
-    digest.result.encode_to(buf);
-
-    // RefineLoad fields: fixed-width in state context
-    buf.extend_from_slice(&digest.gas_used.to_le_bytes());
-    buf.extend_from_slice(&digest.imports_count.to_le_bytes());
-    buf.extend_from_slice(&digest.extrinsics_count.to_le_bytes());
-    buf.extend_from_slice(&digest.extrinsics_size.to_le_bytes());
-    buf.extend_from_slice(&digest.exports_count.to_le_bytes());
 }
 
 /// E(0, a_c, E_8(a_b, a_g, a_m, a_o, a_f), E_4(a_i, a_r, a_a, a_p))
@@ -1144,101 +1091,22 @@ fn deserialize_pending_reports(
     Ok(reports)
 }
 
-/// Deserialize a work report from state context (fixed-width numerics).
+/// Deserialize a work report from state context.
+///
+/// Uses the standard block Decode for WorkReport since serialize_pending_reports
+/// uses the standard block Encode (compact for core_index, auth_gas_used, and
+/// RefineLoad fields).
 fn deserialize_work_report(
     data: &[u8],
     pos: &mut usize,
 ) -> Result<grey_types::work::WorkReport, String> {
     use grey_codec::Decode;
 
-    // package_spec (AvailabilitySpec) — all fields already fixed-width in Decode
     let remaining = &data[*pos..];
-    let (package_spec, c) = grey_types::work::AvailabilitySpec::decode(remaining)
-        .map_err(|e| format!("availability spec decode error: {e}"))?;
-    *pos += c;
-
-    // context (RefinementContext) — all fields already fixed-width in Decode
-    let remaining = &data[*pos..];
-    let (context, c) = grey_types::work::RefinementContext::decode(remaining)
-        .map_err(|e| format!("refine context decode error: {e}"))?;
-    *pos += c;
-
-    // core_index: E_2 (fixed 2 bytes, NOT compact)
-    let core_index = read_u16(data, pos)?;
-
-    // authorizer_hash: 32-byte hash
-    let authorizer_hash = read_hash(data, pos)?;
-
-    // auth_gas_used: E_8 (fixed 8 bytes, NOT compact)
-    let auth_gas_used = read_u64(data, pos)?;
-
-    // auth_output: ↕ length-prefixed blob
-    let remaining = &data[*pos..];
-    let (auth_output, c) = Vec::<u8>::decode(remaining)
-        .map_err(|e| format!("auth output decode error: {e}"))?;
-    *pos += c;
-
-    // segment_root_lookup: dictionary
-    let remaining = &data[*pos..];
-    let (segment_root_lookup, c) = std::collections::BTreeMap::<grey_types::Hash, grey_types::Hash>::decode(remaining)
-        .map_err(|e| format!("segment root lookup decode error: {e}"))?;
-    *pos += c;
-
-    // results: ↕ length-prefixed sequence of WorkDigest (with fixed-width RefineLoad)
-    let result_count = decode_compact(data, pos)? as usize;
-    let mut results = Vec::with_capacity(result_count);
-    for _ in 0..result_count {
-        results.push(deserialize_work_digest_state(data, pos)?);
-    }
-
-    Ok(grey_types::work::WorkReport {
-        package_spec,
-        context,
-        core_index,
-        authorizer_hash,
-        auth_gas_used,
-        auth_output,
-        segment_root_lookup,
-        results,
-    })
-}
-
-/// Deserialize a work digest from state context (fixed-width RefineLoad fields).
-fn deserialize_work_digest_state(
-    data: &[u8],
-    pos: &mut usize,
-) -> Result<grey_types::work::WorkDigest, String> {
-    use grey_codec::Decode;
-
-    let service_id = read_u32(data, pos)?;
-    let code_hash = read_hash(data, pos)?;
-    let payload_hash = read_hash(data, pos)?;
-    let accumulate_gas = read_u64(data, pos)?;
-
-    let remaining = &data[*pos..];
-    let (result, c) = grey_types::work::WorkResult::decode(remaining)
-        .map_err(|e| format!("work result decode error: {e}"))?;
-    *pos += c;
-
-    // RefineLoad fields — fixed-width in state context:
-    let gas_used = read_u64(data, pos)?;
-    let imports_count = read_u16(data, pos)?;
-    let extrinsics_count = read_u16(data, pos)?;
-    let extrinsics_size = read_u32(data, pos)?;
-    let exports_count = read_u16(data, pos)?;
-
-    Ok(grey_types::work::WorkDigest {
-        service_id,
-        code_hash,
-        payload_hash,
-        accumulate_gas,
-        result,
-        gas_used,
-        imports_count,
-        extrinsics_count,
-        extrinsics_size,
-        exports_count,
-    })
+    let (report, consumed) = grey_types::work::WorkReport::decode(remaining)
+        .map_err(|e| format!("work report decode error: {e}"))?;
+    *pos += consumed;
+    Ok(report)
 }
 
 fn deserialize_privileged(data: &[u8], config: &Config) -> Result<PrivilegedServices, String> {
