@@ -228,24 +228,25 @@ crates/
 | Trace | Blocks | Status |
 |-------|--------|--------|
 | fallback | 100 | 100/100 |
-| safrole | 100 | 48/100 |
-| conformance_forks | 100 | 3/32 non-error |
-| conformance_no_forks | 100 | 3/100 (sequential) |
-| storage | 100 | 1/100 |
-| storage_light | 100 | 0/100 |
-| preimages | 100 | 0/100 |
-| preimages_light | 100 | 0/100 |
-| fuzzy | 200 | crashes (deserialize bug) |
-| fuzzy_light | 200 | crashes (deserialize bug) |
+| safrole | 100 | 100/100 |
+| storage | 100 | 100/100 |
+| storage_light | 100 | 100/100 |
+| preimages | 100 | 100/100 |
+| preimages_light | 100 | 100/100 |
+| fuzzy_light | 200 | 193/200 |
+| fuzzy | 200 | 101/200 |
+| conformance_no_forks | 100 | 66/100 (sequential) |
+| conformance_forks | 100 | 29/32 non-error |
+
+**7/10 traces fully pass. 989/1200 blocks pass (82%).**
 
 ### Known Issues
-- State serialization uses fixed-width encoding for work reports in `deserialize_work_report` but the actual data uses standard compact encoding — causes fuzzy trace crashes
-- `host_eject` (id=21): Basic implementation only — missing full GP logic
-- Various accumulation bugs exposed by storage/preimage/fuzzy block traces
+- PVM execution divergence in some accumulation scenarios: Grey's PVM takes different code paths than JAR's for 7 fuzzy_light blocks and 99 fuzzy blocks. Root cause is likely in host call data that differs early in execution, cascading into different branches.
+- `host_eject` (id=21): Service ejection not triggered in block traces because PVM never reaches the eject call — upstream host call divergence.
+- Sequential trace (conformance_no_forks): 34 failures cascade from first divergence at block 43.
 
 ### What's Next
-- Fix work report deserialization (compact vs fixed-width encoding)
-- Fix remaining block trace failures (storage, preimages, safrole)
+- Debug remaining PVM execution divergence (per-instruction comparison with JAR)
 - P2P networking layer in `grey-network`
 - Node executable with genesis, block import, validator mode
 
