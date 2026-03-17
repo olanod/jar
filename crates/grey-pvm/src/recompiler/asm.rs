@@ -497,6 +497,15 @@ impl Assembler {
         self.emit_i32(imm);
     }
 
+    /// add qword [base + disp32], imm32
+    pub fn add_mem64_imm32(&mut self, base: Reg, disp: i32, imm: i32) {
+        self.rex_w_b(base);          // REX.W (+ REX.B if base is R8-R15)
+        self.emit(0x81);             // ALU r/m64, imm32
+        self.modrm_disp32(0, base);  // /0 = ADD
+        self.emit_i32(disp);
+        self.emit_i32(imm);
+    }
+
     // -- IMUL --
 
     /// imul r64, r64

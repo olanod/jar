@@ -471,6 +471,8 @@ pub struct RecompiledPvm {
     jump_table: Vec<u32>,
     /// Basic block starts.
     basic_block_starts: Vec<bool>,
+    /// Gas block starts (for gas correction on mid-block exits).
+    gas_block_starts: Vec<bool>,
     /// Initial gas.
     initial_gas: Gas,
     /// Dispatch table: PVM PC → native code offset (-1 = invalid).
@@ -499,7 +501,7 @@ impl RecompiledPvm {
 
         // Compute actual control-flow basic blocks for gas metering.
         // This is much coarser than per-instruction, reducing gas check overhead.
-        let gas_block_starts = codegen::compute_gas_blocks(&code, &bitmask);
+        let gas_block_starts = codegen::compute_gas_blocks(&code, &bitmask, &jump_table);
 
         // Allocate memory on the heap so we have a stable pointer
         let memory = Box::new(memory);
@@ -566,7 +568,7 @@ impl RecompiledPvm {
             basic_block_starts.clone(),
             jump_table.clone(),
             helpers,
-            gas_block_starts,
+            gas_block_starts.clone(),
         );
         let (native, dispatch_table) = compiler.compile(&code, &bitmask);
 
@@ -591,6 +593,7 @@ impl RecompiledPvm {
             bitmask,
             jump_table,
             basic_block_starts,
+            gas_block_starts,
             initial_gas: gas,
             dispatch_table,
             debug,
@@ -647,13 +650,61 @@ impl RecompiledPvm {
 
             // Read exit reason from context
             match self.ctx().exit_reason {
-                0 => return ExitReason::Halt,
-                1 => return ExitReason::Panic,
-                2 => {
-                    self.ctx_mut().entry_pc = self.ctx().pc;
-                    return ExitReason::OutOfGas;
+                0 => {
+                    let exit_pc = self.ctx().pc as usize;
+                    self.correct_gas_for_mid_block_exit(exit_pc);
+                    return ExitReason::Halt;
                 }
-                3 => return ExitReason::PageFault(self.ctx().exit_arg),
+                1 => {
+                    let exit_pc = self.ctx().pc as usize;
+                    self.correct_gas_for_mid_block_exit(exit_pc);
+                    return ExitReason::Panic;
+                }
+                2 => {
+                    // Block-level OOG: gas was restored to pre-subtraction value.
+                    // Fall back to the interpreter for the remaining instructions
+                    // in this block, which handles per-instruction OOG correctly.
+                    let pc = self.ctx().pc;
+                    let remaining_gas = self.ctx().gas as u64;
+                    if remaining_gas == 0 {
+                        // Truly out of gas — no instructions can execute
+                        self.ctx_mut().entry_pc = pc;
+                        return ExitReason::OutOfGas;
+                    }
+                    // Build an interpreter from the current recompiler state and run it
+                    let mut interp = crate::vm::Pvm::new(
+                        self.code.clone(),
+                        self.bitmask.clone(),
+                        self.jump_table.clone(),
+                        *self.registers(),
+                        self.memory().clone(),
+                        remaining_gas,
+                    );
+                    interp.pc = pc;
+                    interp.heap_base = self.ctx().heap_base;
+                    interp.heap_top = self.ctx().heap_top;
+                    let (exit, _) = interp.run();
+                    // Sync state back from interpreter
+                    for i in 0..13 {
+                        self.ctx_mut().regs[i] = interp.registers[i];
+                    }
+                    self.ctx_mut().gas = interp.gas as i64;
+                    self.ctx_mut().pc = interp.pc;
+                    self.ctx_mut().entry_pc = interp.pc;
+                    self.ctx_mut().heap_base = interp.heap_base;
+                    self.ctx_mut().heap_top = interp.heap_top;
+                    // Sync memory back to flat buffer
+                    self.sync_memory_from_interp(&interp.memory);
+                    return exit;
+                }
+                3 => {
+                    // Page fault mid-block: gas was charged for the full block
+                    // at block start, but only some instructions executed.
+                    // Correct gas by adding back the un-executed portion.
+                    let fault_pc = self.ctx().pc as usize;
+                    self.correct_gas_for_mid_block_exit(fault_pc);
+                    return ExitReason::PageFault(self.ctx().exit_arg);
+                }
                 4 => {
                     self.ctx_mut().entry_pc = self.ctx().pc;
                     return ExitReason::HostCall(self.ctx().exit_arg);
@@ -798,6 +849,56 @@ impl RecompiledPvm {
             }
         }
         true
+    }
+
+    /// Sync flat buffer from an interpreter's Memory (after interpreter fallback).
+    /// Correct gas for a mid-block exit (halt, panic, page fault).
+    ///
+    /// With block-level gas metering, the full block cost is subtracted at block
+    /// start. If execution exits mid-block, we've over-charged gas for the
+    /// instructions that didn't execute. This adds back the un-executed portion.
+    fn correct_gas_for_mid_block_exit(&mut self, exit_pc: usize) {
+        // Find the gas block containing exit_pc by scanning backwards.
+        let mut block_start = exit_pc;
+        while block_start > 0 {
+            if block_start < self.gas_block_starts.len() && self.gas_block_starts[block_start] {
+                break;
+            }
+            block_start -= 1;
+        }
+
+        // Count instructions from exit_pc+1 to end of gas block (the un-executed tail).
+        let block_cost = codegen::compute_gas_block_cost(
+            block_start, &self.code, &self.bitmask, &self.gas_block_starts,
+        );
+        let executed_cost = codegen::compute_gas_block_cost_up_to(
+            block_start, exit_pc, &self.code, &self.bitmask,
+        );
+        let refund = block_cost.saturating_sub(executed_cost);
+        if refund > 0 {
+            self.ctx_mut().gas += refund as i64;
+        }
+    }
+
+    fn sync_memory_from_interp(&mut self, memory: &Memory) {
+        if let Some(ref fm) = self.flat_memory {
+            for (page_idx, access, data) in memory.pages_iter() {
+                let perm: u8 = match access {
+                    crate::memory::PageAccess::Inaccessible => 0,
+                    crate::memory::PageAccess::ReadOnly => 1,
+                    crate::memory::PageAccess::ReadWrite => 2,
+                };
+                if (page_idx as usize) < NUM_PAGES {
+                    unsafe { *fm.perms.add(page_idx as usize) = perm; }
+                }
+                let offset = (page_idx as usize) * 4096;
+                if offset + data.len() <= FLAT_BUF_SIZE {
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(data.as_ptr(), fm.buf.add(offset), data.len());
+                    }
+                }
+            }
+        }
     }
 
     /// Get the program counter (last known PC on exit).

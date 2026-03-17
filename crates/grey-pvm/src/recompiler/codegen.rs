@@ -114,7 +114,7 @@ pub struct Compiler {
     /// Label for panic exit.
     panic_label: Label,
     /// Per-gas-block OOG stubs: (label, pvm_pc) — emitted as cold code after main body.
-    oog_stubs: Vec<(Label, u32)>,
+    oog_stubs: Vec<(Label, u32, u32)>,  // (label, pvm_pc, block_cost)
     /// Helper function addresses.
     helpers: HelperFns,
     /// Entry points: every instruction start (for dispatch table / re-entry).
@@ -195,12 +195,10 @@ impl Compiler {
                 self.asm.bind_label(label);
             }
 
-            // Gas metering: charge 1 gas per instruction (matching interpreter)
-            if pc < bitmask.len() && bitmask[pc] == 1 {
-                let stub_label = self.asm.new_label();
-                self.asm.sub_mem64_imm32(CTX, CTX_GAS, 1);
-                self.asm.jcc_label(Cc::S, stub_label);
-                self.oog_stubs.push((stub_label, pc as u32));
+            // Gas metering: charge per gas-block (basic block cost) at block start.
+            // The OOG stub restores gas and falls back to interpreter for precise OOG.
+            if pc < self.gas_block_starts.len() && self.gas_block_starts[pc] {
+                self.emit_gas_check(pc, code, bitmask);
             }
 
             // Decode instruction
@@ -333,13 +331,14 @@ impl Compiler {
 
     /// Emit memory read. Address in SCRATCH (RDX). Result in dst.
     /// Uses inline flat buffer access with helper fallback for cross-page.
-    fn emit_mem_read(&mut self, dst: Reg, _addr_reg: Reg, fn_addr: u64) {
-        self.emit_mem_read_sized(dst, fn_addr, 0);
+    fn emit_mem_read(&mut self, dst: Reg, _addr_reg: Reg, fn_addr: u64, pvm_pc: u32) {
+        self.emit_mem_read_sized(dst, fn_addr, 0, pvm_pc);
     }
 
     /// Emit inline memory read with explicit width.
     /// width_bytes: 1=u8, 2=u16, 4=u32, 8=u64. 0=auto (use fn_addr to detect).
-    fn emit_mem_read_sized(&mut self, dst: Reg, fn_addr: u64, width_bytes: u32) {
+    /// pvm_pc: the PVM PC of the instruction, stored in CTX_PC on fault for gas correction.
+    fn emit_mem_read_sized(&mut self, dst: Reg, fn_addr: u64, width_bytes: u32, pvm_pc: u32) {
         let _w = if width_bytes > 0 { width_bytes } else {
             if fn_addr == self.helpers.mem_read_u8 { 1 }
             else if fn_addr == self.helpers.mem_read_u16 { 2 }
@@ -378,6 +377,7 @@ impl Compiler {
         // Fault path
         self.asm.bind_label(fault_label);
         self.asm.pop(Reg::RAX);                      // restore phi[11]
+        self.asm.mov_store32_imm(CTX, CTX_PC as i32, pvm_pc as i32);
         self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
         self.asm.mov_store32(CTX, CTX_EXIT_ARG, SCRATCH);
         self.asm.jmp_label(self.exit_label);
@@ -386,7 +386,8 @@ impl Compiler {
     }
 
     /// Emit memory write. Address in SCRATCH, value in val_reg.
-    fn emit_mem_write(&mut self, _addr_in_scratch: bool, val_reg: Reg, fn_addr: u64) {
+    /// pvm_pc: the PVM PC stored in CTX_PC on fault for gas correction.
+    fn emit_mem_write(&mut self, _addr_in_scratch: bool, val_reg: Reg, fn_addr: u64, pvm_pc: u32) {
         let w = if fn_addr == self.helpers.mem_write_u8 { 1u32 }
             else if fn_addr == self.helpers.mem_write_u16 { 2 }
             else if fn_addr == self.helpers.mem_write_u32 { 4 }
@@ -428,6 +429,7 @@ impl Compiler {
         // Fault path
         self.asm.bind_label(fault_label);
         self.asm.pop(Reg::RAX);                      // restore phi[11]
+        self.asm.mov_store32_imm(CTX, CTX_PC as i32, pvm_pc as i32);
         self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
         self.asm.mov_store32(CTX, CTX_EXIT_ARG, SCRATCH);
         self.asm.jmp_label(self.exit_label);
@@ -534,7 +536,7 @@ impl Compiler {
                     let fn_addr = self.read_fn_for(opcode);
                     self.asm.mov_ri64(SCRATCH, addr as u64);
                     let ra_reg = REG_MAP[*ra];
-                    self.emit_mem_read(ra_reg, SCRATCH, fn_addr);
+                    self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc);
                     // Sign-extend for signed load variants
                     match opcode {
                         Opcode::LoadI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
@@ -555,7 +557,7 @@ impl Compiler {
                     let ra_reg = REG_MAP[*ra];
                     let fn_addr = self.write_fn_for(opcode);
                     self.asm.mov_ri64(SCRATCH, addr as u64);
-                    self.emit_mem_write(true, ra_reg, fn_addr);
+                    self.emit_mem_write(true, ra_reg, fn_addr, pc);
                 }
             }
 
@@ -781,7 +783,7 @@ impl Compiler {
                     }
                     self.asm.movzx_32_64(SCRATCH, SCRATCH);
                     let fn_addr = self.write_fn_for(opcode);
-                    self.emit_mem_write(true, ra_reg, fn_addr);
+                    self.emit_mem_write(true, ra_reg, fn_addr, pc);
                 }
             }
             Opcode::LoadIndU8 | Opcode::LoadIndI8 | Opcode::LoadIndU16 | Opcode::LoadIndI16 |
@@ -797,7 +799,7 @@ impl Compiler {
                     self.asm.movzx_32_64(SCRATCH, SCRATCH);
                     let fn_addr = self.read_fn_for(opcode);
                     let ra_reg = REG_MAP[*ra];
-                    self.emit_mem_read(ra_reg, SCRATCH, fn_addr);
+                    self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc);
                     // Sign-extend for signed load variants
                     match opcode {
                         Opcode::LoadIndI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
@@ -1921,11 +1923,11 @@ impl Compiler {
         if cost == 0 { return; }
 
         // sub qword [r15 + CTX_GAS], cost  — sets SF if result < 0
-        // js oog_stub_N  (cold: stores PC then jumps to shared OOG exit)
+        // js oog_stub_N  (cold: restores gas, stores PC, jumps to shared OOG exit)
         let stub_label = self.asm.new_label();
         self.asm.sub_mem64_imm32(CTX, CTX_GAS, cost as i32);
         self.asm.jcc_label(Cc::S, stub_label);
-        self.oog_stubs.push((stub_label, pc as u32));
+        self.oog_stubs.push((stub_label, pc as u32, cost));
     }
 
     /// Emit an exit sequence that sets exit_reason and exit_arg.
@@ -1978,11 +1980,14 @@ impl Compiler {
 
     /// Emit exit sequences and epilogue.
     fn emit_exit_sequences(&mut self) {
-        // Per-gas-block OOG stubs (cold code): each stores its PC then falls through
-        // to the shared OOG handler. These are never executed in normal flow.
+        // Per-gas-block OOG stubs (cold code): restore gas (undo the sub), store PC,
+        // then jump to shared OOG handler. The caller (run()) will fall back to the
+        // interpreter for the remaining instructions in this block.
         let stubs = std::mem::take(&mut self.oog_stubs);
-        for (label, pvm_pc) in &stubs {
+        for (label, pvm_pc, cost) in &stubs {
             self.asm.bind_label(*label);
+            // Restore gas to pre-subtraction value (add back the block cost)
+            self.asm.add_mem64_imm32(CTX, CTX_GAS, *cost as i32);
             self.asm.mov_store32_imm(CTX, CTX_PC as i32, *pvm_pc as i32);
             self.asm.jmp_label(self.oog_label);
         }
@@ -2039,13 +2044,22 @@ impl Compiler {
 
 /// Compute actual control-flow basic block boundaries from the instruction stream.
 /// Returns a Vec<bool> where `true` marks a gas-block start (branch target, fallthrough
-/// after terminator, ecalli re-entry point, or PC=0).
-pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
+/// after terminator, ecalli re-entry point, jump table entry, or PC=0).
+pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<bool> {
     let mut gas_starts = vec![false; code.len()];
 
     // PC=0 is always a block start
     if !code.is_empty() {
         gas_starts[0] = true;
+    }
+
+    // Dynamic jump targets: all jump table entries are potential re-entry points
+    // after a DJUMP exit is resolved by the run() loop.
+    for &target in jump_table {
+        let t = target as usize;
+        if t < code.len() {
+            gas_starts[t] = true;
+        }
     }
 
     let mut pc: usize = 0;
@@ -2120,7 +2134,7 @@ fn compute_skip(pc: usize, bitmask: &[u8]) -> usize {
 
 /// Compute gas cost for a gas block starting at `pc`.
 /// Each instruction costs 1 gas. Count until we hit a terminator or the next gas block.
-fn compute_gas_block_cost(pc: usize, code: &[u8], bitmask: &[u8], gas_starts: &[bool]) -> u32 {
+pub fn compute_gas_block_cost(pc: usize, code: &[u8], bitmask: &[u8], gas_starts: &[bool]) -> u32 {
     let mut cost = 0u32;
     let mut pos = pc;
     loop {
@@ -2143,6 +2157,26 @@ fn compute_gas_block_cost(pc: usize, code: &[u8], bitmask: &[u8], gas_starts: &[
         if pos < gas_starts.len() && gas_starts[pos] {
             break;
         }
+    }
+    cost
+}
+
+/// Compute gas cost from `block_start` up to and including `target_pc`.
+/// Used to determine how many instructions in a gas block actually executed
+/// before a mid-block exit (page fault, halt, panic).
+pub fn compute_gas_block_cost_up_to(block_start: usize, target_pc: usize, code: &[u8], bitmask: &[u8]) -> u32 {
+    let mut cost = 0u32;
+    let mut pos = block_start;
+    loop {
+        if pos >= code.len() { break; }
+        if pos < bitmask.len() && bitmask[pos] != 1 {
+            pos += 1;
+            continue;
+        }
+        cost += 1;
+        if pos >= target_pc { break; } // included this instruction
+        let skip = compute_skip(pos, bitmask);
+        pos += 1 + skip;
     }
     cost
 }
