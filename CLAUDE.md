@@ -233,15 +233,14 @@ crates/
 | storage_light | 100 | 100/100 |
 | preimages | 100 | 100/100 |
 | preimages_light | 100 | 100/100 |
-| fuzzy_light | 200 | 199/200 |
+| fuzzy_light | 200 | 200/200 |
 | fuzzy | 200 | 200/200 |
 | conformance_no_forks | 100 | 100/100 |
 | conformance_forks | 100 | 32/32 non-error |
 
-**9/10 traces fully pass. 1199/1200 blocks pass (99.92%).** 1 remaining failure (fuzzy_light block 126).
+**10/10 traces fully pass. 1200/1200 blocks pass (100%).**
 
 ### Known Issues
-- 1 fuzzy_light block fails (block 126): PVM exit reason divergence (halt vs panic) caused by ~1 gas difference, leading to different privilege state through the exceptional vs regular context.
 - PVM basic-block gas metering temporarily disabled (off-by-one when entering at non-zero PC). Uses per-instruction stepping mode.
 
 ### What's Next
