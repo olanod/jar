@@ -234,14 +234,14 @@ crates/
 | preimages | 100 | 100/100 |
 | preimages_light | 100 | 100/100 |
 | fuzzy_light | 200 | 199/200 |
-| fuzzy | 200 | 192/200 |
+| fuzzy | 200 | 200/200 |
 | conformance_no_forks | 100 | 100/100 |
 | conformance_forks | 100 | 32/32 non-error |
 
-**8/10 traces fully pass. 1191/1200 blocks pass (99.25%).** Remaining 9 failures in fuzzy traces.
+**9/10 traces fully pass. 1199/1200 blocks pass (99.92%).** 1 remaining failure (fuzzy_light block 126).
 
 ### Known Issues
-- 9 fuzzy trace blocks fail (8 fuzzy + 1 fuzzy_light): Remaining issues involve pending_reports size mismatch (23KB vs 1.3KB expected) and privilege R-merge edge cases.
+- 1 fuzzy_light block fails (block 126): PVM exit reason divergence (halt vs panic) caused by ~1 gas difference, leading to different privilege state through the exceptional vs regular context.
 - PVM basic-block gas metering temporarily disabled (off-by-one when entering at non-zero PC). Uses per-instruction stepping mode.
 
 ### What's Next
