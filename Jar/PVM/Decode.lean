@@ -139,6 +139,14 @@ def deblob (blob : ByteArray) : Option ProgramBlob := do
     else 0)
   some { code, bitmask, jumpTable }
 
+/-- Check if opcode is a basic block terminator (v0.8.0). -/
+def isTerminator (opcode : Nat) : Bool :=
+  match opcode with
+  | 0 | 1 | 2 => true   -- trap, fallthrough, unlikely
+  | 10 => true           -- ecalli
+  | 40 | 50 | 80 | 180 => true  -- jump, jump_ind, load_imm_jump, load_imm_jump_ind
+  | n => (81 ≤ n && n ≤ 90) || (170 ≤ n && n ≤ 175)  -- branches
+
 -- ============================================================================
 -- Bitmask / Skip — GP Appendix A
 -- ============================================================================
@@ -160,6 +168,27 @@ def skipDistance (bm : ByteArray) (i : Nat) : Nat :=
       else if bitmaskGet bm (i + 1 + j) then j
       else go (j + 1) fuel'
   go 0 25
+
+/-- Validate a deblobbed program for v0.8.0 basic block requirements:
+    1. Last instruction must be a basic block terminator
+    2. All branch/jump targets must be valid instruction boundaries (bitmask set)
+    Returns true if valid. -/
+def validateBasicBlocks (prog : ProgramBlob) : Bool :=
+  let code := prog.code
+  if code.size == 0 then false
+  else
+    -- Check last instruction is a terminator
+    let lastInstr := Id.run do
+      let mut last := code.size - 1
+      while last > 0 && !bitmaskGet prog.bitmask last do
+        last := last - 1
+      return last
+    let lastOpcode := if lastInstr < code.size then code.get! lastInstr |>.toNat else 0
+    if !bitmaskGet prog.bitmask lastInstr || !isTerminator lastOpcode then false
+    else
+      -- Check all jump table entries point to valid instruction boundaries
+      prog.jumpTable.all fun target =>
+        target.toNat == 0 || bitmaskGet prog.bitmask target.toNat
 
 -- ============================================================================
 -- Register Decoding — GP Appendix A

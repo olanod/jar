@@ -308,8 +308,15 @@ private def encodeAccountInfo (acct : ServiceAccount) : ByteArray :=
     Returns updated invocation result and context. -/
 def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
     (mem : PVM.Memory) (ctx : AccContext) : PVM.InvocationResult × AccContext :=
-  let callNum := callId.toNat
-  let inputLog := s!"hc({callNum}) r7={getReg regs 7} r8={getReg regs 8} r9={getReg regs 9} r10={getReg regs 10} r11={getReg regs 11} r12={getReg regs 12}"
+  let rawCallNum := callId.toNat
+  -- v0.8.0 hostcall numbering: grow_heap inserted at 1, everything else shifts +1.
+  -- Translate back to v0.7.2 numbering for the existing match, except grow_heap (callNum = 1
+  -- in v0.8.0) which is handled separately before the match.
+  let isGrowHeap := JamConfig.hostcallVersion == 1 && rawCallNum == 1
+  let callNum := if JamConfig.hostcallVersion == 1 && rawCallNum > 1
+    then rawCallNum - 1
+    else rawCallNum
+  let inputLog := s!"hc({rawCallNum}) r7={getReg regs 7} r8={getReg regs 8} r9={getReg regs 9} r10={getReg regs 10} r11={getReg regs 11} r12={getReg regs 12}"
   let mkResult (regs' : PVM.Registers) (mem' : PVM.Memory) (gas' : Gas) : PVM.InvocationResult :=
     { exitReason := .hostCall callId  -- signals "continue" to the loop
       exitValue := if 7 < regs'.size then regs'[7]! else 0
@@ -325,7 +332,33 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
       memory := mem' }
   let setR7 (r : PVM.Registers) (v : UInt64) := setReg r 7 v
   let gas' := if gas.toNat >= hostCallGas then gas - UInt64.ofNat hostCallGas else 0
-  let (result, ctx') : PVM.InvocationResult × AccContext := match callNum with
+  let (result, ctx') : PVM.InvocationResult × AccContext :=
+  -- ===== grow_heap (v0.8.0 hostcall 1): Grow writable heap pages =====
+  -- reg[7] = desired number of writable pages from start of RW region
+  -- Returns in reg[7]: current number of writable pages
+  -- Uses PVM.sbrk to grow the heap.
+  if isGrowHeap then
+    let desiredPages := (getReg regs 7).toNat
+    -- Current writable page count: heapTop / Z_P (rounded up)
+    let currentPages := (mem.heapTop + Z_P - 1) / Z_P
+    if desiredPages <= currentPages || desiredPages > PVM.numPages then
+      -- No growth needed or impossible: cost=10, return current count
+      let regs' := setR7 regs (UInt64.ofNat currentPages)
+      (mkResult regs' mem gas', ctx)
+    else
+      let newPages := desiredPages - currentPages
+      let growCost := newPages * 10
+      if gas'.toNat < growCost then
+        -- Out of gas: return current count, don't grow
+        let regs' := setR7 regs (UInt64.ofNat currentPages)
+        (mkResult regs' mem 0, ctx)
+      else
+        let gas'' := gas' - UInt64.ofNat growCost
+        let growBytes := UInt64.ofNat (newPages * Z_P)
+        let (mem', _) := PVM.sbrk mem growBytes
+        let regs' := setR7 regs (UInt64.ofNat desiredPages)
+        (mkResult regs' mem' gas'', ctx)
+  else match callNum with
   -- ===== gas (0): Return remaining gas in reg[7] =====
   | 0 =>
     let regs' := setR7 regs gas'

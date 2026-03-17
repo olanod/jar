@@ -303,6 +303,8 @@ def initLinear (blob' : ByteArray) (args : ByteArray)
   let codeBlobData := blob.extract offset (offset + codeLen)
 
   let prog ← deblob codeBlobData
+  -- v0.8.0: validate basic block structure
+  if !validateBasicBlocks prog then none
 
   -- Linear layout: stack | args | roData | rwData | heap
   let s := pageRound stackSize         -- stack occupies [0, s)
