@@ -52,7 +52,7 @@ def isAuthorized
     (authorizerCode : ByteArray)
     (authToken : ByteArray)
     (gasLimit : Gas) : Bool × Gas :=
-  match PVM.initStandard authorizerCode authToken with
+  match PVM.initProgram authorizerCode authToken with
   | none => (false, 0)
   | some (prog, regs, mem) =>
     let result := PVM.run prog 0 regs mem (Int64.ofUInt64 gasLimit)
@@ -80,7 +80,7 @@ def refine
     (gasLimit : Gas)
     (imports : Array ByteArray) : WorkResult × Gas :=
   let args := encodeRefineArgs payload imports
-  match PVM.initStandard serviceCode args with
+  match PVM.initProgram serviceCode args with
   | none => (.err .panic, 0)
   | some (prog, regs, mem) =>
     let result := PVM.run prog 0 regs mem (Int64.ofUInt64 gasLimit)
@@ -209,7 +209,7 @@ def onTransfer
     (transfer : DeferredTransfer)
     (acct : ServiceAccount) : ServiceAccount :=
   let args := encodeTransferArgs transfer
-  match PVM.initStandard serviceCode args with
+  match PVM.initProgram serviceCode args with
   | none => acct
   | some (prog, regs, mem) =>
     let result := PVM.run prog 0 regs mem (Int64.ofUInt64 transfer.gas)

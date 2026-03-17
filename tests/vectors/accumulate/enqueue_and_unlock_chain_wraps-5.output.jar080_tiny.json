@@ -9,7 +9,7 @@
      "extrinsic_size": 0,
      "extrinsic_count": 0,
      "exports": 0,
-     "accumulate_gas_used": 19190,
+     "accumulate_gas_used": 4498,
      "accumulate_count": 2},
     "id": 1729}],
   "slot": 47,
@@ -46,7 +46,9 @@
   [{"id": 1729,
     "data":
     {"storage":
-     [{"value": "0xec2cb6003a4d3d460b8e42ec48", "key": "0x6c617374"}],
+     [{"value":
+       "0x7eb4d5e9f95ac100594231e580a2b528ed85c453d20d85ff4635cf409b3f89",
+       "key": "0x6c617374"}],
      "service":
      {"parent_service": 0,
       "min_memo_gas": 10,
@@ -56,7 +58,7 @@
       "creation_slot": 0,
       "code_hash":
       "0x65e537f16b30c01e1325535ab9a18c35c9382bb4dce37c6c3e37c9b76a85c2b7",
-      "bytes": 35860,
+      "bytes": 35878,
       "balance": 135929},
      "preimage_requests":
      [{"value": [0],

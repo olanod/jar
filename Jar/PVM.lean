@@ -69,6 +69,9 @@ structure Memory where
   access : Array PageAccess
   /-- Heap top pointer (byte address) for sbrk. -/
   heapTop : Nat := 0
+  /-- Guard zone size: addresses below this return .panic on access.
+      Z_Z (65536) for standard GP layout, 0 for contiguous linear memory. -/
+  guardZone : Nat := Z_Z
 
 namespace Memory
 

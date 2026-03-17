@@ -88,6 +88,14 @@ structure Params.Valid (cfg : Params) : Prop where
 -- JamConfig Typeclass
 -- ============================================================================
 
+/-- PVM memory model. Controls program initialization layout. -/
+inductive MemoryModel where
+  /-- GP v0.7.2: 4 disjoint regions with per-page RO/RW/inaccessible permissions. -/
+  | segmented
+  /-- Contiguous linear: single RW region at address 0, no guard zone. -/
+  | linear
+  deriving BEq, Inhabited
+
 /-- JamConfig: provides protocol configuration and validity proofs.
     Used by struct types and Fin-based index aliases.
     Extended by `JamVariant` (in `Jar/Variant.lean`) to add PVM function fields. -/
@@ -96,6 +104,8 @@ class JamConfig where
   name : String
   config : Params
   valid : Params.Valid config
+  /-- PVM memory layout for program initialization. -/
+  memoryModel : MemoryModel := .segmented
 
 -- ============================================================================
 -- Standard Configurations

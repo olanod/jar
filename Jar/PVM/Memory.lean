@@ -38,7 +38,7 @@ def pageAligned (addr : UInt64) : UInt64 :=
 
 /-- Check read access for an address range [addr, addr+n). -/
 def checkReadable (m : Memory) (addr : UInt64) (n : Nat) : MemResult Unit :=
-  if addr.toNat < Z_Z then .panic
+  if addr.toNat < m.guardZone then .panic
   else
     let startPage := pageOf addr
     let endPage := pageOf (UInt64.ofNat (addr.toNat + n - 1))
@@ -56,7 +56,7 @@ def checkReadable (m : Memory) (addr : UInt64) (n : Nat) : MemResult Unit :=
 
 /-- Check write access for an address range [addr, addr+n). -/
 def checkWritable (m : Memory) (addr : UInt64) (n : Nat) : MemResult Unit :=
-  if addr.toNat < Z_Z then .panic
+  if addr.toNat < m.guardZone then .panic
   else
     let startPage := pageOf addr
     let endPage := pageOf (UInt64.ofNat (addr.toNat + n - 1))

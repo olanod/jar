@@ -1426,7 +1426,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
       let itemCount := transfers.size + operands.size
       let args := encodeAccArgs timeslot serviceId itemCount
       -- Initialize PVM with service code and arguments
-      match PVM.initStandard codeBlob args with
+      match PVM.initProgram codeBlob args with
       | none =>
         -- Invalid program blob: panic
         { postState := ps, deferredTransfers := #[], yieldHash := none,

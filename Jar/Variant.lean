@@ -9,7 +9,7 @@ import Jar.PVM.Interpreter
 This is the single entry point for defining a protocol variant.
 
 Struct types and most spec functions use `[JamConfig]` (the parent class).
-Functions that call the PVM (accumulation, services) use `[JamVariant]`.
+PVM memory model is configured via `JamConfig.memoryModel` (see `MemoryModel` enum).
 
 ## Usage
 
@@ -46,19 +46,19 @@ class JamVariant extends JamConfig where
 
 /-- Full GP v0.7.2 variant with standard PVM interpreter. -/
 instance JamVariant.gp072_full : JamVariant where
-  toJamConfig := JamConfig.mk "gp072_full" Params.full Params.full_valid
+  toJamConfig := JamConfig.mk "gp072_full" Params.full Params.full_valid .segmented
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 
 /-- Tiny GP v0.7.2 test variant with standard PVM interpreter. -/
 instance JamVariant.gp072_tiny : JamVariant where
-  toJamConfig := JamConfig.mk "gp072_tiny" Params.tiny Params.tiny_valid
+  toJamConfig := JamConfig.mk "gp072_tiny" Params.tiny Params.tiny_valid .segmented
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 
-/-- Tiny JAR v0.8.0 variant — copy of gp072_tiny for future spec changes. -/
+/-- Tiny JAR v0.8.0 variant — contiguous linear memory model. -/
 instance JamVariant.jar080_tiny : JamVariant where
-  toJamConfig := JamConfig.mk "jar080_tiny" Params.tiny Params.tiny_valid
+  toJamConfig := JamConfig.mk "jar080_tiny" Params.tiny Params.tiny_valid .linear
   pvmRun := PVM.run
   pvmRunWithHostCalls := PVM.runWithHostCalls
 

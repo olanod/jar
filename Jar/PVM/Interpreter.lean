@@ -210,6 +210,87 @@ def initStandard (blob' : ByteArray) (args : ByteArray)
 
   some (prog, regs, mem)
 
+/-- Initialize PVM with contiguous linear memory layout.
+    Same blob format as initStandard, but all data is packed into a single
+    contiguous read-write region starting at address 0:
+      [0, s)                     stack (SP = s, grows toward 0)
+      [s, s + |a|)               arguments
+      [s + |a|, s + |a| + |o|)  RO data
+      [s + |a| + |o|, ... + |w|) RW data
+      [... + |w|, heap_top)      heap (z pages)
+    No guard zone, no read-only pages, no zone alignment. -/
+def initLinear (blob' : ByteArray) (args : ByteArray)
+    : Option (ProgramBlob × Registers × Memory) := do
+  let blob := skipMetadata blob'
+  if blob.size < 15 then none
+
+  -- Parse header (same format as initStandard)
+  let roSize := decodeLEn blob 0 3
+  let rwSize := decodeLEn blob 3 3
+  let heapPages := decodeLEn blob 6 2
+  let stackSize := decodeLEn blob 8 3
+
+  let mut offset := 11
+
+  -- Read read-only data
+  if offset + roSize > blob.size then none
+  let roData := blob.extract offset (offset + roSize)
+  offset := offset + roSize
+
+  -- Read read-write data
+  if offset + rwSize > blob.size then none
+  let rwData := blob.extract offset (offset + rwSize)
+  offset := offset + rwSize
+
+  -- Read E₄(|c|) and code blob
+  if offset + 4 > blob.size then none
+  let codeLen := decodeLEn blob offset 4
+  offset := offset + 4
+  if offset + codeLen > blob.size then none
+  let codeBlobData := blob.extract offset (offset + codeLen)
+
+  let prog ← deblob codeBlobData
+
+  -- Linear layout: stack | args | roData | rwData | heap
+  let s := pageRound stackSize         -- stack occupies [0, s)
+  let argStart := s
+  let roStart := argStart + pageRound args.size
+  let rwStart := roStart + pageRound roSize
+  let heapStart := rwStart + pageRound rwSize
+  let heapEnd := heapStart + heapPages * Z_P
+  let memSize := heapEnd
+
+  -- Check fits in 32-bit address space
+  if memSize > 2^32 then none
+
+  -- All pages writable up to memSize, rest inaccessible
+  let totalPages := 2^32 / Z_P
+  let access := Array.replicate totalPages PageAccess.inaccessible
+  let access := mapRegionAccess access 0 memSize .writable
+
+  -- Build memory with guardZone = 0 (address 0 is valid)
+  let mem : Memory := { pages := Dict.empty, access, heapTop := heapEnd, guardZone := 0 }
+  let mem := copyToMem mem argStart args
+  let mem := copyToMem mem roStart roData
+  let mem := copyToMem mem rwStart rwData
+
+  -- Registers
+  let regs := Array.replicate PVM_REGISTERS (0 : RegisterValue)
+  let regs := regs.set! 0 (UInt64.ofNat s)           -- ω[0]: SP = top of stack
+  let regs := regs.set! 1 (UInt64.ofNat s)           -- ω[1]: stack top
+  let regs := regs.set! 7 (UInt64.ofNat argStart)    -- ω[7]: argument base
+  let regs := regs.set! 8 (UInt64.ofNat args.size)   -- ω[8]: argument length
+
+  some (prog, regs, mem)
+
+/-- Y(p, a) : Program initialization dispatched by memory model.
+    Uses segmented (GP v0.7.2) or linear layout based on JamConfig. -/
+def initProgram [JamConfig] (blob : ByteArray) (args : ByteArray)
+    : Option (ProgramBlob × Registers × Memory) :=
+  match JamConfig.memoryModel with
+  | .segmented => initStandard blob args
+  | .linear => initLinear blob args
+
 -- ============================================================================
 -- Full PVM Invocation with Host Calls — GP Ψ_H
 -- ============================================================================
