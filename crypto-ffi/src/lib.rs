@@ -10,6 +10,15 @@ use sha3::Keccak256;
 use std::slice;
 use std::sync::OnceLock;
 
+// Buffer size constants — must match sizes.h and Lean OctetSeq types in Jar/Crypto.lean
+pub const HASH_SIZE: usize = 32;
+pub const ED25519_SIG_SIZE: usize = 64;
+pub const BANDERSNATCH_PUBKEY_SIZE: usize = 32;
+pub const BANDERSNATCH_SIG_SIZE: usize = 96;
+pub const BANDERSNATCH_ROOT_SIZE: usize = 144;
+pub const BANDERSNATCH_RING_PROOF_SIZE: usize = 784;
+pub const BLS_SIG_SIZE: usize = 48;
+
 // ============================================================================
 // Blake2b-256
 // ============================================================================
@@ -25,7 +34,7 @@ pub extern "C" fn jar_ffi_blake2b(data_ptr: *const u8, data_len: usize, out_ptr:
     hasher.update(data);
     let result = hasher.finalize();
     unsafe {
-        std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, 32);
+        std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, HASH_SIZE);
     }
 }
 
@@ -44,7 +53,7 @@ pub extern "C" fn jar_ffi_keccak256(data_ptr: *const u8, data_len: usize, out_pt
     hasher.update(data);
     let result = hasher.finalize();
     unsafe {
-        std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, 32);
+        std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, HASH_SIZE);
     }
 }
 
@@ -61,8 +70,8 @@ pub extern "C" fn jar_ffi_ed25519_verify(
 ) -> u8 {
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 
-    let key_bytes: [u8; 32] = unsafe { *(key_ptr as *const [u8; 32]) };
-    let sig_bytes: [u8; 64] = unsafe { *(sig_ptr as *const [u8; 64]) };
+    let key_bytes: [u8; BANDERSNATCH_PUBKEY_SIZE] = unsafe { *(key_ptr as *const [u8; BANDERSNATCH_PUBKEY_SIZE]) };
+    let sig_bytes: [u8; ED25519_SIG_SIZE] = unsafe { *(sig_ptr as *const [u8; ED25519_SIG_SIZE]) };
     let msg = if msg_len == 0 {
         &[]
     } else {
@@ -95,15 +104,15 @@ pub extern "C" fn jar_ffi_ed25519_sign(
 
     // Expect 32-byte seed
     if secret.len() < 32 {
-        unsafe { std::ptr::write_bytes(out_ptr, 0, 64); }
+        unsafe { std::ptr::write_bytes(out_ptr, 0, ED25519_SIG_SIZE); }
         return;
     }
-    let mut seed = [0u8; 32];
+    let mut seed = [0u8; BANDERSNATCH_PUBKEY_SIZE];
     seed.copy_from_slice(&secret[..32]);
     let sk = SigningKey::from_bytes(&seed);
     let sig = sk.sign(msg);
     unsafe {
-        std::ptr::copy_nonoverlapping(sig.to_bytes().as_ptr(), out_ptr, 64);
+        std::ptr::copy_nonoverlapping(sig.to_bytes().as_ptr(), out_ptr, ED25519_SIG_SIZE);
     }
 }
 
@@ -142,8 +151,8 @@ pub extern "C" fn jar_ffi_bandersnatch_verify(
 ) -> u8 {
     use ark_vrf::ietf::Verifier as _;
 
-    let key_bytes: [u8; 32] = unsafe { *(key_ptr as *const [u8; 32]) };
-    let sig_bytes: &[u8] = unsafe { slice::from_raw_parts(sig_ptr, 96) };
+    let key_bytes: [u8; BANDERSNATCH_PUBKEY_SIZE] = unsafe { *(key_ptr as *const [u8; BANDERSNATCH_PUBKEY_SIZE]) };
+    let sig_bytes: &[u8] = unsafe { slice::from_raw_parts(sig_ptr, BANDERSNATCH_SIG_SIZE) };
     let ctx = if ctx_len == 0 { &[] } else { unsafe { slice::from_raw_parts(ctx_ptr, ctx_len) } };
     let msg = if msg_len == 0 { &[] } else { unsafe { slice::from_raw_parts(msg_ptr, msg_len) } };
 
@@ -184,57 +193,57 @@ pub extern "C" fn jar_ffi_bandersnatch_sign(
     let msg = if msg_len == 0 { &[] } else { unsafe { slice::from_raw_parts(msg_ptr, msg_len) } };
 
     if secret.len() < 32 {
-        unsafe { std::ptr::write_bytes(out_ptr, 0, 96); }
+        unsafe { std::ptr::write_bytes(out_ptr, 0, BANDERSNATCH_SIG_SIZE); }
         return;
     }
-    let mut seed = [0u8; 32];
+    let mut seed = [0u8; BANDERSNATCH_PUBKEY_SIZE];
     seed.copy_from_slice(&secret[..32]);
     let sk = ark_vrf::Secret::<Suite>::from_seed(&seed);
 
     let Some(input) = ark_vrf::Input::<Suite>::new(ctx) else {
-        unsafe { std::ptr::write_bytes(out_ptr, 0, 96); }
+        unsafe { std::ptr::write_bytes(out_ptr, 0, BANDERSNATCH_SIG_SIZE); }
         return;
     };
     let output = sk.output(input);
     let proof = sk.prove(input, output, msg);
 
-    let mut result = [0u8; 96];
-    // Output point (32 bytes)
+    let mut result = [0u8; BANDERSNATCH_SIG_SIZE];
+    // Output point (first 32 bytes)
     let mut out_buf = Vec::new();
     output.0.serialize_compressed(&mut out_buf).ok();
-    let len = out_buf.len().min(32);
+    let len = out_buf.len().min(BANDERSNATCH_PUBKEY_SIZE);
     result[..len].copy_from_slice(&out_buf[..len]);
-    // Proof (64 bytes)
+    // Proof (remaining 64 bytes)
     let mut proof_buf = Vec::new();
     proof.serialize_compressed(&mut proof_buf).ok();
-    let plen = proof_buf.len().min(64);
-    result[32..32 + plen].copy_from_slice(&proof_buf[..plen]);
+    let plen = proof_buf.len().min(BANDERSNATCH_SIG_SIZE - BANDERSNATCH_PUBKEY_SIZE);
+    result[BANDERSNATCH_PUBKEY_SIZE..BANDERSNATCH_PUBKEY_SIZE + plen].copy_from_slice(&proof_buf[..plen]);
 
-    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, 96); }
+    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, BANDERSNATCH_SIG_SIZE); }
 }
 
 #[no_mangle]
 pub extern "C" fn jar_ffi_bandersnatch_output(
-    sig_ptr: *const u8,    // 96 bytes (VRF signature)
-    out_ptr: *mut u8,      // 32 bytes
+    sig_ptr: *const u8,    // BANDERSNATCH_SIG_SIZE bytes (VRF signature)
+    out_ptr: *mut u8,      // HASH_SIZE bytes
 ) -> u8 {
-    let sig = unsafe { slice::from_raw_parts(sig_ptr, 96) };
-    let result = (|| -> Option<[u8; 32]> {
-        let output_point = AffinePoint::deserialize_compressed(&sig[..32]).ok()?;
+    let sig = unsafe { slice::from_raw_parts(sig_ptr, BANDERSNATCH_SIG_SIZE) };
+    let result = (|| -> Option<[u8; HASH_SIZE]> {
+        let output_point = AffinePoint::deserialize_compressed(&sig[..BANDERSNATCH_PUBKEY_SIZE]).ok()?;
         let output = ark_vrf::Output::<Suite>::from_affine(output_point);
         let hash = output.hash();
-        let mut r = [0u8; 32];
-        r.copy_from_slice(&hash[..32]);
+        let mut r = [0u8; HASH_SIZE];
+        r.copy_from_slice(&hash[..HASH_SIZE]);
         Some(r)
     })();
 
     match result {
         Some(hash) => {
-            unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), out_ptr, 32); }
+            unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), out_ptr, HASH_SIZE); }
             1
         }
         None => {
-            unsafe { std::ptr::write_bytes(out_ptr, 0, 32); }
+            unsafe { std::ptr::write_bytes(out_ptr, 0, HASH_SIZE); }
             0
         }
     }
@@ -246,21 +255,21 @@ pub extern "C" fn jar_ffi_bandersnatch_output(
 
 #[no_mangle]
 pub extern "C" fn jar_ffi_bandersnatch_ring_root(
-    keys_ptr: *const u8,   // packed 32-byte keys
+    keys_ptr: *const u8,   // packed BANDERSNATCH_PUBKEY_SIZE-byte keys
     num_keys: usize,
-    out_ptr: *mut u8,      // 144 bytes
+    out_ptr: *mut u8,      // BANDERSNATCH_ROOT_SIZE bytes
 ) {
     let keys_raw = if num_keys == 0 {
         &[]
     } else {
-        unsafe { slice::from_raw_parts(keys_ptr, num_keys * 32) }
+        unsafe { slice::from_raw_parts(keys_ptr, num_keys * BANDERSNATCH_PUBKEY_SIZE) }
     };
 
     let params = make_ring_params(num_keys);
 
     let points: Vec<AffinePoint> = (0..num_keys)
         .map(|i| {
-            let key_bytes = &keys_raw[i * 32..(i + 1) * 32];
+            let key_bytes = &keys_raw[i * BANDERSNATCH_PUBKEY_SIZE..(i + 1) * BANDERSNATCH_PUBKEY_SIZE];
             AffinePoint::deserialize_compressed(key_bytes)
                 .unwrap_or(RingProofParams::padding_point())
         })
@@ -273,29 +282,29 @@ pub extern "C" fn jar_ffi_bandersnatch_ring_root(
         .serialize_compressed(&mut buf)
         .expect("commitment serialization failed");
 
-    let mut result = [0u8; 144];
-    let len = buf.len().min(144);
+    let mut result = [0u8; BANDERSNATCH_ROOT_SIZE];
+    let len = buf.len().min(BANDERSNATCH_ROOT_SIZE);
     result[..len].copy_from_slice(&buf[..len]);
 
-    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, 144); }
+    unsafe { std::ptr::copy_nonoverlapping(result.as_ptr(), out_ptr, BANDERSNATCH_ROOT_SIZE); }
 }
 
 #[no_mangle]
 pub extern "C" fn jar_ffi_bandersnatch_ring_verify(
-    root_ptr: *const u8,   // 144 bytes
+    root_ptr: *const u8,   // BANDERSNATCH_ROOT_SIZE bytes
     ctx_ptr: *const u8,
     ctx_len: usize,
     msg_ptr: *const u8,
     msg_len: usize,
-    proof_ptr: *const u8,  // 784 bytes (32 output + 752 proof)
+    proof_ptr: *const u8,  // BANDERSNATCH_RING_PROOF_SIZE bytes (32 output + 752 proof)
     ring_size: usize,
 ) -> u8 {
     use ark_vrf::ring::Verifier as _;
 
-    let root = unsafe { slice::from_raw_parts(root_ptr, 144) };
+    let root = unsafe { slice::from_raw_parts(root_ptr, BANDERSNATCH_ROOT_SIZE) };
     let ctx = if ctx_len == 0 { &[] } else { unsafe { slice::from_raw_parts(ctx_ptr, ctx_len) } };
     let msg = if msg_len == 0 { &[] } else { unsafe { slice::from_raw_parts(msg_ptr, msg_len) } };
-    let proof_bytes = unsafe { slice::from_raw_parts(proof_ptr, 784) };
+    let proof_bytes = unsafe { slice::from_raw_parts(proof_ptr, BANDERSNATCH_RING_PROOF_SIZE) };
 
     let result = (|| -> Option<()> {
         let params = make_ring_params(ring_size);
@@ -304,9 +313,9 @@ pub extern "C" fn jar_ffi_bandersnatch_ring_verify(
         let verifier_key = params.verifier_key_from_commitment(commitment);
         let verifier = params.verifier(verifier_key);
 
-        let output_point = AffinePoint::deserialize_compressed(&mut &proof_bytes[..32]).ok()?;
+        let output_point = AffinePoint::deserialize_compressed(&mut &proof_bytes[..BANDERSNATCH_PUBKEY_SIZE]).ok()?;
         let output = ark_vrf::Output::<Suite>::from_affine(output_point);
-        let proof = RingProof::deserialize_compressed(&mut &proof_bytes[32..]).ok()?;
+        let proof = RingProof::deserialize_compressed(&mut &proof_bytes[BANDERSNATCH_PUBKEY_SIZE..]).ok()?;
 
         let input = ark_vrf::Input::<Suite>::new(ctx)?;
         ark_vrf::Public::<Suite>::verify(input, output, msg, &proof, &verifier).ok()?;
@@ -320,48 +329,48 @@ pub extern "C" fn jar_ffi_bandersnatch_ring_verify(
 pub extern "C" fn jar_ffi_bandersnatch_ring_sign(
     secret_ptr: *const u8,
     secret_len: usize,
-    root_ptr: *const u8,   // 144 bytes
+    root_ptr: *const u8,   // BANDERSNATCH_ROOT_SIZE bytes
     ctx_ptr: *const u8,
     ctx_len: usize,
     msg_ptr: *const u8,
     msg_len: usize,
     ring_size: usize,
-    out_ptr: *mut u8,      // 784 bytes
+    out_ptr: *mut u8,      // BANDERSNATCH_RING_PROOF_SIZE bytes
 ) {
     let secret = unsafe { slice::from_raw_parts(secret_ptr, secret_len) };
-    let _root = unsafe { slice::from_raw_parts(root_ptr, 144) };
+    let _root = unsafe { slice::from_raw_parts(root_ptr, BANDERSNATCH_ROOT_SIZE) };
     let ctx = if ctx_len == 0 { &[] } else { unsafe { slice::from_raw_parts(ctx_ptr, ctx_len) } };
     let msg = if msg_len == 0 { &[] } else { unsafe { slice::from_raw_parts(msg_ptr, msg_len) } };
 
     // Ring signing is complex — requires the prover key which needs the full key list.
     // For now, produce a best-effort implementation. Full ring signing requires more context.
     let _ = (secret, ring_size, ctx, msg);
-    unsafe { std::ptr::write_bytes(out_ptr, 0, 784); }
+    unsafe { std::ptr::write_bytes(out_ptr, 0, BANDERSNATCH_RING_PROOF_SIZE); }
 }
 
 #[no_mangle]
 pub extern "C" fn jar_ffi_bandersnatch_ring_output(
-    proof_ptr: *const u8,  // 784 bytes
-    out_ptr: *mut u8,      // 32 bytes
+    proof_ptr: *const u8,  // BANDERSNATCH_RING_PROOF_SIZE bytes
+    out_ptr: *mut u8,      // HASH_SIZE bytes
 ) -> u8 {
-    let proof_bytes = unsafe { slice::from_raw_parts(proof_ptr, 784) };
+    let proof_bytes = unsafe { slice::from_raw_parts(proof_ptr, BANDERSNATCH_RING_PROOF_SIZE) };
 
-    let result = (|| -> Option<[u8; 32]> {
-        let output_point = AffinePoint::deserialize_compressed(&mut &proof_bytes[..32]).ok()?;
+    let result = (|| -> Option<[u8; HASH_SIZE]> {
+        let output_point = AffinePoint::deserialize_compressed(&mut &proof_bytes[..BANDERSNATCH_PUBKEY_SIZE]).ok()?;
         let output = ark_vrf::Output::<Suite>::from_affine(output_point);
         let hash = output.hash();
-        let mut r = [0u8; 32];
-        r.copy_from_slice(&hash[..32]);
+        let mut r = [0u8; HASH_SIZE];
+        r.copy_from_slice(&hash[..HASH_SIZE]);
         Some(r)
     })();
 
     match result {
         Some(hash) => {
-            unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), out_ptr, 32); }
+            unsafe { std::ptr::copy_nonoverlapping(hash.as_ptr(), out_ptr, HASH_SIZE); }
             1
         }
         None => {
-            unsafe { std::ptr::write_bytes(out_ptr, 0, 32); }
+            unsafe { std::ptr::write_bytes(out_ptr, 0, HASH_SIZE); }
             0
         }
     }
@@ -373,10 +382,10 @@ pub extern "C" fn jar_ffi_bandersnatch_ring_output(
 
 #[no_mangle]
 pub extern "C" fn jar_ffi_bls_verify(
-    _key_ptr: *const u8,   // 144 bytes
+    _key_ptr: *const u8,   // BLS_PUBKEY_SIZE bytes
     _msg_ptr: *const u8,
     _msg_len: usize,
-    _sig_ptr: *const u8,   // 48 bytes
+    _sig_ptr: *const u8,   // BLS_SIG_SIZE bytes
 ) -> u8 {
     0 // Not yet implemented
 }
@@ -387,7 +396,7 @@ pub extern "C" fn jar_ffi_bls_sign(
     _secret_len: usize,
     _msg_ptr: *const u8,
     _msg_len: usize,
-    _out_ptr: *mut u8,     // 48 bytes
+    _out_ptr: *mut u8,     // BLS_SIG_SIZE bytes
 ) {
     // Not yet implemented
 }

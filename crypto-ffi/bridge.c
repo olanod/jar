@@ -9,6 +9,18 @@
 #include <lean/lean.h>
 #include <string.h>
 #include <stdlib.h>
+#include "sizes.h"
+
+/* Compile-time size sanity checks */
+_Static_assert(JAR_HASH_SIZE == 32, "Hash size must be 32");
+_Static_assert(JAR_ED25519_PUBKEY_SIZE == 32, "Ed25519 public key must be 32");
+_Static_assert(JAR_ED25519_SIG_SIZE == 64, "Ed25519 signature must be 64");
+_Static_assert(JAR_BANDERSNATCH_PUBKEY_SIZE == 32, "Bandersnatch public key must be 32");
+_Static_assert(JAR_BANDERSNATCH_SIG_SIZE == 96, "Bandersnatch signature must be 96");
+_Static_assert(JAR_BANDERSNATCH_ROOT_SIZE == 144, "Bandersnatch ring root must be 144");
+_Static_assert(JAR_BANDERSNATCH_RING_PROOF_SIZE == 784, "Bandersnatch ring proof must be 784");
+_Static_assert(JAR_BLS_PUBKEY_SIZE == 144, "BLS public key must be 144");
+_Static_assert(JAR_BLS_SIG_SIZE == 48, "BLS signature must be 48");
 
 /* Rust FFI declarations */
 extern void    jar_ffi_blake2b(const uint8_t* data, size_t len, uint8_t* out);
@@ -49,18 +61,18 @@ static const uint8_t* octet_seq_data(b_lean_obj_arg seq) {
 /* blake2b(m : ByteArray) : Hash                                            */
 /* ======================================================================== */
 LEAN_EXPORT lean_obj_res jar_blake2b(b_lean_obj_arg m) {
-    uint8_t hash[32];
+    uint8_t hash[JAR_HASH_SIZE];
     jar_ffi_blake2b(lean_sarray_cptr(m), lean_sarray_size(m), hash);
-    return mk_octet_seq(hash, 32);
+    return mk_octet_seq(hash, JAR_HASH_SIZE);
 }
 
 /* ======================================================================== */
 /* keccak256(m : ByteArray) : Hash                                          */
 /* ======================================================================== */
 LEAN_EXPORT lean_obj_res jar_keccak256(b_lean_obj_arg m) {
-    uint8_t hash[32];
+    uint8_t hash[JAR_HASH_SIZE];
     jar_ffi_keccak256(lean_sarray_cptr(m), lean_sarray_size(m), hash);
-    return mk_octet_seq(hash, 32);
+    return mk_octet_seq(hash, JAR_HASH_SIZE);
 }
 
 /* ======================================================================== */
@@ -85,13 +97,13 @@ LEAN_EXPORT uint8_t jar_ed25519_verify(
 LEAN_EXPORT lean_obj_res jar_ed25519_sign(
     b_lean_obj_arg secretKey, b_lean_obj_arg message
 ) {
-    uint8_t sig[64];
+    uint8_t sig[JAR_ED25519_SIG_SIZE];
     jar_ffi_ed25519_sign(
         lean_sarray_cptr(secretKey), lean_sarray_size(secretKey),
         lean_sarray_cptr(message), lean_sarray_size(message),
         sig
     );
-    return mk_octet_seq(sig, 64);
+    return mk_octet_seq(sig, JAR_ED25519_SIG_SIZE);
 }
 
 /* ======================================================================== */
@@ -119,24 +131,24 @@ LEAN_EXPORT uint8_t jar_bandersnatch_verify(
 LEAN_EXPORT lean_obj_res jar_bandersnatch_sign(
     b_lean_obj_arg secretKey, b_lean_obj_arg context, b_lean_obj_arg message
 ) {
-    uint8_t sig[96];
+    uint8_t sig[JAR_BANDERSNATCH_SIG_SIZE];
     jar_ffi_bandersnatch_sign(
         lean_sarray_cptr(secretKey), lean_sarray_size(secretKey),
         lean_sarray_cptr(context), lean_sarray_size(context),
         lean_sarray_cptr(message), lean_sarray_size(message),
         sig
     );
-    return mk_octet_seq(sig, 96);
+    return mk_octet_seq(sig, JAR_BANDERSNATCH_SIG_SIZE);
 }
 
 /* ======================================================================== */
 /* bandersnatchOutput(sig : BandersnatchSignature) : Hash                   */
 /* ======================================================================== */
 LEAN_EXPORT lean_obj_res jar_bandersnatch_output(b_lean_obj_arg sig) {
-    uint8_t hash[32];
+    uint8_t hash[JAR_HASH_SIZE];
     /* Returns 1 on success, 0 on failure. On failure hash is zeroed. */
     jar_ffi_bandersnatch_output(octet_seq_data(sig), hash);
-    return mk_octet_seq(hash, 32);
+    return mk_octet_seq(hash, JAR_HASH_SIZE);
 }
 
 /* ======================================================================== */
@@ -147,16 +159,16 @@ LEAN_EXPORT lean_obj_res jar_bandersnatch_ring_root(b_lean_obj_arg keys) {
     size_t n = lean_array_size(keys);
     uint8_t* buf = NULL;
     if (n > 0) {
-        buf = (uint8_t*)malloc(n * 32);
+        buf = (uint8_t*)malloc(n * JAR_BANDERSNATCH_PUBKEY_SIZE);
         for (size_t i = 0; i < n; i++) {
             lean_object* elem = lean_array_cptr(keys)[i];
-            memcpy(buf + i * 32, octet_seq_data(elem), 32);
+            memcpy(buf + i * JAR_BANDERSNATCH_PUBKEY_SIZE, octet_seq_data(elem), JAR_BANDERSNATCH_PUBKEY_SIZE);
         }
     }
-    uint8_t root[144];
+    uint8_t root[JAR_BANDERSNATCH_ROOT_SIZE];
     jar_ffi_bandersnatch_ring_root(buf, n, root);
     free(buf);
-    return mk_octet_seq(root, 144);
+    return mk_octet_seq(root, JAR_BANDERSNATCH_ROOT_SIZE);
 }
 
 /* ======================================================================== */
@@ -191,7 +203,7 @@ LEAN_EXPORT lean_obj_res jar_bandersnatch_ring_sign(
     uint32_t ringSize
 ) {
     size_t ring_size = (size_t)ringSize;
-    uint8_t proof[784];
+    uint8_t proof[JAR_BANDERSNATCH_RING_PROOF_SIZE];
     jar_ffi_bandersnatch_ring_sign(
         lean_sarray_cptr(secretKey), lean_sarray_size(secretKey),
         octet_seq_data(root),
@@ -200,16 +212,16 @@ LEAN_EXPORT lean_obj_res jar_bandersnatch_ring_sign(
         ring_size,
         proof
     );
-    return mk_octet_seq(proof, 784);
+    return mk_octet_seq(proof, JAR_BANDERSNATCH_RING_PROOF_SIZE);
 }
 
 /* ======================================================================== */
 /* bandersnatchRingOutput(proof : BandersnatchRingVrfProof) : Hash          */
 /* ======================================================================== */
 LEAN_EXPORT lean_obj_res jar_bandersnatch_ring_output(b_lean_obj_arg proof) {
-    uint8_t hash[32];
+    uint8_t hash[JAR_HASH_SIZE];
     jar_ffi_bandersnatch_ring_output(octet_seq_data(proof), hash);
-    return mk_octet_seq(hash, 32);
+    return mk_octet_seq(hash, JAR_HASH_SIZE);
 }
 
 /* ======================================================================== */
@@ -233,12 +245,12 @@ LEAN_EXPORT uint8_t jar_bls_verify(
 LEAN_EXPORT lean_obj_res jar_bls_sign(
     b_lean_obj_arg secretKey, b_lean_obj_arg message
 ) {
-    uint8_t sig[48];
-    memset(sig, 0, 48);
+    uint8_t sig[JAR_BLS_SIG_SIZE];
+    memset(sig, 0, JAR_BLS_SIG_SIZE);
     jar_ffi_bls_sign(
         lean_sarray_cptr(secretKey), lean_sarray_size(secretKey),
         lean_sarray_cptr(message), lean_sarray_size(message),
         sig
     );
-    return mk_octet_seq(sig, 48);
+    return mk_octet_seq(sig, JAR_BLS_SIG_SIZE);
 }
