@@ -233,15 +233,15 @@ crates/
 | storage_light | 100 | 100/100 |
 | preimages | 100 | 100/100 |
 | preimages_light | 100 | 100/100 |
-| fuzzy_light | 200 | 198/200 |
-| fuzzy | 200 | 188/200 |
+| fuzzy_light | 200 | 199/200 |
+| fuzzy | 200 | 192/200 |
 | conformance_no_forks | 100 | 100/100 |
 | conformance_forks | 100 | 32/32 non-error |
 
-**8/10 traces fully pass. 1186/1200 blocks pass (98.8%).** Remaining 14 failures are in fuzzy traces.
+**8/10 traces fully pass. 1191/1200 blocks pass (99.25%).** Remaining 9 failures in fuzzy traces.
 
 ### Known Issues
-- 14 fuzzy trace blocks fail (12 fuzzy + 2 fuzzy_light): Gas accounting differences in edge cases where PVM runs out of gas during multi-round accumulation. The manager service's execution diverges slightly, causing different privilege state.
+- 9 fuzzy trace blocks fail (8 fuzzy + 1 fuzzy_light): Remaining issues involve pending_reports size mismatch (23KB vs 1.3KB expected) and privilege R-merge edge cases.
 - PVM basic-block gas metering temporarily disabled (off-by-one when entering at non-zero PC). Uses per-instruction stepping mode.
 
 ### What's Next
