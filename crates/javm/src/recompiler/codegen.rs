@@ -211,6 +211,7 @@ impl Compiler {
         }
 
         // Main compilation loop: iterate pre-decoded instructions
+        let t_codegen = std::time::Instant::now();
         let mut i = 0;
         while i < instrs.len() {
             let instr = &instrs[i];
@@ -246,8 +247,12 @@ impl Compiler {
 
             i += 1;
         }
+        let codegen_ms = t_codegen.elapsed().as_secs_f64() * 1000.0;
+
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
+        let total_ms = t_codegen.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("codegen: main_loop={:.1}ms stubs+finalize={:.1}ms native={}B", codegen_ms, total_ms - codegen_ms, self.asm.code.len());
 
         // Build dispatch table: PVM PC → native code offset
         let table_len = code_len + 1; // +1 so PC=code.len() is valid (maps to panic)
