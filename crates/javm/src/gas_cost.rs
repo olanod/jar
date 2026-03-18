@@ -995,13 +995,12 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &
 
     let done_decoding = |idx: usize| idx >= instrs.len();
 
-    for _ in 0..100_000 {
-        // Priority 1: Decode one instruction
-        if !done_decoding(instr_idx) && decode_slots > 0 && (next_slot as usize) < 32 {
+    for _safety in 0..100_000u32 {
+        // Phase 1: Decode as many instructions as possible this cycle
+        while instr_idx < instrs.len() && decode_slots > 0 && (next_slot as usize) < 32 {
             let cost = fast_cost(&instrs[instr_idx], code, bitmask);
 
             if cost.is_move_reg {
-                // move_reg: no ROB entry, do NOT update reg_writer
                 decode_slots = decode_slots.saturating_sub(cost.decode_slots);
                 instr_idx = if cost.is_terminator { instrs.len() } else { instr_idx + 1 };
                 continue;
@@ -1012,14 +1011,13 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &
             let mut src = cost.src_mask;
             while src != 0 {
                 let reg = src.trailing_zeros() as usize;
-                src &= src - 1; // clear lowest bit
+                src &= src - 1;
                 let writer = reg_writer[reg];
                 if writer != 0xFF && (fin_mask & (1u32 << writer)) == 0 {
                     dep_mask |= 1u32 << writer;
                 }
             }
 
-            // Allocate ROB slot
             let slot = next_slot as usize;
             state[slot] = 1; // WAIT
             cycles_left[slot] = cost.cycles;
@@ -1027,7 +1025,6 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &
             deps[slot] = dep_mask;
             wait_mask |= 1u32 << slot;
 
-            // Update reg_writer for dest registers
             let mut dst = cost.dst_mask;
             while dst != 0 {
                 let reg = dst.trailing_zeros() as usize;
@@ -1038,39 +1035,34 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &
             next_slot += 1;
             decode_slots = decode_slots.saturating_sub(cost.decode_slots);
             instr_idx = if cost.is_terminator { instrs.len() } else { instr_idx + 1 };
-            continue;
         }
 
-        // Priority 2: Dispatch one ready instruction
-        if dispatch_slots > 0 {
+        // Phase 2: Dispatch as many ready instructions as possible this cycle
+        while dispatch_slots > 0 {
             let mut candidates = wait_mask;
-            let mut dispatched = false;
+            let mut found = false;
             while candidates != 0 {
                 let i = candidates.trailing_zeros() as usize;
                 candidates &= candidates - 1;
-
-                // All deps finished? (deps & ~fin_mask == 0)
                 if (deps[i] & !fin_mask) == 0 && eu_available(&eu_avail, exec_unit[i]) {
                     eu_consume(&mut eu_avail, exec_unit[i]);
                     state[i] = 2; // EXE
                     wait_mask &= !(1u32 << i);
                     exe_mask |= 1u32 << i;
                     dispatch_slots -= 1;
-                    dispatched = true;
-                    break;
+                    found = true;
+                    break; // re-scan from start (priority order)
                 }
             }
-            if dispatched {
-                continue;
-            }
+            if !found { break; }
         }
 
-        // Priority 3: Done check
-        if done_decoding(instr_idx) && exe_mask == 0 && wait_mask == 0 {
+        // Phase 3: Done check
+        if instr_idx >= instrs.len() && exe_mask == 0 && wait_mask == 0 {
             break;
         }
 
-        // Priority 4: Advance cycle
+        // Phase 4: Advance cycle
         let mut exe = exe_mask;
         while exe != 0 {
             let i = exe.trailing_zeros() as usize;
