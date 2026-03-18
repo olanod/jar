@@ -21,6 +21,7 @@ exclude = [
     "services/sample-service",
     "services/pixels-service",
     "services/pixels-authorizer",
+    "res/spec/crypto-ffi",
 ]
 
 [workspace.package]

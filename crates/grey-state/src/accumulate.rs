@@ -622,12 +622,15 @@ fn run_accumulate_pvm(
 
     // Set entry point: ΨM(c, 5, ...) starts at instruction counter 5 for accumulate
     pvm.set_pc(5);
-
+    pvm.enable_tracing();
     let initial_gas = pvm.gas();
     let mut host_call_count = 0u32;
 
     loop {
+        let gas_before = pvm.gas();
         let exit_reason = pvm.run();
+        let gas_after = pvm.gas();
+        eprintln!("exit={:?} pc={} gas_consumed={} remaining={}", exit_reason, pvm.pc(), gas_before - gas_after, gas_after);
 
         match exit_reason {
             ExitReason::Halt => {
@@ -764,6 +767,7 @@ fn host_grow_heap(pvm: &mut PvmInstance) -> bool {
     let desired = pvm.reg(7);
     let ps = javm::PVM_PAGE_SIZE;
     let current_pages = (pvm.heap_top() as u64 + ps as u64 - 1) / ps as u64;
+    eprintln!("grow_heap: desired={} current_pages={} heap_top={}", desired, current_pages, pvm.heap_top());
 
     if desired <= current_pages || desired > (1u64 << 32) / ps as u64 {
         // No-op: already at or beyond desired, or exceeds address space
@@ -779,16 +783,10 @@ fn host_grow_heap(pvm: &mut PvmInstance) -> bool {
     }
     pvm.set_gas(pvm.gas() - extra_gas);
 
-    // Map new pages
+    // Map new pages as ReadWrite
     let old_top = pvm.heap_top();
     let new_top = (desired as u32) * ps;
-    let start_page = old_top / ps;
-    let end_page = desired as u32;
-    for p in start_page..end_page {
-        pvm.write_byte(p * ps, pvm.read_byte(p * ps).unwrap_or(0));
-        // Actually, we need to map the page. Use write_bytes to touch it.
-    }
-    // Set heap_top via PvmInstance
+    pvm.map_pages_rw(old_top / ps, desired as u32);
     pvm.set_heap_top(new_top);
 
     pvm.set_reg(7, current_pages);

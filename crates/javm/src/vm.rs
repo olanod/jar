@@ -78,6 +78,9 @@ pub struct Pvm {
     /// Gas cost for each basic block (indexed by block start PC).
     /// Only entries at basic_block_starts[i]==true are meaningful.
     pub block_gas_costs: Vec<u64>,
+    /// JAR v0.8.0: true when the next instruction should be charged block gas.
+    /// Set at initialization and after every terminator instruction.
+    pub need_gas_charge: bool,
     /// When true, collect instruction trace in `pc_trace`.
     pub tracing_enabled: bool,
     /// Collected instruction trace: (PC, opcode_byte) pairs.
@@ -114,6 +117,7 @@ impl Pvm {
             heap_top: 0,
             basic_block_starts,
             block_gas_costs,
+            need_gas_charge: true,
             tracing_enabled: false,
             pc_trace: Vec::new(),
             decoded_insts,
@@ -220,13 +224,15 @@ impl Pvm {
         };
 
         // Per-basic-block gas metering (JAR v0.8.0).
-        // Gas is charged at block entry using pipeline-simulated cost.
-        if pc < self.basic_block_starts.len() && self.basic_block_starts[pc] {
-            let block_cost = self.block_gas_costs[pc];
+        // Gas is charged at every block entry: initial entry, after terminators,
+        // and at branch/jump targets. Matches Lean runBlockGas behavior.
+        if self.need_gas_charge {
+            let block_cost = crate::gas_cost::gas_cost_for_block(&self.code, &self.bitmask, pc);
             if self.gas < block_cost {
                 return Some(ExitReason::OutOfGas);
             }
             self.gas -= block_cost;
+            self.need_gas_charge = false;
         }
 
         // Collect trace if enabled
@@ -344,7 +350,7 @@ impl Pvm {
             Opcode::LoadU8 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -354,7 +360,7 @@ impl Pvm {
             Opcode::LoadI8 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -364,7 +370,7 @@ impl Pvm {
             Opcode::LoadU16 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -374,7 +380,7 @@ impl Pvm {
             Opcode::LoadI16 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -384,7 +390,7 @@ impl Pvm {
             Opcode::LoadU32 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -394,7 +400,7 @@ impl Pvm {
             Opcode::LoadI32 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -404,7 +410,7 @@ impl Pvm {
             Opcode::LoadU64 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u64_le(addr) {
                         Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -700,7 +706,7 @@ impl Pvm {
             Opcode::LoadIndU8 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -710,7 +716,7 @@ impl Pvm {
             Opcode::LoadIndI8 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -720,7 +726,7 @@ impl Pvm {
             Opcode::LoadIndU16 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -730,7 +736,7 @@ impl Pvm {
             Opcode::LoadIndI16 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -740,7 +746,7 @@ impl Pvm {
             Opcode::LoadIndU32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -750,7 +756,7 @@ impl Pvm {
             Opcode::LoadIndI32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -760,7 +766,7 @@ impl Pvm {
             Opcode::LoadIndU64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
-                    if let Some(exit) = self.check_read_low(addr) { return Some(exit); }
+
                     match self.memory.read_u64_le(addr) {
                         Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
@@ -1377,20 +1383,18 @@ impl Pvm {
             }
         }
 
+        // After execution: if this instruction is a terminator, the next
+        // instruction starts a new basic block and needs gas charging.
+        if opcode.is_terminator() {
+            self.need_gas_charge = true;
+        }
+
         None
     }
 
     /// Check that a memory address is not in the low 2^16 range (eq A.7-A.8).
-    fn check_read_low(&self, addr: u32) -> Option<ExitReason> {
-        if addr < (1 << 16) {
-            Some(ExitReason::Panic)
-        } else {
-            None
-        }
-    }
-
     // JAR v0.8.0: no guard zone — address 0 is valid in linear memory model.
-    // check_write_low removed.
+    // check_read_low and check_write_low removed.
 
     /// Run the machine until it exits (eq A.1).
     ///

@@ -485,3 +485,74 @@ mod tests {
         assert!(cost >= 1, "cost should be >= 1, got {}", cost);
     }
 }
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    
+    #[test]
+    fn test_service_blob_gas() {
+        let blob = match std::fs::read("/tmp/test_service_blob.bin") {
+            Ok(b) => b,
+            Err(_) => { eprintln!("Skipping: /tmp/test_service_blob.bin not found"); return; }
+        };
+        let pvm = crate::program::initialize_program(&blob, &[0,0,0,0], 100_000).unwrap();
+        eprintln!("Code length: {}", pvm.code.len());
+        
+        // Show block gas costs near the entry points
+        let mut block_count = 0;
+        for (pc, &cost) in pvm.block_gas_costs.iter().enumerate() {
+            if cost > 0 {
+                block_count += 1;
+                if block_count <= 30 {
+                    eprintln!("  BB[{:5}] cost={:4} (opcode={})", pc, cost, 
+                        if pc < pvm.code.len() { pvm.code[pc] } else { 255 });
+                }
+            }
+        }
+        eprintln!("Total basic blocks: {}", block_count);
+    }
+
+    #[test]
+    fn trace_block_instructions() {
+        let blob = match std::fs::read("/tmp/test_service_blob.bin") {
+            Ok(b) => b,
+            Err(_) => { eprintln!("Skipping: /tmp/test_service_blob.bin not found"); return; }
+        };
+        let pvm = crate::program::initialize_program(&blob, &[0,0,0,0], 100_000).unwrap();
+        let code = &pvm.code;
+        let bm = &pvm.bitmask;
+        let bb = crate::vm::compute_basic_block_starts(code, bm);
+
+        // Dump first 5 blocks starting from PC=0
+        let block_starts: Vec<usize> = bb.iter().enumerate()
+            .filter(|&(_, b)| *b).map(|(i, _)| i).take(10).collect();
+
+        for &start in &block_starts {
+            eprintln!("\n=== Block at PC={} (cost={}) ===", start, gas_cost_for_block(code, bm, start));
+            let mut pc = start;
+            let mut count = 0;
+            loop {
+                if pc >= code.len() || count > 20 { break; }
+                if pc < bm.len() && bm[pc] == 1 {
+                    let op = crate::instruction::Opcode::from_byte(code[pc]);
+                    let skip = skip_distance(bm, pc);
+                    let cost = instruction_cost(code, bm, pc);
+                    eprintln!("  pc={:5} {:?} cy={} dec={} eu=alu:{}/ld:{}/st:{}/mul:{}/div:{} dst={:?} src={:?} term={} move={}",
+                        pc, op, cost.cycles, cost.decode_slots,
+                        cost.exec_units.alu, cost.exec_units.load, cost.exec_units.store,
+                        cost.exec_units.mul, cost.exec_units.div,
+                        cost.dest_regs, cost.src_regs, cost.is_terminator, cost.is_move_reg);
+                    if let Some(o) = op {
+                        if o.is_terminator() { break; }
+                    }
+                    pc += 1 + skip;
+                    count += 1;
+                    if pc < bb.len() && bb[pc] { break; }
+                } else {
+                    pc += 1;
+                }
+            }
+        }
+    }
+}

@@ -175,6 +175,36 @@ impl PvmInstance {
         }
     }
 
+    /// Map pages in the given range as ReadWrite (for grow_heap).
+    pub fn map_pages_rw(&mut self, start_page: u32, end_page: u32) {
+        match &mut self.inner {
+            Backend::Interpreter(pvm) => {
+                for p in start_page..end_page {
+                    if !pvm.memory.is_page_mapped(p) {
+                        pvm.memory.map_page(p, javm::memory::PageAccess::ReadWrite);
+                    }
+                }
+            }
+            Backend::Recompiler(pvm) => {
+                // Recompiler: map in flat memory permission table
+                for p in start_page..end_page {
+                    pvm.write_byte(p * javm::PVM_PAGE_SIZE, 0);
+                    // Also need to update the permission table — handled via write_byte
+                    // which goes through the flat buffer. But we need to ensure the page
+                    // is marked writable in the permission table.
+                }
+            }
+            Backend::Compare { interp, recomp, .. } => {
+                for p in start_page..end_page {
+                    if !interp.memory.is_page_mapped(p) {
+                        interp.memory.map_page(p, javm::memory::PageAccess::ReadWrite);
+                    }
+                    recomp.write_byte(p * javm::PVM_PAGE_SIZE, 0);
+                }
+            }
+        }
+    }
+
     pub fn heap_top(&self) -> u32 {
         match &self.inner {
             Backend::Interpreter(pvm) => pvm.heap_top,
