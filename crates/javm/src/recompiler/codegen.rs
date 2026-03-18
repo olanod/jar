@@ -257,19 +257,11 @@ impl Compiler {
             };
             let skip = compute_skip(pc, bitmask);
             let next_pc = (pc + 1 + skip) as u32;
-            let category = opcode.category();
-            let decoded_args = args::decode_args(code, pc, skip, category);
 
-            // Extract flat register fields
-            let (ra, rb, rd) = match decoded_args {
-                Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8),
-                Args::TwoReg { rd: d, ra: a } => (a as u8, 0xFF, d as u8),
-                Args::TwoRegImm { ra, rb, .. } | Args::TwoRegOffset { ra, rb, .. }
-                | Args::TwoRegTwoImm { ra, rb, .. } => (ra as u8, rb as u8, 0xFF),
-                Args::RegImm { ra, .. } | Args::RegExtImm { ra, .. }
-                | Args::RegTwoImm { ra, .. } | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
-                _ => (0xFF, 0xFF, 0xFF),
-            };
+            // Extract raw register fields BEFORE decode_args (for gas sim)
+            let raw_ra = if pc + 1 < code.len() { code[pc + 1] & 0x0F } else { 0xFF };
+            let raw_rb = if pc + 1 < code.len() { (code[pc + 1] >> 4) & 0x0F } else { 0xFF };
+            let raw_rd = if pc + 2 < code.len() { code[pc + 2] & 0x0F } else { 0xFF };
 
             // Bind label
             let label = self.block_labels[pc];
@@ -293,11 +285,15 @@ impl Compiler {
                 pending_gas = Some((stub_label, pc as u32, patch_offset));
             }
 
-            // Feed gas simulator
-            let fc = crate::gas_cost::fast_cost_from_parts(
-                opcode as u8, ra, rb, rd, pc as u32, &decoded_args, code, bitmask,
+            // Feed gas simulator (uses raw register bytes, no Args enum needed)
+            let fc = crate::gas_cost::fast_cost_from_raw(
+                opcode as u8, raw_ra, raw_rb, raw_rd, pc as u32, code, bitmask,
             );
             gas_sim.feed(&fc);
+
+            // Full decode (only needed for compile_instruction and peephole)
+            let category = opcode.category();
+            let decoded_args = args::decode_args(code, pc, skip, category);
 
             // Peephole: inline raw-code peek (no pre-decoded array needed)
             let fused = match opcode {
@@ -476,7 +472,7 @@ impl Compiler {
         // Feed instructions 2-4 to gas sim
         for &(opc, ref a, p) in &[(op2, &args2, pc2), (op3, &args3, pc3), (op4, &args4, pc4)] {
             let (ra, rb, rd) = extract_regs(a);
-            let fc = crate::gas_cost::fast_cost_from_parts(opc as u8, ra, rb, rd, p as u32, a, code, bitmask);
+            let fc = crate::gas_cost::fast_cost_from_raw(opc as u8, ra, rb, rd, p as u32, code, bitmask);
             gas_sim.feed(&fc);
         }
 
@@ -540,7 +536,7 @@ impl Compiler {
 
         // Feed instruction 2 to gas sim
         let (ra2, rb2, rd2) = extract_regs(&args2);
-        let fc = crate::gas_cost::fast_cost_from_parts(op2 as u8, ra2, rb2, rd2, pc2 as u32, &args2, code, bitmask);
+        let fc = crate::gas_cost::fast_cost_from_raw(op2 as u8, ra2, rb2, rd2, pc2 as u32, code, bitmask);
         gas_sim.feed(&fc);
 
         // Bind labels

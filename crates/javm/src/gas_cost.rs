@@ -774,10 +774,35 @@ fn reg_bit(r: u8) -> u16 {
     if r < 13 { 1u16 << r } else { 0 }
 }
 
-/// Compute FastCost from instruction components.
+/// Extract branch target from raw code bytes (for gas cost computation).
+/// Works for both OneRegImmOffset and TwoRegOneOffset categories.
+fn extract_branch_target_raw(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
+    let skip = {
+        let mut s = 0;
+        for j in 0..25 {
+            let idx = pc + 1 + j;
+            if idx >= bitmask.len() || bitmask[idx] == 1 { s = j; break; }
+        }
+        s
+    };
+    let opcode = code[pc];
+    // For branches, use the existing decode_args to get the offset
+    let cat = crate::instruction::Opcode::from_byte(opcode)
+        .map(|o| o.category())
+        .unwrap_or(crate::instruction::InstructionCategory::NoArgs);
+    let args = crate::args::decode_args(code, pc, skip, cat);
+    match args {
+        crate::args::Args::RegImmOffset { offset, .. } => offset as usize,
+        crate::args::Args::TwoRegOffset { offset, .. } => offset as usize,
+        crate::args::Args::Offset { offset } => offset as usize,
+        _ => pc,
+    }
+}
+
+/// Compute FastCost from raw register bytes (no Args enum needed).
+/// For branches, extracts target from raw code bytes.
 #[inline(always)]
-pub fn fast_cost_from_parts(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, args: &crate::args::Args, code: &[u8], bitmask: &[u8]) -> FastCost {
-    use crate::args::Args;
+pub fn fast_cost_from_raw(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, code: &[u8], bitmask: &[u8]) -> FastCost {
 
     let r1 = |r: u8| reg_bit(r);
     let r2 = |a: u8, b: u8| reg_bit(a) | reg_bit(b);
@@ -818,13 +843,13 @@ pub fn fast_cost_from_parts(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, ar
 
         // Branches (reg+imm+offset)
         81..=90 => {
-            let target = match args { Args::RegImmOffset { offset, .. } => *offset as usize, _ => pc as usize };
+            let target = extract_branch_target_raw(code, bitmask, pc as usize);
             let bc = branch_cost(code, bitmask, target);
             FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(ra), dst_mask: 0, is_terminator: true, is_move_reg: false }
         }
         // Branches (two-reg+offset)
         170..=175 => {
-            let target = match args { Args::TwoRegOffset { offset, .. } => *offset as usize, _ => pc as usize };
+            let target = extract_branch_target_raw(code, bitmask, pc as usize);
             let bc = branch_cost(code, bitmask, target);
             FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: true, is_move_reg: false }
         }
@@ -1006,10 +1031,9 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: 
     for _safety in 0..100_000u32 {
         // Phase 1: Decode as many instructions as possible this cycle
         while instr_idx < instrs.len() && decode_slots > 0 && (next_slot as usize) < 32 {
-            let cost = fast_cost_from_parts(
-                instrs[instr_idx].opcode as u8, instrs[instr_idx].ra, instrs[instr_idx].rb,
-                instrs[instr_idx].rd, instrs[instr_idx].pc,
-                &instrs[instr_idx].args, _code, _bitmask,
+            let ii = &instrs[instr_idx];
+            let cost = fast_cost_from_raw(
+                ii.opcode as u8, ii.ra, ii.rb, ii.rd, ii.pc, _code, _bitmask,
             );
 
             if cost.is_move_reg {
