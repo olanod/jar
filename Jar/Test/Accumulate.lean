@@ -483,6 +483,26 @@ def runTest (name : String) (pre : TAState) (inp : TAInput)
       ok := false
       IO.println s!"  account[{sid}] missing"
 
+  -- Check statistics
+  let gotStatsSorted := result.statistics.qsort (fun a b => a.serviceId < b.serviceId)
+  let expStatsSorted := post.statistics.qsort (fun a b => a.serviceId < b.serviceId)
+  if gotStatsSorted.size != expStatsSorted.size then
+    ok := false
+    IO.println s!"  statistics length: expected {expStatsSorted.size}, got {gotStatsSorted.size}"
+  else
+    for i in [:gotStatsSorted.size] do
+      let got := gotStatsSorted[i]!
+      let exp := expStatsSorted[i]!
+      if got.serviceId != exp.serviceId then
+        ok := false
+        IO.println s!"  statistics[{i}].serviceId: expected {exp.serviceId}, got {got.serviceId}"
+      if got.accumulateCount != exp.accumulateCount then
+        ok := false
+        IO.println s!"  statistics[{got.serviceId}].accumulateCount: expected {exp.accumulateCount}, got {got.accumulateCount}"
+      if got.accumulateGasUsed != exp.accumulateGasUsed then
+        ok := false
+        IO.println s!"  statistics[{got.serviceId}].accumulateGasUsed: expected {exp.accumulateGasUsed}, got {got.accumulateGasUsed}"
+
   if ok then
     IO.println s!"  ✓ {name}"
   else
