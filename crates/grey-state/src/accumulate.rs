@@ -705,57 +705,43 @@ fn handle_host_call(
     _entropy: &Hash,
     fetch_ctx: &FetchContext,
 ) -> bool {
-    // Host-call gas cost (GP Section 24.6/24.7): ϱ' ≡ ϱ − g
-    // All host calls cost g=10 (including log/JIP-1 and unknown IDs).
-    // ecalli instruction already costs ϱ∆=1 in the PVM; g is charged on top.
-    // For transfer, there's an additional gas_limit deduction on success.
+    // JAR v0.8.0 hostcall numbering: 0=gas, 1=grow_heap(new), 2+=shifted by 1.
+    // Host-call gas cost: all host calls cost g=10 (charged upfront).
     let host_gas_cost: u64 = 10;
 
     if pvm.gas() < host_gas_cost {
-        pvm.set_gas(0); // GP: gas set to 0 when insufficient for host call
+        pvm.set_gas(0);
         return false;
     }
     pvm.set_gas(pvm.gas() - host_gas_cost);
 
-
-    let name = match id {
-        0 => "gas", 1 => "fetch", 2 => "lookup", 3 => "read", 4 => "write", 5 => "info",
-        14 => "bless", 15 => "assign", 16 => "designate", 17 => "checkpoint",
-        18 => "new", 19 => "upgrade", 20 => "transfer", 21 => "eject",
-        22 => "query", 23 => "solicit", 24 => "forget", 25 => "yield", 26 => "provide",
-        100 => "log",
-        _ => "unknown",
-    };
-
-
-
+    // JAR v0.8.0 ID mapping: 0→gas, 1→grow_heap, 2..=27→old 1..=26, 100→log
     let result = match id {
         0 => host_gas(pvm, regular),
-        1 => host_fetch(pvm, fetch_ctx),
-        2 => host_lookup(pvm, regular),
-        3 => host_read(pvm, regular),
-        4 => host_write(pvm, regular),
-        5 => host_info(pvm, regular),
-        14 => host_bless(pvm, regular, exceptional, config),
-        15 => host_assign(pvm, regular, exceptional, config),
-        16 => host_designate(pvm, regular, exceptional, config),
-        17 => host_checkpoint(pvm, regular, exceptional),
-        18 => host_new(pvm, regular, timeslot),
-        19 => host_upgrade(pvm, regular),
-        20 => host_transfer(pvm, regular),
-        21 => host_eject(pvm, regular, timeslot, config),
-        22 => host_query(pvm, regular),
-        23 => host_solicit(pvm, regular, timeslot),
-        24 => host_forget(pvm, regular, timeslot, config),
-        25 => host_yield(pvm, regular),
-        26 => host_provide(pvm, regular),
+        1 => host_grow_heap(pvm),
+        2 => host_fetch(pvm, fetch_ctx),
+        3 => host_lookup(pvm, regular),
+        4 => host_read(pvm, regular),
+        5 => host_write(pvm, regular),
+        6 => host_info(pvm, regular),
+        15 => host_bless(pvm, regular, exceptional, config),
+        16 => host_assign(pvm, regular, exceptional, config),
+        17 => host_designate(pvm, regular, exceptional, config),
+        18 => host_checkpoint(pvm, regular, exceptional),
+        19 => host_new(pvm, regular, timeslot),
+        20 => host_upgrade(pvm, regular),
+        21 => host_transfer(pvm, regular),
+        22 => host_eject(pvm, regular, timeslot, config),
+        23 => host_query(pvm, regular),
+        24 => host_solicit(pvm, regular, timeslot),
+        25 => host_forget(pvm, regular, timeslot, config),
+        26 => host_yield(pvm, regular),
+        27 => host_provide(pvm, regular),
         100 => {
-            // log (JIP-1): Return WHAT per JAM docs spec.
             pvm.set_reg(7, HOST_WHAT);
             true
         }
         _ => {
-            // Unknown host call: return WHAT, cost g=10 (GP catch-all)
             pvm.set_reg(7, HOST_WHAT);
             true
         }
@@ -770,7 +756,46 @@ fn host_gas(pvm: &mut PvmInstance, _ctx: &mut AccContext) -> bool {
     true
 }
 
-/// fetch (id=1): Read protocol/context data (ΩY).
+/// grow_heap (JAR v0.8.0, id=1): Grow the heap to a desired page count.
+/// φ[7] = desired last writable page index + 1 (i.e. target page count).
+/// Returns in φ[7]: current page count (before or after growth).
+/// Extra gas cost: (new_pages - current_pages) × 10.
+fn host_grow_heap(pvm: &mut PvmInstance) -> bool {
+    let desired = pvm.reg(7);
+    let ps = javm::PVM_PAGE_SIZE;
+    let current_pages = (pvm.heap_top() as u64 + ps as u64 - 1) / ps as u64;
+
+    if desired <= current_pages || desired > (1u64 << 32) / ps as u64 {
+        // No-op: already at or beyond desired, or exceeds address space
+        pvm.set_reg(7, current_pages);
+        return true;
+    }
+
+    let new_pages = desired - current_pages;
+    let extra_gas = new_pages * 10;
+    if pvm.gas() < extra_gas {
+        pvm.set_gas(0);
+        return false; // OOG
+    }
+    pvm.set_gas(pvm.gas() - extra_gas);
+
+    // Map new pages
+    let old_top = pvm.heap_top();
+    let new_top = (desired as u32) * ps;
+    let start_page = old_top / ps;
+    let end_page = desired as u32;
+    for p in start_page..end_page {
+        pvm.write_byte(p * ps, pvm.read_byte(p * ps).unwrap_or(0));
+        // Actually, we need to map the page. Use write_bytes to touch it.
+    }
+    // Set heap_top via PvmInstance
+    pvm.set_heap_top(new_top);
+
+    pvm.set_reg(7, current_pages);
+    true
+}
+
+/// fetch (id=2 in v0.8.0): Read protocol/context data (ΩY).
 /// φ[7]=buffer_ptr, φ[8]=offset, φ[9]=max_len, φ[10]=mode, φ[11]=sub1, φ[12]=sub2
 /// Returns: φ'[7] = |v| (total data length) or NONE (u64::MAX).
 fn host_fetch(pvm: &mut PvmInstance, fetch_ctx: &FetchContext) -> bool {

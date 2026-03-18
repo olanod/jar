@@ -175,6 +175,24 @@ impl PvmInstance {
         }
     }
 
+    pub fn heap_top(&self) -> u32 {
+        match &self.inner {
+            Backend::Interpreter(pvm) => pvm.heap_top,
+            Backend::Recompiler(pvm) => pvm.heap_top(),
+            Backend::Compare { recomp, .. } => recomp.heap_top(),
+        }
+    }
+    pub fn set_heap_top(&mut self, top: u32) {
+        match &mut self.inner {
+            Backend::Interpreter(pvm) => pvm.heap_top = top,
+            Backend::Recompiler(pvm) => pvm.set_heap_top(top),
+            Backend::Compare { interp, recomp, .. } => {
+                interp.heap_top = top;
+                recomp.set_heap_top(top);
+            }
+        }
+    }
+
     pub fn reg(&self, index: usize) -> u64 {
         match &self.inner {
             Backend::Interpreter(pvm) => pvm.registers[index],

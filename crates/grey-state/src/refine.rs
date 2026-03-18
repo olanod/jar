@@ -333,13 +333,14 @@ fn handle_refine_host_call(
     exported_segments: &mut Vec<Vec<u8>>,
     export_offset: u16,
 ) {
+    // JAR v0.8.0 hostcall numbering: 0=gas, 1=grow_heap, 2+=shifted
     match id {
         0 => {
             // gas(): return remaining gas
             pvm.set_reg(7, pvm.gas());
         }
-        3 => {
-            // export(ω_7 = ptr): read a WG-byte segment from memory and append to exports
+        4 => {
+            // export (id=4 in v0.8.0): read a WG-byte segment from memory and append to exports
             let ptr = pvm.reg(7) as u32;
             let segment_size = grey_types::constants::SEGMENT_SIZE;
             match pvm.try_read_bytes(ptr, segment_size) {

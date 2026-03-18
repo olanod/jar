@@ -935,6 +935,15 @@ impl RecompiledPvm {
         self.ctx_mut().regs[idx] = val;
     }
 
+    /// Get heap top.
+    pub fn heap_top(&self) -> u32 {
+        self.ctx().heap_top
+    }
+    /// Set heap top.
+    pub fn set_heap_top(&mut self, top: u32) {
+        self.ctx_mut().heap_top = top;
+    }
+
     /// Get the native code bytes (for disassembly / debugging).
     pub fn native_code_bytes(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.native_code.ptr, self.native_code.len) }
