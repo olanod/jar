@@ -1,9 +1,10 @@
 //! PVM benchmark: grey interpreter/recompiler vs polkavm interpreter/compiler.
 //!
-//! Three workloads:
+//! Four workloads:
 //!   - fib: compute-intensive iterative Fibonacci (1M iterations)
 //!   - hostcall: host-call-heavy (100K ecalli invocations)
 //!   - sort: insertion sort of 1K u32 elements (compute + memory interleaved)
+//!   - ecrecover: secp256k1 ECDSA public key recovery (crypto-heavy)
 //!
 //! ## Benchmark fairness
 //!
@@ -259,5 +260,105 @@ fn bench_sort(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_fib, bench_hostcall, bench_sort);
+fn bench_ecrecover(c: &mut Criterion) {
+    let grey_blob = grey_ecrecover_blob();
+    let pvm_blob = polkavm_ecrecover_blob();
+
+    // ecrecover needs much more gas than fib/sort (~100M+)
+    let ecrecover_gas: u64 = 100_000_000_000;
+
+    // Validate grey
+    let mut pvm = javm::program::initialize_program(&grey_blob, &[], ecrecover_gas).unwrap();
+    loop {
+        let (exit, _) = pvm.run();
+        match exit {
+            // Halt-by-fault: jump to 0xFFFF0000 causes Panic (unmapped address)
+            javm::ExitReason::Halt | javm::ExitReason::Panic => break,
+            javm::ExitReason::HostCall(_) => continue,
+            other => panic!("grey ecrecover: unexpected exit: {:?}", other),
+        }
+    }
+    let grey_result = pvm.registers[7];
+    let grey_gas = ecrecover_gas - pvm.gas;
+    eprintln!("ecrecover: grey result={grey_result} gas={grey_gas}");
+    assert_eq!(grey_result, 1, "ecrecover: grey should return 1 (success)");
+
+    let (_, pvm_interp_mod) = try_make_polkavm_module(&pvm_blob, BackendKind::Interpreter)
+        .expect("polkavm interpreter should always work");
+    let pvm_compiler = try_make_polkavm_module(&pvm_blob, BackendKind::Compiler);
+
+    let mut group = c.benchmark_group("ecrecover");
+
+    // Skip interpreter benchmarks — too slow for crypto
+    group.bench_function("grey-recompiler", |b| {
+        b.iter(|| {
+            let mut pvm = javm::recompiler::initialize_program_recompiled(
+                &grey_blob, &[], ecrecover_gas,
+            )
+            .unwrap();
+            loop {
+                match pvm.run() {
+                    javm::ExitReason::Halt | javm::ExitReason::Panic => break,
+                    javm::ExitReason::OutOfGas => { eprintln!("ecrecover recompiler: OOG"); break; }
+                    javm::ExitReason::HostCall(_) => continue,
+                    javm::ExitReason::PageFault(addr) => { eprintln!("ecrecover recompiler: pagefault at {addr}"); break; }
+                    other => { eprintln!("ecrecover recompiler: {:?}", other); break; }
+                }
+            }
+            pvm.registers()[7]
+        })
+    });
+
+    if let Some((ref engine, ref pvm_mod)) = pvm_compiler {
+        group.bench_function("polkavm-compiler-exec", |b| {
+            b.iter(|| {
+                let mut inst = pvm_mod.instantiate().unwrap();
+                inst.set_gas(ecrecover_gas as i64);
+                if let Some(export) = pvm_mod.exports().next() {
+                    inst.set_next_program_counter(export.program_counter());
+                }
+                inst.set_reg(PReg::RA, 0xFFFF0000u64);
+                inst.set_reg(PReg::SP, pvm_mod.default_sp());
+                loop {
+                    match inst.run().unwrap() {
+                        InterruptKind::Finished => break,
+                        InterruptKind::Ecalli(_) => continue,
+                        InterruptKind::Trap => panic!("polkavm trap"),
+                        InterruptKind::NotEnoughGas => panic!("polkavm out of gas"),
+                        other => panic!("polkavm unexpected: {:?}", other),
+                    }
+                }
+                inst.reg(PReg::A0)
+            })
+        });
+        group.bench_function("polkavm-compiler-full", |b| {
+            b.iter(|| {
+                let mut mc = ModuleConfig::new();
+                mc.set_gas_metering(Some(GasMeteringKind::Sync));
+                let module = Module::new(engine, &mc, pvm_blob.clone().into()).unwrap();
+                let mut inst = module.instantiate().unwrap();
+                inst.set_gas(ecrecover_gas as i64);
+                if let Some(export) = module.exports().next() {
+                    inst.set_next_program_counter(export.program_counter());
+                }
+                inst.set_reg(PReg::RA, 0xFFFF0000u64);
+                inst.set_reg(PReg::SP, module.default_sp());
+                loop {
+                    match inst.run().unwrap() {
+                        InterruptKind::Finished => break,
+                        InterruptKind::Ecalli(_) => continue,
+                        InterruptKind::Trap => panic!("polkavm trap"),
+                        InterruptKind::NotEnoughGas => panic!("polkavm out of gas"),
+                        other => panic!("polkavm unexpected: {:?}", other),
+                    }
+                }
+                inst.reg(PReg::A0)
+            })
+        });
+    }
+
+    group.finish();
+}
+
+criterion_group!(benches, bench_fib, bench_hostcall, bench_sort, bench_ecrecover);
 criterion_main!(benches);

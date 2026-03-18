@@ -188,7 +188,12 @@ impl Elf {
 
         // Build address-aware data blobs: place sections at correct offsets
         // relative to the PVM base address (ZZ=0x10000 for RO, computed for RW).
-        let ro_data = build_data_blob(&ro_sections, 0x10000); // PVM RO base = ZZ
+        // Compute stack size so that RO data is placed at the right PVM address.
+        // PVM layout: [stack: 0..s) [args] [ro_data: s..s+|o|) ...]
+        // Set s = PVM_ZONE_SIZE so that ro_data starts at address 0x10000 = ZZ,
+        // matching the ELF's data section addresses.
+        let stack_size_computed = PVM_ZONE_SIZE as u32;
+        let ro_data = build_data_blob(&ro_sections, PVM_ZONE_SIZE);
         let rw_data = build_data_blob_rw(&rw_sections, ro_data.len());
 
         // Parse symbol table
@@ -224,8 +229,8 @@ impl Elf {
             code_sections,
             ro_data,
             rw_data,
-            heap_pages: 4,
-            stack_size: 4096,
+            heap_pages: 16, // 64KB heap
+            stack_size: stack_size_computed,
             entry_point,
             symbols,
         })

@@ -21,6 +21,7 @@ exclude = [
     "services/sample-service",
     "services/pixels-service",
     "services/pixels-authorizer",
+    "services/bench-ecrecover",
     "res/spec/crypto-ffi",
 ]
 

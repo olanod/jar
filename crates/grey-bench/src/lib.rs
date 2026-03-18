@@ -437,6 +437,34 @@ pub fn polkavm_hostcall_blob(n: u64) -> Vec<u8> {
     builder.to_vec().expect("failed to build polkavm hostcall blob")
 }
 
+// ---------------------------------------------------------------------------
+// Ecrecover benchmark: secp256k1 ECDSA public key recovery (k256 crate)
+// Same RISC-V ELF compiled for both grey (via transpiler) and polkavm (via linker).
+// ---------------------------------------------------------------------------
+
+/// Shared rv64em ELF for both grey and polkavm ecrecover benchmarks.
+/// Same binary, same algorithm — only the VM differs.
+const ECRECOVER_ELF: &[u8] = include_bytes!(
+    "../../../services/bench-ecrecover/target/riscv64em-polkavm/release/bench-ecrecover.elf"
+);
+
+/// Grey PVM blob for ecrecover (rv64em ELF → PVM via linker).
+pub fn grey_ecrecover_blob() -> Vec<u8> {
+    grey_transpiler::link_elf(ECRECOVER_ELF).expect("link ecrecover ELF for grey PVM")
+}
+
+/// PolkaVM blob for ecrecover (rv64em ELF → polkavm blob).
+pub fn polkavm_ecrecover_blob() -> Vec<u8> {
+    let mut config = polkavm_linker::Config::default();
+    config.set_strip(true);
+    polkavm_linker::program_from_elf(
+        config,
+        polkavm_linker::TargetInstructionSet::JamV1,
+        ECRECOVER_ELF,
+    )
+    .expect("link ecrecover ELF for polkavm")
+}
+
 #[cfg(test)]
 mod tests_sort {
     use super::*;
@@ -465,6 +493,25 @@ mod tests_sort {
                     eprintln!("Registers: {:?}", &pvm.registers);
                     panic!("unexpected exit: {:?}", other);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_grey_ecrecover() {
+        let blob = grey_ecrecover_blob();
+        let mut pvm = javm::program::initialize_program(&blob, &[], 100_000_000_000).unwrap();
+        loop {
+            let (exit, _) = pvm.run();
+            match exit {
+                javm::ExitReason::Halt | javm::ExitReason::Panic => {
+                    let gas_used = 100_000_000_000u64 - pvm.gas;
+                    eprintln!("ecrecover: a0={} gas_used={}", pvm.registers[7], gas_used);
+                    assert_eq!(pvm.registers[7], 1, "ecrecover should return 1 (success)");
+                    return;
+                }
+                javm::ExitReason::HostCall(_) => continue,
+                other => panic!("unexpected exit: {:?}", other),
             }
         }
     }

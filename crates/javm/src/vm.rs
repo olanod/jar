@@ -1681,33 +1681,64 @@ pub fn compute_basic_block_starts(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
         }
     }
 
-    // For each terminator instruction, the next instruction starts a new block
+    // Pass 1: For each instruction, compute its skip (size - 1)
+    // Pass 2: Mark basic block starts from control flow
     for i in 0..len {
-        if i < bitmask.len() && bitmask[i] == 1 {
-            if let Some(op) = Opcode::from_byte(code[i]) {
-                if op.is_terminator() {
-                    // Compute skip for this instruction
-                    let skip = {
-                        let mut s = 0;
-                        for j in 0..25 {
-                            let idx = i + 1 + j;
-                            let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-                            if bit == 1 {
-                                s = j;
-                                break;
-                            }
-                        }
-                        s
-                    };
-                    let next = i + 1 + skip;
-                    if next < len && next < bitmask.len() && bitmask[next] == 1 {
-                        if let Some(next_op) = Opcode::from_byte(code[next]) {
-                            let _ = next_op; // valid opcode
-                            starts[next] = true;
-                        }
+        if i >= bitmask.len() || bitmask[i] != 1 { continue; }
+        let Some(op) = Opcode::from_byte(code[i]) else { continue; };
+
+        let skip = {
+            let mut s = 0;
+            for j in 0..25 {
+                let idx = i + 1 + j;
+                let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
+                if bit == 1 { s = j; break; }
+            }
+            s
+        };
+
+        if op.is_terminator() {
+            // The instruction after a terminator starts a new block
+            let next = i + 1 + skip;
+            if next < len && next < bitmask.len() && bitmask[next] == 1 {
+                starts[next] = true;
+            }
+        }
+
+        // For branch/jump instructions, mark the target as a basic block start
+        let cat = op.category();
+        match cat {
+            crate::instruction::InstructionCategory::OneOffset => {
+                // Jump: opcode + 4-byte offset
+                if i + 5 <= len {
+                    let off = i32::from_le_bytes([code[i+1], code[i+2], code[i+3], code[i+4]]);
+                    let target = (i as i64 + off as i64) as usize;
+                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                        starts[target] = true;
                     }
                 }
             }
+            crate::instruction::InstructionCategory::TwoRegOneOffset => {
+                // Branch: opcode + 1-byte regs + 4-byte offset
+                if i + 6 <= len {
+                    let off = i32::from_le_bytes([code[i+2], code[i+3], code[i+4], code[i+5]]);
+                    let target = (i as i64 + off as i64) as usize;
+                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                        starts[target] = true;
+                    }
+                }
+            }
+            crate::instruction::InstructionCategory::OneRegImmOffset => {
+                // BranchImm: opcode + 1-byte reg + 4-byte imm + 4-byte offset
+                if i + 10 <= len {
+                    let off = i32::from_le_bytes([code[i+6], code[i+7], code[i+8], code[i+9]]);
+                    let target = (i as i64 + off as i64) as usize;
+                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                        starts[target] = true;
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
