@@ -71,7 +71,7 @@ jsonrpsee = { version = "0.24", features = ["server", "macros"] }
 
 
 [profile.release]
-lto = true
+lto = "thin"
 codegen-units = 1
 
 [profile.release.package.polkavm-linux-raw]

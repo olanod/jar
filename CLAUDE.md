@@ -249,6 +249,10 @@ crates/
 # Full suite (~5 min, all backends × all benchmarks)
 cargo bench -p grey-bench
 
+# With pipeline gas metering on polkavm (fair comparison)
+POLKAVM_ALLOW_EXPERIMENTAL=1 POLKAVM_DEFAULT_COST_MODEL=full-l1-hit \
+  cargo bench -p grey-bench
+
 # Specific benchmarks (use regex filter)
 cargo bench -p grey-bench -- 'fib/|sort/|hostcall/'   # skip ecrecover (slow)
 cargo bench -p grey-bench -- ecrecover                 # ecrecover only
@@ -258,10 +262,14 @@ cargo bench -p grey-bench -- 'grey-recompiler'         # one backend across all 
 cargo run --example ecrecover_single --release -p grey-bench
 ```
 
-To parse criterion output, grep for labeled timing lines:
+To parse criterion output:
 ```bash
-cargo bench -p grey-bench 2>&1 | grep 'time:'
+cargo bench -p grey-bench 2>&1 | grep -B1 'time:' | paste - - | grep 'time:'
 ```
+
+Note: polkavm defaults to **naive** gas (O(1) table lookup per instruction).
+Set `POLKAVM_DEFAULT_COST_MODEL=full-l1-hit` for pipeline gas metering to
+match grey's model. Requires `POLKAVM_ALLOW_EXPERIMENTAL=1`.
 
 ## Development Guidelines
 
