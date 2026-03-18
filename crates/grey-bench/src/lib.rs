@@ -447,9 +447,9 @@ const GREY_ECRECOVER_ELF: &[u8] = include_bytes!(
     "../../../services/bench-ecrecover/target/riscv64em-polkavm/release/bench-ecrecover.elf"
 );
 
-/// PolkaVM rv64em ELF (cdylib target, +e,+m features, per-function sections).
+/// PolkaVM rv64emac ELF (cdylib target, full ISA features, per-function sections).
 const POLKAVM_ECRECOVER_ELF: &[u8] = include_bytes!(
-    "../../../services/bench-ecrecover/target/riscv64em-polkavm-cdylib/release/bench_ecrecover.elf"
+    "../../../services/bench-ecrecover/target/riscv64emac-unknown-none-polkavm/release/bench_ecrecover.elf"
 );
 
 /// Grey PVM blob for ecrecover (rv64em ELF → PVM via linker).

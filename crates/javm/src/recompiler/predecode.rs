@@ -1,0 +1,133 @@
+//! Pre-decode PVM bytecode into a flat instruction stream for fast codegen.
+//!
+//! Replaces the byte-by-byte bitmask scan in the codegen loop with a single
+//! upfront decode pass. The codegen then iterates a `&[PreDecodedInst]` slice,
+//! eliminating redundant `compute_skip()` and `decode_args()` calls.
+
+use crate::args::{self, Args};
+use crate::instruction::Opcode;
+
+/// Pre-decoded PVM instruction. Stores everything the codegen needs per instruction.
+#[derive(Clone, Copy, Debug)]
+pub struct PreDecodedInst {
+    /// PVM opcode (for compile_instruction match dispatch).
+    pub opcode: Opcode,
+    /// Decoded arguments (registers, immediates, offsets).
+    pub args: Args,
+    /// PVM byte offset of this instruction.
+    pub pc: u32,
+    /// PVM byte offset of the next instruction.
+    pub next_pc: u32,
+    /// Gas cost if this is a gas block start (>0), 0 otherwise.
+    pub gas_cost: u32,
+}
+
+/// Pre-decode all instructions from raw code+bitmask into a flat array.
+///
+/// Three passes:
+/// 1. Decode each instruction (opcode, args, pc, next_pc)
+/// 2. Identify gas block boundaries (branch targets, post-terminators, jump table)
+/// 3. Compute gas cost for each gas block start
+pub fn predecode(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<PreDecodedInst> {
+    // --- Pass 1: Decode instructions ---
+    let estimated_count = bitmask.iter().filter(|&&b| b == 1).count();
+    let mut instrs: Vec<PreDecodedInst> = Vec::with_capacity(estimated_count);
+
+    let mut pc: usize = 0;
+    while pc < code.len() {
+        if pc < bitmask.len() && bitmask[pc] != 1 {
+            pc += 1;
+            continue;
+        }
+
+        let opcode = Opcode::from_byte(code[pc]).unwrap_or(Opcode::Trap);
+        let skip = compute_skip(pc, bitmask);
+        let next_pc = pc + 1 + skip;
+        let category = opcode.category();
+        let args = args::decode_args(code, pc, skip, category);
+
+        instrs.push(PreDecodedInst {
+            opcode,
+            args,
+            pc: pc as u32,
+            next_pc: next_pc as u32,
+            gas_cost: 0,
+        });
+
+        pc = next_pc;
+    }
+
+    // --- Pass 2: Mark gas block starts ---
+    // Build PC → instruction index map for O(1) target lookup.
+    let mut pc_to_idx: Vec<u32> = vec![u32::MAX; code.len() + 1];
+    for (i, instr) in instrs.iter().enumerate() {
+        pc_to_idx[instr.pc as usize] = i as u32;
+    }
+
+    let mut is_gas_start = vec![false; instrs.len()];
+
+    // PC=0 always starts a gas block
+    if !instrs.is_empty() {
+        is_gas_start[0] = true;
+    }
+
+    // Jump table entries
+    for &target in jump_table {
+        let t = target as usize;
+        if t < pc_to_idx.len() && pc_to_idx[t] != u32::MAX {
+            is_gas_start[pc_to_idx[t] as usize] = true;
+        }
+    }
+
+    // Branch/jump targets and post-terminator fallthroughs
+    for i in 0..instrs.len() {
+        let instr = &instrs[i];
+
+        // Extract branch/jump target from decoded args
+        let target_pc = match instr.args {
+            Args::Offset { offset } => Some(offset as usize),
+            Args::RegImmOffset { offset, .. } => Some(offset as usize),
+            Args::TwoRegOffset { offset, .. } => Some(offset as usize),
+            _ => None,
+        };
+        if let Some(t) = target_pc {
+            if t < pc_to_idx.len() && pc_to_idx[t] != u32::MAX {
+                is_gas_start[pc_to_idx[t] as usize] = true;
+            }
+        }
+
+        // Fallthrough after terminator
+        if instr.opcode.is_terminator() && i + 1 < instrs.len() {
+            is_gas_start[i + 1] = true;
+        }
+
+        // Ecalli: next instruction is a re-entry point
+        if matches!(instr.opcode, Opcode::Ecalli) && i + 1 < instrs.len() {
+            is_gas_start[i + 1] = true;
+        }
+    }
+
+    // --- Pass 3: Compute gas costs ---
+    for i in 0..instrs.len() {
+        if is_gas_start[i] {
+            let cost = crate::gas_cost::gas_cost_for_block(
+                code, bitmask, instrs[i].pc as usize,
+            );
+            instrs[i].gas_cost = cost as u32;
+        }
+    }
+
+    instrs
+}
+
+/// Compute skip(i) — distance to next instruction start.
+fn compute_skip(pc: usize, bitmask: &[u8]) -> usize {
+    for j in 0..25 {
+        let idx = pc + 1 + j;
+        let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
+        if bit == 1 {
+            return j;
+        }
+    }
+    24
+}

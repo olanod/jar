@@ -12,6 +12,7 @@
 
 pub mod asm;
 pub mod codegen;
+pub mod predecode;
 
 use crate::memory::Memory;
 use crate::vm::ExitReason;
@@ -475,8 +476,6 @@ pub struct RecompiledPvm {
     jump_table: Vec<u32>,
     /// Basic block starts.
     basic_block_starts: Vec<bool>,
-    /// Gas block starts (for gas correction on mid-block exits).
-    gas_block_starts: Vec<bool>,
     /// Initial gas.
     initial_gas: Gas,
     /// Dispatch table: PVM PC → native code offset (-1 = invalid).
@@ -503,9 +502,8 @@ impl RecompiledPvm {
         // at arbitrary PCs, e.g., PC=5 for accumulate, PC=10 for on-transfer).
         let basic_block_starts: Vec<bool> = bitmask.iter().map(|&b| b == 1).collect();
 
-        // Compute actual control-flow basic blocks for gas metering.
-        // This is much coarser than per-instruction, reducing gas check overhead.
-        let gas_block_starts = codegen::compute_gas_blocks(&code, &bitmask, &jump_table);
+        // Pre-decode all instructions for fast codegen (replaces byte-by-byte loop).
+        let pre_decoded = predecode::predecode(&code, &bitmask, &jump_table);
 
         // Allocate memory on the heap so we have a stable pointer
         let memory = Box::new(memory);
@@ -574,10 +572,9 @@ impl RecompiledPvm {
             basic_block_starts.clone(),
             jump_table.clone(),
             helpers,
-            gas_block_starts.clone(),
             code.len(),
         );
-        let (native, dispatch_table) = compiler.compile(&code, &bitmask);
+        let (native, dispatch_table) = compiler.compile(&pre_decoded, code.len());
 
         if debug {
             let _ = std::fs::write("/tmp/pvm_native.bin", &native);
@@ -600,7 +597,6 @@ impl RecompiledPvm {
             bitmask,
             jump_table,
             basic_block_starts,
-            gas_block_starts,
             initial_gas: gas,
             dispatch_table,
             debug,

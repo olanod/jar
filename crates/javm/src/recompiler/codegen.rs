@@ -22,7 +22,8 @@
 //! Reserved: R15 = JitContext pointer, RDX = scratch, RSP = native stack.
 
 use super::asm::{Assembler, Cc, Label, Reg};
-use crate::args::{self, Args};
+use super::predecode::PreDecodedInst;
+use crate::args::Args;
 use crate::instruction::Opcode;
 /// Map PVM register index (0..12) to x86-64 register.
 /// All 13 PVM registers live in x86 registers.
@@ -138,8 +139,6 @@ pub struct Compiler {
     helpers: HelperFns,
     /// Entry points: every instruction start (for dispatch table / re-entry).
     basic_block_starts: Vec<bool>,
-    /// Gas block starts: actual control-flow basic block boundaries (for gas metering).
-    gas_block_starts: Vec<bool>,
     /// Jump table.
     jump_table: Vec<u32>,
     /// Peephole: tracks how each PVM register was last defined.
@@ -154,7 +153,6 @@ impl Compiler {
         basic_block_starts: Vec<bool>,
         jump_table: Vec<u32>,
         helpers: HelperFns,
-        gas_block_starts: Vec<bool>,
         code_len: usize,
     ) -> Self {
         // Estimate native code size: ~8 bytes per PVM code byte (empirically ~5-6x).
@@ -179,7 +177,6 @@ impl Compiler {
             reg_defs: [RegDef::Unknown; 13],
             helpers,
             basic_block_starts,
-            gas_block_starts,
             jump_table,
         }
     }
@@ -201,82 +198,59 @@ impl Compiler {
         (idx as usize) < self.basic_block_starts.len() && self.basic_block_starts[idx as usize]
     }
 
-    /// Compile a full PVM program.
+    /// Compile from pre-decoded instructions.
     /// Returns (native_code, dispatch_table) where dispatch_table[pc] is the
     /// native code offset for PVM PC, or -1 if not a valid entry point.
-    pub fn compile(mut self, code: &[u8], bitmask: &[u8]) -> (Vec<u8>, Vec<i32>) {
+    pub fn compile(mut self, instrs: &[PreDecodedInst], code_len: usize) -> (Vec<u8>, Vec<i32>) {
         // Emit prologue
         self.emit_prologue();
 
-        // Pre-create labels for all basic block starts
-        for i in 0..self.basic_block_starts.len() {
-            if self.basic_block_starts[i] {
-                self.label_for_pc(i as u32);
-            }
+        // Pre-create labels for all instruction PCs
+        for instr in instrs {
+            self.label_for_pc(instr.pc);
         }
 
-        // Compile instructions
-        let mut pc: usize = 0;
-        while pc < code.len() {
-            // Check bitmask
-            if pc < bitmask.len() && bitmask[pc] != 1 {
-                pc += 1;
-                continue;
-            }
+        // Main compilation loop: iterate pre-decoded instructions
+        let mut i = 0;
+        while i < instrs.len() {
+            let instr = &instrs[i];
 
-            // Bind label if this is a known target
-            let label = self.block_labels[pc];
+            // Bind label if this PC is a known target
+            let label = self.block_labels[instr.pc as usize];
             if label != NO_LABEL {
                 self.asm.bind_label(label);
             }
 
-            // Gas metering: charge per gas-block (basic block cost) at block start.
-            // The OOG stub restores gas and falls back to interpreter for precise OOG.
-            if pc < self.gas_block_starts.len() && self.gas_block_starts[pc] {
-                self.emit_gas_check(pc, code, bitmask);
+            // Gas metering at gas block start (gas_cost > 0)
+            if instr.gas_cost > 0 {
+                let stub_label = self.asm.new_label();
+                self.asm.sub_mem64_imm32(CTX, CTX_GAS, instr.gas_cost as i32);
+                self.asm.jcc_label(Cc::S, stub_label);
+                self.oog_stubs.push((stub_label, instr.pc, instr.gas_cost));
             }
 
-            // Decode instruction
-            let opcode_byte = code[pc];
-            let opcode = match Opcode::from_byte(opcode_byte) {
-                Some(op) => op,
-                None => {
-                    self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
-                    self.emit_exit(EXIT_PANIC, 0);
-                    pc += 1;
-                    continue;
-                }
-            };
-
-            let skip = compute_skip(pc, bitmask);
-            let next_pc = (pc + 1 + skip) as u32;
-            let category = opcode.category();
-            let args = args::decode_args(code, pc, skip, category);
-
             // Peephole lookahead: try multi-instruction fusion patterns.
-            let fused = match opcode {
-                // add+add+add+load/store → lea+bounds_check+load/store
-                Opcode::Add64 => self.try_fuse_scaled_index(code, bitmask, pc, &args),
-                // mul64+mul_upper → single mulq producing both low and high
-                Opcode::Mul64 => self.try_fuse_mul_pair(code, bitmask, pc, &args),
+            let fused = match instr.opcode {
+                Opcode::Add64 => self.try_fuse_scaled_index_pre(instrs, i),
+                Opcode::Mul64 => self.try_fuse_mul_pair_pre(instrs, i),
                 _ => None,
             };
 
             if let Some(advance) = fused {
-                pc += advance;
+                i += advance;
                 continue;
             }
 
-            self.compile_instruction(opcode, &args, pc as u32, next_pc);
-            self.update_reg_defs(opcode, &args);
+            self.compile_instruction(instr.opcode, &instr.args, instr.pc, instr.next_pc);
+            self.update_reg_defs(instr.opcode, &instr.args);
 
-            pc += 1 + skip;
+            i += 1;
         }
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
 
         // Build dispatch table: PVM PC → native code offset
-        let table_len = code.len() + 1; // +1 so PC=code.len() is valid (maps to panic)
+        let table_len = code_len + 1; // +1 so PC=code.len() is valid (maps to panic)
         let mut dispatch_table = vec![-1i32; table_len];
         for (pvm_pc, &label) in self.block_labels.iter().enumerate() {
             if label != NO_LABEL {
@@ -438,115 +412,69 @@ impl Compiler {
         self.fault_stubs.push((fault_label, pvm_pc));
     }
 
-    /// Try to fuse a scaled-index pattern starting at the current Add64 instruction.
+    /// Helper: bind label and emit gas check for a pre-decoded instruction in a fused pattern.
+    fn emit_label_and_gas_for(&mut self, instr: &PreDecodedInst) {
+        let label = self.block_labels[instr.pc as usize];
+        if label != NO_LABEL {
+            self.asm.bind_label(label);
+        }
+        if instr.gas_cost > 0 {
+            let stub_label = self.asm.new_label();
+            self.asm.sub_mem64_imm32(CTX, CTX_GAS, instr.gas_cost as i32);
+            self.asm.jcc_label(Cc::S, stub_label);
+            self.oog_stubs.push((stub_label, instr.pc, instr.gas_cost));
+        }
+    }
+
+    /// Peephole: fuse scaled-index pattern from pre-decoded instructions.
     /// Pattern: add64 D,A,A / add64 D,D,D / add64 D2,BASE,D / load/store_ind R,D2,0
-    /// Returns Some(bytes_to_skip) if fused, None otherwise.
-    fn try_fuse_scaled_index(&mut self, code: &[u8], bitmask: &[u8], pc: usize, args: &Args) -> Option<usize> {
-        // First instruction must be: add64 D, A, A (doubling)
-        let Args::ThreeReg { ra: a1_ra, rb: a1_rb, rd: a1_rd } = args else { return None; };
-        if a1_ra != a1_rb { return None; }  // must be D = A + A
-        let idx_reg = *a1_ra;  // the index register
-        let d1 = *a1_rd;      // the temp register
+    /// Returns Some(instruction_count) if fused, None otherwise.
+    fn try_fuse_scaled_index_pre(&mut self, instrs: &[PreDecodedInst], idx: usize) -> Option<usize> {
+        if idx + 3 >= instrs.len() { return None; }
+        let i0 = &instrs[idx];
+        let i1 = &instrs[idx + 1];
+        let i2 = &instrs[idx + 2];
+        let i3 = &instrs[idx + 3];
 
-        // Peek at instruction 2: must be add64 D, D, D (same D as instruction 1)
-        let skip1 = compute_skip(pc, bitmask);
-        let pc2 = pc + 1 + skip1;
-        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) { return None; }
-        let op2 = Opcode::from_byte(code[pc2])?;
-        if op2 != Opcode::Add64 { return None; }
-        let skip2 = compute_skip(pc2, bitmask);
-        let args2 = args::decode_args(code, pc2, skip2, op2.category());
-        let Args::ThreeReg { ra: a2_ra, rb: a2_rb, rd: a2_rd } = args2 else { return None; };
-        if a2_ra != d1 || a2_rb != d1 || a2_rd != d1 { return None; }  // must be D = D + D
+        // i0: add64 D, A, A (doubling)
+        let Args::ThreeReg { ra: a1_ra, rb: a1_rb, rd: a1_rd } = i0.args else { return None; };
+        if a1_ra != a1_rb { return None; }
+        let idx_reg = a1_ra;
+        let d1 = a1_rd;
 
-        // Peek at instruction 3: must be add64 D2, BASE, D (or D2, D, BASE)
-        let pc3 = pc2 + 1 + skip2;
-        if pc3 >= code.len() || (pc3 < bitmask.len() && bitmask[pc3] != 1) { return None; }
-        let op3 = Opcode::from_byte(code[pc3])?;
-        if op3 != Opcode::Add64 { return None; }
-        let skip3 = compute_skip(pc3, bitmask);
-        let args3 = args::decode_args(code, pc3, skip3, op3.category());
-        let Args::ThreeReg { ra: a3_ra, rb: a3_rb, rd: a3_rd } = args3 else { return None; };
+        // i1: add64 D, D, D
+        if i1.opcode != Opcode::Add64 { return None; }
+        let Args::ThreeReg { ra: a2_ra, rb: a2_rb, rd: a2_rd } = i1.args else { return None; };
+        if a2_ra != d1 || a2_rb != d1 || a2_rd != d1 { return None; }
+
+        // i2: add64 D2, BASE, D (or D2, D, BASE)
+        if i2.opcode != Opcode::Add64 { return None; }
+        let Args::ThreeReg { ra: a3_ra, rb: a3_rb, rd: a3_rd } = i2.args else { return None; };
         let base_reg;
         if a3_rb == d1 && a3_ra != d1 {
-            base_reg = a3_ra;  // D2 = BASE + D
+            base_reg = a3_ra;
         } else if a3_ra == d1 && a3_rb != d1 {
-            base_reg = a3_rb;  // D2 = D + BASE
+            base_reg = a3_rb;
         } else {
             return None;
         }
-        let addr_reg = a3_rd;  // the result register holding base + idx*4
+        let addr_reg = a3_rd;
 
-        // Peek at instruction 4: must be load_ind or store_ind with rb=addr_reg, imm=0
-        let pc4 = pc3 + 1 + skip3;
-        if pc4 >= code.len() || (pc4 < bitmask.len() && bitmask[pc4] != 1) { return None; }
-        let op4 = Opcode::from_byte(code[pc4])?;
-        let skip4 = compute_skip(pc4, bitmask);
-        let args4 = args::decode_args(code, pc4, skip4, op4.category());
-
-        match op4 {
+        // i3: load_ind or store_ind with rb=addr_reg, imm=0
+        match i3.opcode {
             Opcode::LoadIndU8 | Opcode::LoadIndI8 | Opcode::LoadIndU16 | Opcode::LoadIndI16 |
             Opcode::LoadIndU32 | Opcode::LoadIndI32 | Opcode::LoadIndU64 => {
-                let Args::TwoRegImm { ra, rb, imm } = args4 else { return None; };
+                let Args::TwoRegImm { ra, rb, imm } = i3.args else { return None; };
                 if rb != addr_reg || imm as i32 != 0 { return None; }
 
-                // Fuse! Emit: lea edx, [base + idx*4] + bounds check + load
-                // But still need to emit the Add64 instructions for reg D (it may be used later).
-                // Actually: if D and addr_reg are temp registers not used after the load,
-                // we can skip them. For safety, emit the adds for D but use lea for the load address.
-                // NO — the whole point is to SKIP the adds. Let's skip them and just emit
-                // the result into addr_reg via the lea.
+                for j in 0..4 { self.emit_label_and_gas_for(&instrs[idx + j]); }
 
-                // We need to also emit the Add64 results into their dest regs in case they're used later.
-                // But in the pattern, D is a temp (overwritten by the doubling), and addr_reg
-                // is overwritten by add64. For the specific sort pattern, D and addr_reg are temps
-                // that are only used by the load. Let's check if they're used after the load.
-                // For simplicity: ALWAYS emit the fused version. If D or addr_reg is used later
-                // with stale values, the program is wrong anyway (the PVM semantics say the
-                // registers hold base+idx*4, which our lea computes correctly into SCRATCH).
-
-                // Emit gas checks for all 4 instructions' blocks
-                // (they may be at different gas block boundaries)
-                // Actually, gas checks are emitted BEFORE compile_instruction in the main loop.
-                // Since we're skipping the main loop for these PCs, we need to emit gas checks here.
-                for &ipc in &[pc, pc2, pc3, pc4] {
-                    {
-                        let label = self.block_labels[ipc];
-                        if label != NO_LABEL {
-                            self.asm.bind_label(label);
-                        }
-                    }
-                    if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
-                        self.emit_gas_check(ipc, code, bitmask);
-                    }
-                }
-
-                // Emit the three Add64 results in case the registers are read later
-                // D gets idx*4, addr_reg gets base+idx*4
-                // But we compute addr via lea into SCRATCH, so we need D and addr_reg too.
-                // Simplest: emit the adds for D, but use lea for the actual memory access.
-                // That still saves 1 instruction (movzx_32_64 on the load path).
-                // Actually NO — that defeats the purpose. Let me just emit everything via lea:
-
-                // Emit lea edx, [base + idx*4] into SCRATCH
                 self.asm.lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
-
-                // Also update D and addr_reg for correctness
-                // D = idx * 4 (computed by adds but we skipped them)
-                // addr_reg = base + idx*4 (computed by add3 but we skipped it)
-                // If d1 != addr_reg, we need both. If d1 == addr_reg, just addr_reg.
-                // For now: compute D = idx*4 via shift, addr_reg = base+D via add
-                // These are still 3 instructions... defeating the purpose.
-                // ALTERNATIVE: if D and addr_reg are NOT read after the load/store,
-                // we can skip them entirely. In the sort inner loop, they're NOT read again
-                // (they're recomputed each iteration). Let's just skip and see if tests pass.
-
-                let fn_addr = self.read_fn_for(op4);
+                let fn_addr = self.read_fn_for(i3.opcode);
                 let ra_reg = REG_MAP[ra];
-                self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc4 as u32);
+                self.emit_mem_read(ra_reg, SCRATCH, fn_addr, i3.pc);
 
-                // Sign-extend for signed variants
-                match op4 {
+                match i3.opcode {
                     Opcode::LoadIndI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
                     Opcode::LoadIndI16 => self.asm.movsx_16_64(ra_reg, ra_reg),
                     Opcode::LoadIndI32 => self.asm.movsxd(ra_reg, ra_reg),
@@ -554,125 +482,76 @@ impl Compiler {
                 }
 
                 self.invalidate_all_regs();
-                let total_skip = (pc4 + 1 + skip4) - pc;
-                Some(total_skip)
+                Some(4)
             }
             Opcode::StoreIndU8 | Opcode::StoreIndU16 | Opcode::StoreIndU32 | Opcode::StoreIndU64 => {
-                let Args::TwoRegImm { ra, rb, imm } = args4 else { return None; };
+                let Args::TwoRegImm { ra, rb, imm } = i3.args else { return None; };
                 if rb != addr_reg || imm as i32 != 0 { return None; }
 
-                for &ipc in &[pc, pc2, pc3, pc4] {
-                    {
-                        let label = self.block_labels[ipc];
-                        if label != NO_LABEL {
-                            self.asm.bind_label(label);
-                        }
-                    }
-                    if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
-                        self.emit_gas_check(ipc, code, bitmask);
-                    }
-                }
+                for j in 0..4 { self.emit_label_and_gas_for(&instrs[idx + j]); }
 
                 self.asm.lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
-                let fn_addr = self.write_fn_for(op4);
+                let fn_addr = self.write_fn_for(i3.opcode);
                 let ra_reg = REG_MAP[ra];
-                self.emit_mem_write(true, ra_reg, fn_addr, pc4 as u32);
+                self.emit_mem_write(true, ra_reg, fn_addr, i3.pc);
 
                 self.invalidate_all_regs();
-                let total_skip = (pc4 + 1 + skip4) - pc;
-                Some(total_skip)
+                Some(4)
             }
             _ => None,
         }
     }
 
-    /// Peephole: fuse Mul64 + MulUpperSS/UU into a single multiply.
-    /// Pattern: mul64 rd1,ra,rb / mul_upper_xx rd2,ra,rb (same ra,rb operands)
-    /// Fuses into: single mul/imul producing both low (rd1) and high (rd2) results.
-    fn try_fuse_mul_pair(&mut self, code: &[u8], bitmask: &[u8], pc: usize, args: &Args) -> Option<usize> {
-        let Args::ThreeReg { ra: m_ra, rb: m_rb, rd: m_rd } = args else { return None; };
+    /// Peephole: fuse Mul64 + MulUpperSS/UU from pre-decoded instructions.
+    /// Returns Some(instruction_count) if fused, None otherwise.
+    fn try_fuse_mul_pair_pre(&mut self, instrs: &[PreDecodedInst], idx: usize) -> Option<usize> {
+        if idx + 1 >= instrs.len() { return None; }
+        let i0 = &instrs[idx];
+        let i1 = &instrs[idx + 1];
 
-        // Peek at next instruction
-        let skip1 = compute_skip(pc, bitmask);
-        let pc2 = pc + 1 + skip1;
-        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) { return None; }
-        let op2 = Opcode::from_byte(code[pc2])?;
+        let Args::ThreeReg { ra: m_ra, rb: m_rb, rd: m_rd } = i0.args else { return None; };
 
-        // Must be MulUpperSS or MulUpperUU with same operands
-        let signed = match op2 {
+        let signed = match i1.opcode {
             Opcode::MulUpperSS => true,
             Opcode::MulUpperUU => false,
             _ => return None,
         };
-        let skip2 = compute_skip(pc2, bitmask);
-        let args2 = args::decode_args(code, pc2, skip2, op2.category());
-        let Args::ThreeReg { ra: u_ra, rb: u_rb, rd: u_rd } = args2 else { return None; };
-        if u_ra != *m_ra || u_rb != *m_rb { return None; }
+        let Args::ThreeReg { ra: u_ra, rb: u_rb, rd: u_rd } = i1.args else { return None; };
+        if u_ra != m_ra || u_rb != m_rb { return None; }
 
-        // Pattern matched! Emit fused multiply.
-        // Bind labels and gas checks for both instructions.
-        for &ipc in &[pc, pc2] {
-            {
-                let label = self.block_labels[ipc];
-                if label != NO_LABEL {
-                    self.asm.bind_label(label);
-                }
-            }
-            if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
-                self.emit_gas_check(ipc, code, bitmask);
-            }
-        }
+        // Pattern matched! Bind labels and gas checks.
+        for j in 0..2 { self.emit_label_and_gas_for(&instrs[idx + j]); }
 
-        let (a, b) = (REG_MAP[*m_ra], REG_MAP[*m_rb]);
-        let (rd_lo, rd_hi) = (REG_MAP[*m_rd], REG_MAP[u_rd]);
+        let (a, b) = (REG_MAP[m_ra], REG_MAP[m_rb]);
+        let (rd_lo, rd_hi) = (REG_MAP[m_rd], REG_MAP[u_rd]);
 
-        // Save RAX and RDX (they're used implicitly by mul/imul).
         self.asm.push(Reg::RAX);
-        self.asm.push(SCRATCH); // RDX
-
-        // Load ra into RAX
+        self.asm.push(SCRATCH);
         self.asm.mov_rr(Reg::RAX, a);
 
-        // Handle rb being RAX (φ[11], which we just overwrote with ra)
         let mul_src = if b == Reg::RAX {
-            self.asm.mov_load64(SCRATCH, Reg::RSP, 8); // original RAX from stack
+            self.asm.mov_load64(SCRATCH, Reg::RSP, 8);
             SCRATCH
         } else {
             b
         };
 
-        // Emit the single multiply: RDX:RAX = RAX * mul_src
         if signed {
             self.asm.imul_rdx_rax(mul_src);
         } else {
             self.asm.mul_rdx_rax(mul_src);
         }
 
-        // Now RAX = low 64 bits (rd_lo), RDX = high 64 bits (rd_hi).
-        // We need to distribute results and restore RAX/RDX.
-        // Strategy: push both results, restore originals, then pop results into destinations.
-
-        // Save results to temporaries
-        self.asm.push(SCRATCH);   // push high (RDX)
-        self.asm.push(Reg::RAX);  // push low (RAX)
-        // Stack: [RSP+0]=lo, [RSP+8]=hi, [RSP+16]=orig_RDX, [RSP+24]=orig_RAX
-
-        // Restore original RAX and RDX
-        self.asm.mov_load64(SCRATCH, Reg::RSP, 16);  // orig RDX
-        self.asm.mov_load64(Reg::RAX, Reg::RSP, 24); // orig RAX
-
-        // Load results into destinations
-        // Be careful: rd_lo or rd_hi might be RAX or RDX (which we just restored)
-        // Load lo first, then hi (order matters if rd_lo == rd_hi, though unlikely)
-        self.asm.mov_load64(rd_lo, Reg::RSP, 0);  // low bits
-        self.asm.mov_load64(rd_hi, Reg::RSP, 8);  // high bits
-
-        // Clean up stack
+        self.asm.push(SCRATCH);
+        self.asm.push(Reg::RAX);
+        self.asm.mov_load64(SCRATCH, Reg::RSP, 16);
+        self.asm.mov_load64(Reg::RAX, Reg::RSP, 24);
+        self.asm.mov_load64(rd_lo, Reg::RSP, 0);
+        self.asm.mov_load64(rd_hi, Reg::RSP, 8);
         self.asm.add_ri(Reg::RSP, 32);
 
         self.invalidate_all_regs();
-        let total_skip = (pc2 + 1 + skip2) - pc;
-        Some(total_skip)
+        Some(2)
     }
 
     /// Compute a memory address into SCRATCH, using peephole optimizations when available.
@@ -2256,22 +2135,6 @@ impl Compiler {
         self.asm.mov_rr(REG_MAP[rd], SCRATCH);
     }
 
-    /// Emit gas check at gas-block start.
-    /// Uses a per-block OOG stub (cold code) to store PC only on the OOG path,
-    /// keeping the hot path free of PC stores.
-    fn emit_gas_check(&mut self, pc: usize, code: &[u8], bitmask: &[u8]) {
-        // Pipeline-simulated gas cost (JAR v0.8.0)
-        let cost = crate::gas_cost::gas_cost_for_block(code, bitmask, pc) as u32;
-        if cost == 0 { return; }
-
-        // sub qword [r15 + CTX_GAS], cost  — sets SF if result < 0
-        // js oog_stub_N  (cold: restores gas, stores PC, jumps to shared OOG exit)
-        let stub_label = self.asm.new_label();
-        self.asm.sub_mem64_imm32(CTX, CTX_GAS, cost as i32);
-        self.asm.jcc_label(Cc::S, stub_label);
-        self.oog_stubs.push((stub_label, pc as u32, cost));
-    }
-
     /// Emit an exit sequence that sets exit_reason and exit_arg.
     fn emit_exit(&mut self, reason: u32, arg: u32) {
         self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, reason as i32);
@@ -2399,141 +2262,3 @@ impl Compiler {
     }
 }
 
-/// Compute actual control-flow basic block boundaries from the instruction stream.
-/// Returns a Vec<bool> where `true` marks a gas-block start (branch target, fallthrough
-/// after terminator, ecalli re-entry point, jump table entry, or PC=0).
-pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<bool> {
-    let mut gas_starts = vec![false; code.len()];
-
-    // PC=0 is always a block start
-    if !code.is_empty() {
-        gas_starts[0] = true;
-    }
-
-    // Dynamic jump targets: all jump table entries are potential re-entry points
-    // after a DJUMP exit is resolved by the run() loop.
-    for &target in jump_table {
-        let t = target as usize;
-        if t < code.len() {
-            gas_starts[t] = true;
-        }
-    }
-
-    let mut pc: usize = 0;
-    while pc < code.len() {
-        if pc < bitmask.len() && bitmask[pc] != 1 {
-            pc += 1;
-            continue;
-        }
-
-        let opcode = Opcode::from_byte(code[pc]);
-        let skip = compute_skip(pc, bitmask);
-        let next_pc = pc + 1 + skip;
-
-        if let Some(op) = opcode {
-            // Extract branch/jump targets
-            let category = op.category();
-            let args = crate::args::decode_args(code, pc, skip, category);
-
-            match args {
-                Args::Offset { offset } => {
-                    // Jump target
-                    let target = offset as usize;
-                    if target < code.len() {
-                        gas_starts[target] = true;
-                    }
-                }
-                Args::RegImmOffset { offset, .. } => {
-                    // Branch target (conditional)
-                    let target = offset as usize;
-                    if target < code.len() {
-                        gas_starts[target] = true;
-                    }
-                }
-                Args::TwoRegOffset { offset, .. } => {
-                    // Branch target (conditional, two-reg)
-                    let target = offset as usize;
-                    if target < code.len() {
-                        gas_starts[target] = true;
-                    }
-                }
-                _ => {}
-            }
-
-            // Fallthrough after terminators is a new block
-            if op.is_terminator() && next_pc < code.len() {
-                gas_starts[next_pc] = true;
-            }
-
-            // Ecalli: the next instruction is a re-entry point
-            if matches!(op, Opcode::Ecalli) && next_pc < code.len() {
-                gas_starts[next_pc] = true;
-            }
-        }
-
-        pc = next_pc;
-    }
-
-    gas_starts
-}
-
-/// Compute skip(i) — distance to next instruction start.
-fn compute_skip(pc: usize, bitmask: &[u8]) -> usize {
-    for j in 0..25 {
-        let idx = pc + 1 + j;
-        let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-        if bit == 1 {
-            return j;
-        }
-    }
-    24
-}
-
-/// Compute gas cost for a gas block starting at `pc`.
-/// Each instruction costs 1 gas. Count until we hit a terminator or the next gas block.
-pub fn compute_gas_block_cost(pc: usize, code: &[u8], bitmask: &[u8], gas_starts: &[bool]) -> u32 {
-    let mut cost = 0u32;
-    let mut pos = pc;
-    loop {
-        if pos >= code.len() { break; }
-        if pos < bitmask.len() && bitmask[pos] != 1 {
-            pos += 1;
-            continue;
-        }
-        cost += 1;
-        let opcode = Opcode::from_byte(code[pos]);
-        let skip = compute_skip(pos, bitmask);
-        pos += 1 + skip;
-        // Stop after a terminator
-        if let Some(op) = opcode {
-            if op.is_terminator() {
-                break;
-            }
-        }
-        // Stop if next position is a gas block start
-        if pos < gas_starts.len() && gas_starts[pos] {
-            break;
-        }
-    }
-    cost
-}
-
-/// Compute gas cost from `block_start` up to and including `target_pc`.
-/// Used to determine how many instructions in a gas block actually executed
-/// before a mid-block exit (page fault, halt, panic).
-pub fn compute_gas_block_cost_up_to(block_start: usize, target_pc: usize, code: &[u8], bitmask: &[u8]) -> u32 {
-    let mut cost = 0u32;
-    let mut pos = block_start;
-    loop {
-        if pos >= code.len() { break; }
-        if pos < bitmask.len() && bitmask[pos] != 1 {
-            pos += 1;
-            continue;
-        }
-        cost += 1;
-        if pos >= target_pc { break; } // included this instruction
-        let skip = compute_skip(pos, bitmask);
-        pos += 1 + skip;
-    }
-    cost
-}

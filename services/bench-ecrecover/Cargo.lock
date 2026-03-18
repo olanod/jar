@@ -188,21 +188,21 @@ checksum = "3f8cf1ae70818c6476eb2da0ac8f3f55ecdea41a7aa16824ea6efc4a31cccf41"
 
 [[package]]
 name = "polkavm-common"
-version = "0.30.0"
+version = "0.32.0"
 dependencies = [
  "picosimd",
 ]
 
 [[package]]
 name = "polkavm-derive"
-version = "0.30.0"
+version = "0.32.0"
 dependencies = [
  "polkavm-derive-impl-macro",
 ]
 
 [[package]]
 name = "polkavm-derive-impl"
-version = "0.30.0"
+version = "0.32.0"
 dependencies = [
  "polkavm-common",
  "proc-macro2",
@@ -212,7 +212,7 @@ dependencies = [
 
 [[package]]
 name = "polkavm-derive-impl-macro"
-version = "0.30.0"
+version = "0.32.0"
 dependencies = [
  "polkavm-derive-impl",
  "syn",
@@ -329,4 +329,4 @@ checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[patch.unused]]
 name = "polkavm"
-version = "0.30.0"
+version = "0.32.0"

@@ -245,14 +245,22 @@ crates/
 
 ## Benchmarks
 
-Run PVM benchmarks with:
 ```bash
+# Full suite (~5 min, all backends × all benchmarks)
 cargo bench -p grey-bench
-```
-Each benchmark takes ~60s (fib, hostcall, sort, ecrecover × multiple backends).
-For a quick single-run comparison use:
-```bash
+
+# Specific benchmarks (use regex filter)
+cargo bench -p grey-bench -- 'fib/|sort/|hostcall/'   # skip ecrecover (slow)
+cargo bench -p grey-bench -- ecrecover                 # ecrecover only
+cargo bench -p grey-bench -- 'grey-recompiler'         # one backend across all benchmarks
+
+# Quick single-run (not criterion, just wall-clock)
 cargo run --example ecrecover_single --release -p grey-bench
+```
+
+To parse criterion output, grep for labeled timing lines:
+```bash
+cargo bench -p grey-bench 2>&1 | grep 'time:'
 ```
 
 ## Development Guidelines

@@ -327,7 +327,7 @@ fn bench_ecrecover(c: &mut Criterion) {
                     match inst.run().unwrap() {
                         InterruptKind::Finished => break,
                         InterruptKind::Ecalli(_) => continue,
-                        InterruptKind::Trap => panic!("polkavm trap"),
+                        InterruptKind::Trap => break, // exported functions TRAP on return
                         InterruptKind::NotEnoughGas => panic!("polkavm out of gas"),
                         other => panic!("polkavm unexpected: {:?}", other),
                     }
@@ -351,7 +351,7 @@ fn bench_ecrecover(c: &mut Criterion) {
                     match inst.run().unwrap() {
                         InterruptKind::Finished => break,
                         InterruptKind::Ecalli(_) => continue,
-                        InterruptKind::Trap => panic!("polkavm trap"),
+                        InterruptKind::Trap => break, // exported functions TRAP on return
                         InterruptKind::NotEnoughGas => panic!("polkavm out of gas"),
                         other => panic!("polkavm unexpected: {:?}", other),
                     }
