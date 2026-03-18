@@ -162,6 +162,83 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
     Some(pvm)
 }
 
+/// Parsed program data without interpreter pre-decoding.
+/// Used by the recompiler to avoid the cost of `Pvm::new()`.
+pub struct ParsedProgram {
+    pub code: Vec<u8>,
+    pub bitmask: Vec<u8>,
+    pub jump_table: Vec<u32>,
+    pub registers: [u64; crate::PVM_REGISTER_COUNT],
+    pub memory: Memory,
+    pub heap_base: u32,
+    pub heap_top: u32,
+}
+
+/// Parse a program blob into raw components without building a full Pvm.
+/// Skips interpreter pre-decoding (saves ~140ms for large programs).
+pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas) -> Option<ParsedProgram> {
+    let blob = skip_metadata(program_blob);
+
+    if blob.len() < 15 {
+        return None;
+    }
+
+    let mut offset = 0;
+    let ro_size = read_le_u24(blob, &mut offset)? as u32;
+    let rw_size = read_le_u24(blob, &mut offset)? as u32;
+    let heap_pages = read_le_u16(blob, &mut offset)? as u32;
+    let stack_size = read_le_u24(blob, &mut offset)? as u32;
+
+    if offset + ro_size as usize > blob.len() { return None; }
+    let ro_data = &blob[offset..offset + ro_size as usize];
+    offset += ro_size as usize;
+
+    if offset + rw_size as usize > blob.len() { return None; }
+    let rw_data = &blob[offset..offset + rw_size as usize];
+    offset += rw_size as usize;
+
+    let code_len = read_le_u32(blob, &mut offset)? as usize;
+    if offset + code_len > blob.len() { return None; }
+    let program_data = &blob[offset..offset + code_len];
+    let (code, bitmask, jump_table) = deblob(program_data)?;
+
+    if !validate_basic_blocks(&code, &bitmask, &jump_table) {
+        return None;
+    }
+
+    let page_round = |x: u32| -> u32 {
+        ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE
+    };
+
+    let s = page_round(stack_size);
+    let arg_start = s;
+    let ro_start = arg_start + page_round(arguments.len() as u32);
+    let rw_start = ro_start + page_round(ro_size);
+    let heap_start = rw_start + page_round(rw_size);
+    let heap_end = heap_start + heap_pages * PVM_PAGE_SIZE;
+    let mem_size = heap_end;
+
+    if (mem_size as u64) > (1u64 << 32) { return None; }
+
+    let mut memory = Memory::new();
+    map_region(&mut memory, 0, mem_size, PageAccess::ReadWrite);
+    copy_data(&mut memory, arg_start, arguments);
+    copy_data(&mut memory, ro_start, ro_data);
+    copy_data(&mut memory, rw_start, rw_data);
+
+    let mut registers = [0u64; crate::PVM_REGISTER_COUNT];
+    registers[0] = s as u64;
+    registers[1] = s as u64;
+    registers[7] = arg_start as u64;
+    registers[8] = arguments.len() as u64;
+
+    Some(ParsedProgram {
+        code, bitmask, jump_table, registers, memory,
+        heap_base: heap_start,
+        heap_top: heap_end,
+    })
+}
+
 /// JAR v0.8.0 basic block prevalidation.
 /// 1. Last instruction must be a terminator
 /// 2. All jump table entries must point to valid instruction boundaries

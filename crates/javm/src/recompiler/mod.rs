@@ -575,6 +575,7 @@ impl RecompiledPvm {
             jump_table.clone(),
             helpers,
             gas_block_starts.clone(),
+            code.len(),
         );
         let (native, dispatch_table) = compiler.compile(&code, &bitmask);
 
@@ -947,22 +948,20 @@ pub fn initialize_program_recompiled(
     arguments: &[u8],
     gas: Gas,
 ) -> Option<RecompiledPvm> {
-    // Use the same parsing as the interpreter
-    let pvm = crate::program::initialize_program(blob, arguments, gas)?;
+    // Lightweight parse: skip Pvm::new() predecoding (saves ~140ms for large programs).
+    let parsed = crate::program::parse_program_blob(blob, arguments, gas)?;
 
-    // Create recompiled version from the interpreter's parsed state
     let mut rpvm = RecompiledPvm::new(
-        pvm.code.clone(),
-        pvm.bitmask.clone(),
-        pvm.jump_table.clone(),
-        pvm.registers,
-        pvm.memory.clone(),
-        pvm.gas,
+        parsed.code,
+        parsed.bitmask,
+        parsed.jump_table,
+        parsed.registers,
+        parsed.memory,
+        gas,
     ).ok()?;
 
-    // Transfer heap state from interpreter
-    rpvm.ctx_mut().heap_base = pvm.heap_base;
-    rpvm.ctx_mut().heap_top = pvm.heap_top;
+    rpvm.ctx_mut().heap_base = parsed.heap_base;
+    rpvm.ctx_mut().heap_top = parsed.heap_top;
 
     Some(rpvm)
 }

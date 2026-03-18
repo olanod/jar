@@ -3,8 +3,6 @@
 //! Emits native x86-64 machine code with label-based jump resolution.
 //! All jumps use 32-bit relative offsets (no short-jump optimization).
 
-use std::collections::HashMap;
-
 /// x86-64 register encoding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -80,31 +78,41 @@ struct Fixup {
 /// x86-64 assembler with label support.
 pub struct Assembler {
     pub code: Vec<u8>,
-    labels: HashMap<Label, usize>,
+    /// Label ID → bound offset (usize::MAX = unbound).
+    labels: Vec<usize>,
     fixups: Vec<Fixup>,
-    next_label: u32,
 }
+
+const LABEL_UNBOUND: usize = usize::MAX;
 
 impl Assembler {
     pub fn new() -> Self {
         Self {
             code: Vec::with_capacity(4096),
-            labels: HashMap::new(),
+            labels: Vec::new(),
             fixups: Vec::new(),
-            next_label: 0,
+        }
+    }
+
+    /// Create with pre-allocated capacity for code and labels.
+    pub fn with_capacity(code_capacity: usize, label_capacity: usize) -> Self {
+        Self {
+            code: Vec::with_capacity(code_capacity),
+            labels: Vec::with_capacity(label_capacity),
+            fixups: Vec::with_capacity(label_capacity),
         }
     }
 
     /// Allocate a new label.
     pub fn new_label(&mut self) -> Label {
-        let l = Label(self.next_label);
-        self.next_label += 1;
-        l
+        let id = self.labels.len() as u32;
+        self.labels.push(LABEL_UNBOUND);
+        Label(id)
     }
 
     /// Bind a label to the current code position.
     pub fn bind_label(&mut self, label: Label) {
-        self.labels.insert(label, self.code.len());
+        self.labels[label.0 as usize] = self.code.len();
     }
 
     /// Current code offset.
@@ -824,7 +832,9 @@ impl Assembler {
 
     /// jmp to label — uses rel8 for backward jumps within ±127 bytes.
     pub fn jmp_label(&mut self, label: Label) {
-        if let Some(&target) = self.labels.get(&label) {
+        let bound = self.labels[label.0 as usize];
+        if bound != LABEL_UNBOUND {
+            let target = bound;
             // Backward jump — label already bound, try rel8.
             // rel8 offset = target - (current + 2), where 2 = size of jmp rel8
             let rel = target as isize - (self.code.len() as isize + 2);
@@ -841,7 +851,9 @@ impl Assembler {
 
     /// jcc to label — uses rel8 for backward jumps within ±127 bytes.
     pub fn jcc_label(&mut self, cc: Cc, label: Label) {
-        if let Some(&target) = self.labels.get(&label) {
+        let bound = self.labels[label.0 as usize];
+        if bound != LABEL_UNBOUND {
+            let target = bound;
             // Backward jump — label already bound, try rel8.
             // rel8 offset = target - (current + 2), where 2 = size of jcc rel8
             let rel = target as isize - (self.code.len() as isize + 2);
@@ -934,18 +946,19 @@ impl Assembler {
 
     /// Get the resolved native offset for a label (only valid after bind_label).
     pub fn label_offset(&self, label: Label) -> Option<usize> {
-        self.labels.get(&label).copied()
+        let off = self.labels[label.0 as usize];
+        if off == LABEL_UNBOUND { None } else { Some(off) }
     }
 
     /// Resolve all label fixups and return the final machine code.
     /// Panics if any label is unbound.
     pub fn finalize(mut self) -> Vec<u8> {
         for fixup in &self.fixups {
-            let target = self.labels.get(&fixup.label)
-                .unwrap_or_else(|| panic!("unbound label {:?}", fixup.label));
+            let target = self.labels[fixup.label.0 as usize];
+            assert!(target != LABEL_UNBOUND, "unbound label {:?}", fixup.label);
             // rel32 = target - (fixup_offset + 4) because the offset is relative
             // to the end of the instruction (after the 4-byte immediate).
-            let rel = (*target as i64) - (fixup.offset as i64 + 4);
+            let rel = (target as i64) - (fixup.offset as i64 + 4);
             let rel32 = rel as i32;
             self.code[fixup.offset..fixup.offset + 4]
                 .copy_from_slice(&rel32.to_le_bytes());

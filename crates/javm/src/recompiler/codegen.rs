@@ -24,8 +24,6 @@
 use super::asm::{Assembler, Cc, Label, Reg};
 use crate::args::{self, Args};
 use crate::instruction::Opcode;
-use std::collections::HashMap;
-
 /// Map PVM register index (0..12) to x86-64 register.
 /// All 13 PVM registers live in x86 registers.
 const REG_MAP: [Reg; 13] = [
@@ -122,18 +120,20 @@ enum RegDef {
 /// PVM-to-x86-64 compiler.
 pub struct Compiler {
     pub asm: Assembler,
-    /// PVM PC → native code label.
-    block_labels: HashMap<u32, Label>,
+    /// PVM PC → native code label (Label(0) = invalid/unset).
+    block_labels: Vec<Label>,
     /// Label for the exit sequence.
     exit_label: Label,
     /// Label for the shared out-of-gas exit (sets EXIT_OOG + jumps to exit).
     oog_label: Label,
     /// Label for panic exit.
     panic_label: Label,
+    /// Label for shared page fault exit (sets PAGE_FAULT + jumps to exit).
+    fault_exit_label: Label,
     /// Per-gas-block OOG stubs: (label, pvm_pc) — emitted as cold code after main body.
     oog_stubs: Vec<(Label, u32, u32)>,  // (label, pvm_pc, block_cost)
-    /// Per-memory-access fault stubs — emitted as cold code after main body.
-    fault_stubs: Vec<(Label, u32)>,  // (label, pvm_pc)
+    /// Per-memory-access fault stubs: (label, pvm_pc) — stores PC, jumps to shared handler.
+    fault_stubs: Vec<(Label, u32)>,
     /// Helper function addresses.
     helpers: HelperFns,
     /// Entry points: every instruction start (for dispatch table / re-entry).
@@ -146,25 +146,36 @@ pub struct Compiler {
     reg_defs: [RegDef; 13],
 }
 
+/// Sentinel label meaning "no label assigned for this PC".
+const NO_LABEL: Label = Label(u32::MAX);
+
 impl Compiler {
     pub fn new(
         basic_block_starts: Vec<bool>,
         jump_table: Vec<u32>,
         helpers: HelperFns,
         gas_block_starts: Vec<bool>,
+        code_len: usize,
     ) -> Self {
-        let mut asm = Assembler::new();
+        // Estimate native code size: ~8 bytes per PVM code byte (empirically ~5-6x).
+        let estimated_native = code_len * 8;
+        // Labels: basic blocks + ~1 per instruction for fault stubs + overhead.
+        let num_bbs = basic_block_starts.iter().filter(|&&b| b).count();
+        let estimated_labels = num_bbs * 2 + code_len / 3;
+        let mut asm = Assembler::with_capacity(estimated_native, estimated_labels);
         let exit_label = asm.new_label();
         let oog_label = asm.new_label();
         let panic_label = asm.new_label();
+        let fault_exit_label = asm.new_label();
         Self {
+            block_labels: vec![NO_LABEL; code_len + 1],
             asm,
-            block_labels: HashMap::new(),
             exit_label,
             oog_label,
             panic_label,
+            fault_exit_label,
             oog_stubs: Vec::new(),
-            fault_stubs: Vec::new(),
+            fault_stubs: Vec::with_capacity(num_bbs * 16),
             reg_defs: [RegDef::Unknown; 13],
             helpers,
             basic_block_starts,
@@ -175,11 +186,13 @@ impl Compiler {
 
     /// Get or create a label for a PVM PC offset.
     fn label_for_pc(&mut self, pc: u32) -> Label {
-        if let Some(&l) = self.block_labels.get(&pc) {
+        let idx = pc as usize;
+        let l = self.block_labels[idx];
+        if l != NO_LABEL {
             l
         } else {
             let l = self.asm.new_label();
-            self.block_labels.insert(pc, l);
+            self.block_labels[idx] = l;
             l
         }
     }
@@ -196,12 +209,10 @@ impl Compiler {
         self.emit_prologue();
 
         // Pre-create labels for all basic block starts
-        let bb_indices: Vec<u32> = self.basic_block_starts.iter().enumerate()
-            .filter(|&(_, s)| *s)
-            .map(|(i, _)| i as u32)
-            .collect();
-        for pc_idx in bb_indices {
-            self.label_for_pc(pc_idx);
+        for i in 0..self.basic_block_starts.len() {
+            if self.basic_block_starts[i] {
+                self.label_for_pc(i as u32);
+            }
         }
 
         // Compile instructions
@@ -214,7 +225,8 @@ impl Compiler {
             }
 
             // Bind label if this is a known target
-            if let Some(&label) = self.block_labels.get(&(pc as u32)) {
+            let label = self.block_labels[pc];
+            if label != NO_LABEL {
                 self.asm.bind_label(label);
             }
 
@@ -260,16 +272,17 @@ impl Compiler {
 
             pc += 1 + skip;
         }
-
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
 
         // Build dispatch table: PVM PC → native code offset
         let table_len = code.len() + 1; // +1 so PC=code.len() is valid (maps to panic)
         let mut dispatch_table = vec![-1i32; table_len];
-        for (&pvm_pc, &label) in &self.block_labels {
-            if let Some(offset) = self.asm.label_offset(label) {
-                dispatch_table[pvm_pc as usize] = offset as i32;
+        for (pvm_pc, &label) in self.block_labels.iter().enumerate() {
+            if label != NO_LABEL {
+                if let Some(offset) = self.asm.label_offset(label) {
+                    dispatch_table[pvm_pc] = offset as i32;
+                }
             }
         }
         // PC=0 must always be valid (program start); if not already set, it'll be
@@ -374,7 +387,7 @@ impl Compiler {
     }
 
     /// Emit memory read with bounds check (cold fault path).
-    /// Hot path: cmp + jae + load (3 instructions, no jmp over fault).
+    /// Hot path: cmp + jae + load (2 instructions, no extra stores).
     fn emit_mem_read_sized(&mut self, dst: Reg, fn_addr: u64, width_bytes: u32, pvm_pc: u32) {
         let w = if width_bytes > 0 { width_bytes } else {
             if fn_addr == self.helpers.mem_read_u8 { 1 }
@@ -401,7 +414,7 @@ impl Compiler {
     }
 
     /// Emit memory write with bounds check (cold fault path).
-    /// Hot path: cmp + jae + store (3 instructions, no jmp over fault).
+    /// Hot path: cmp + jae + store (2 instructions, no extra stores).
     fn emit_mem_write(&mut self, _addr_in_scratch: bool, val_reg: Reg, fn_addr: u64, pvm_pc: u32) {
         let w = if fn_addr == self.helpers.mem_write_u8 { 1u32 }
             else if fn_addr == self.helpers.mem_write_u16 { 2 }
@@ -422,7 +435,6 @@ impl Compiler {
             8 => self.asm.mov_store64_sib(CTX, SCRATCH, val_reg),
             _ => unreachable!(),
         }
-        // No jmp needed — fault path is emitted as cold code at the end
         self.fault_stubs.push((fault_label, pvm_pc));
     }
 
@@ -498,8 +510,11 @@ impl Compiler {
                 // Actually, gas checks are emitted BEFORE compile_instruction in the main loop.
                 // Since we're skipping the main loop for these PCs, we need to emit gas checks here.
                 for &ipc in &[pc, pc2, pc3, pc4] {
-                    if let Some(&label) = self.block_labels.get(&(ipc as u32)) {
-                        self.asm.bind_label(label);
+                    {
+                        let label = self.block_labels[ipc];
+                        if label != NO_LABEL {
+                            self.asm.bind_label(label);
+                        }
                     }
                     if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
                         self.emit_gas_check(ipc, code, bitmask);
@@ -547,8 +562,11 @@ impl Compiler {
                 if rb != addr_reg || imm as i32 != 0 { return None; }
 
                 for &ipc in &[pc, pc2, pc3, pc4] {
-                    if let Some(&label) = self.block_labels.get(&(ipc as u32)) {
-                        self.asm.bind_label(label);
+                    {
+                        let label = self.block_labels[ipc];
+                        if label != NO_LABEL {
+                            self.asm.bind_label(label);
+                        }
                     }
                     if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
                         self.emit_gas_check(ipc, code, bitmask);
@@ -594,8 +612,11 @@ impl Compiler {
         // Pattern matched! Emit fused multiply.
         // Bind labels and gas checks for both instructions.
         for &ipc in &[pc, pc2] {
-            if let Some(&label) = self.block_labels.get(&(ipc as u32)) {
-                self.asm.bind_label(label);
+            {
+                let label = self.block_labels[ipc];
+                if label != NO_LABEL {
+                    self.asm.bind_label(label);
+                }
             }
             if ipc < self.gas_block_starts.len() && self.gas_block_starts[ipc] {
                 self.emit_gas_check(ipc, code, bitmask);
@@ -2313,16 +2334,20 @@ impl Compiler {
             self.asm.jmp_label(self.oog_label);
         }
 
-        // Per-memory-access fault stubs (cold code): store PC, set PAGE_FAULT,
-        // store fault address, jump to shared exit.
+        // Per-memory-access fault stubs: store PC, jump to shared fault handler.
+        // Each stub is ~16 bytes (vs old ~35 bytes) thanks to shared handler.
         let fault_stubs = std::mem::take(&mut self.fault_stubs);
         for (label, pvm_pc) in &fault_stubs {
             self.asm.bind_label(*label);
             self.asm.mov_store32_imm(CTX, CTX_PC as i32, *pvm_pc as i32);
-            self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
-            self.asm.mov_store32(CTX, CTX_EXIT_ARG, SCRATCH);
-            self.asm.jmp_label(self.exit_label);
+            self.asm.jmp_label(self.fault_exit_label);
         }
+
+        // Shared page fault handler: set exit reason, store fault addr, exit.
+        self.asm.bind_label(self.fault_exit_label);
+        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
+        self.asm.mov_store32(CTX, CTX_EXIT_ARG, SCRATCH);
+        self.asm.jmp_label(self.exit_label);
 
         // Shared out-of-gas exit
         self.asm.bind_label(self.oog_label);

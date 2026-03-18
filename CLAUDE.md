@@ -243,6 +243,18 @@ crates/
 ### What's Next
 - P2P networking layer in `grey-network`
 
+## Benchmarks
+
+Run PVM benchmarks with:
+```bash
+cargo bench -p grey-bench
+```
+Each benchmark takes ~60s (fib, hostcall, sort, ecrecover × multiple backends).
+For a quick single-run comparison use:
+```bash
+cargo run --example ecrecover_single --release -p grey-bench
+```
+
 ## Development Guidelines
 
 - **Commit frequently** — run `git commit` after every meaningful change (passing a new test vector, fixing a bug, adding a type). Small commits make it easy to bisect regressions.

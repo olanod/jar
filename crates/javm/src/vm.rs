@@ -74,7 +74,7 @@ pub struct Pvm {
     /// Current heap top pointer for sbrk (heap_base + total_allocated).
     pub heap_top: u32,
     /// Set of basic block start indices (ϖ).
-    basic_block_starts: Vec<bool>,
+    pub(crate) basic_block_starts: Vec<bool>,
     /// Gas cost for each basic block (indexed by block start PC).
     /// Only entries at basic_block_starts[i]==true are meaningful.
     pub block_gas_costs: Vec<u64>,
@@ -86,9 +86,9 @@ pub struct Pvm {
     /// Collected instruction trace: (PC, opcode_byte) pairs.
     pub pc_trace: Vec<(u32, u8)>,
     /// Pre-decoded instruction stream (indexed by instruction number).
-    decoded_insts: Vec<DecodedInst>,
+    pub(crate) decoded_insts: Vec<DecodedInst>,
     /// Mapping from PC byte offset → instruction index. u32::MAX = invalid.
-    pc_to_idx: Vec<u32>,
+    pub(crate) pc_to_idx: Vec<u32>,
 }
 
 impl Pvm {
