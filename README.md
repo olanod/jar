@@ -8,7 +8,7 @@ A JAM (Join-Accumulate Machine) blockchain node implementation in Rust, followin
 - **Multi-node testnet** — 6 validators, GRANDPA finality, full work package pipeline
 - **PVM recompiler faster than polkavm** — grey's x86-64 JIT recompiler outperforms polkavm v0.32.0's compiler backend on all workloads with pipeline gas metering (`POLKAVM_DEFAULT_COST_MODEL=full-l1-hit`). Benchmarks include full compile+execute each iteration (realistic JAM model where each work-package is compiled fresh):
 
-  | Benchmark | Grey Recompiler | PolkaVM Generic | PolkaVM Linux | Grey vs best |
+  | Benchmark | Grey Recompiler | PolkaVM Generic | PolkaVM Linux | Grey vs best PolkaVM |
   |-----------|-----------------|-----------------|---------------|--------------|
   | Fibonacci (1M iter) | **416 µs** | 429 µs | 414 µs | 1.00x |
   | Host calls (100K ecalli) | **834 µs** | 3,177 µs | 30,164 µs | **3.8x faster** |
