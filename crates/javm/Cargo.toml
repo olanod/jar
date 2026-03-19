@@ -6,6 +6,9 @@ license.workspace = true
 authors.workspace = true
 description = "Join-Accumulate VM (JAVM)."
 
+[features]
+signals = []
+
 [dependencies]
 libc = "0.2"
 thiserror = { workspace = true }

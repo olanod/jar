@@ -14,6 +14,8 @@ pub mod asm;
 pub mod codegen;
 pub mod gas_sim;
 pub mod predecode;
+#[cfg(feature = "signals")]
+pub mod signal;
 
 use crate::memory::Memory;
 use crate::vm::ExitReason;
@@ -212,6 +214,42 @@ impl FlatMemory {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    /// Mark pages beyond heap_top as PROT_NONE (guard pages).
+    /// Pages [0, heap_top) remain PROT_READ|PROT_WRITE.
+    #[cfg(feature = "signals")]
+    fn install_guard_pages(&self, heap_top: u32) {
+        let heap_top_page = (heap_top as usize + 4095) / 4096;
+        let guard_start = unsafe { self.buf.add(heap_top_page * 4096) };
+        let guard_len = FLAT_BUF_SIZE - heap_top_page * 4096;
+        if guard_len > 0 {
+            unsafe {
+                libc::mprotect(
+                    guard_start as *mut libc::c_void,
+                    guard_len,
+                    libc::PROT_NONE,
+                );
+            }
+        }
+    }
+
+    /// Make pages in [old_top, new_top) accessible after heap growth.
+    #[cfg(feature = "signals")]
+    fn update_guard_pages(&self, old_top: u32, new_top: u32) {
+        let old_page = (old_top as usize + 4095) / 4096;
+        let new_page = (new_top as usize + 4095) / 4096;
+        if new_page > old_page {
+            let start = unsafe { self.buf.add(old_page * 4096) };
+            let len = (new_page - old_page) * 4096;
+            unsafe {
+                libc::mprotect(
+                    start as *mut libc::c_void,
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                );
             }
         }
     }
@@ -459,6 +497,20 @@ extern "sysv64" fn sbrk_helper(ctx: *mut JitContext, size: u64) -> u64 {
         }
     }
 
+    // With signals feature, make newly accessible pages PROT_READ|PROT_WRITE.
+    #[cfg(feature = "signals")]
+    if !ctx.flat_buf.is_null() {
+        let old_page = (old_top as usize + 4095) / 4096;
+        let new_page = (new_top_u32 as usize + 4095) / 4096;
+        if new_page > old_page {
+            unsafe {
+                let start = ctx.flat_buf.add(old_page * 4096);
+                let len = (new_page - old_page) * 4096;
+                libc::mprotect(start as *mut libc::c_void, len, libc::PROT_READ | libc::PROT_WRITE);
+            }
+        }
+    }
+
     ctx.heap_top = new_top_u32;
     old_top as u64
 }
@@ -485,6 +537,9 @@ pub struct RecompiledPvm {
     debug: bool,
     /// Flat memory for inline JIT access.
     flat_memory: Option<FlatMemory>,
+    /// Signal-based bounds checking state.
+    #[cfg(feature = "signals")]
+    signal_state: Option<Box<signal::SignalState>>,
 }
 
 impl RecompiledPvm {
@@ -575,7 +630,9 @@ impl RecompiledPvm {
             helpers,
             code.len(),
         );
-        let (native, dispatch_table) = compiler.compile(&code, &bitmask, &gas_starts);
+        let compile_result = compiler.compile(&code, &bitmask, &gas_starts);
+        let native = compile_result.native_code;
+        let dispatch_table = compile_result.dispatch_table;
 
         if debug {
             let _ = std::fs::write("/tmp/pvm_native.bin", &native);
@@ -587,6 +644,22 @@ impl RecompiledPvm {
         }
 
         let native_code = NativeCode::new(&native)?;
+
+        // Signal-based bounds checking: build trap table and install guard pages.
+        #[cfg(feature = "signals")]
+        let signal_state = {
+            signal::ensure_installed();
+            let ss = Box::new(signal::SignalState {
+                code_start: native_code.ptr as usize,
+                code_end: native_code.ptr as usize + native_code.len,
+                exit_label_addr: native_code.ptr as usize + compile_result.exit_label_offset as usize,
+                ctx_ptr: ctx_raw,
+                trap_table: compile_result.trap_table,
+            });
+            // Guard pages installed later by initialize_program_recompiled
+            // after heap_top is set to its correct value.
+            Some(ss)
+        };
 
         // Set dispatch table pointer and code base in context
         ctx.code_base = native_code.ptr as u64;
@@ -602,6 +675,8 @@ impl RecompiledPvm {
             dispatch_table,
             debug,
             flat_memory: Some(flat_memory),
+            #[cfg(feature = "signals")]
+            signal_state,
         };
 
         // Set dispatch_table pointer (must point to the Vec's data in Self)
@@ -638,8 +713,16 @@ impl RecompiledPvm {
             }
 
             // Execute native code
+            #[cfg(feature = "signals")]
+            if let Some(ref mut ss) = self.signal_state {
+                signal::SIGNAL_STATE.with(|cell| cell.set(&mut **ss as *mut _));
+            }
+
             let entry = self.native_code.entry();
             unsafe { entry(self.ctx); }
+
+            #[cfg(feature = "signals")]
+            signal::SIGNAL_STATE.with(|cell| cell.set(std::ptr::null_mut()));
 
             if self.debug {
                 tracing::debug!(
@@ -921,6 +1004,11 @@ impl RecompiledPvm {
     }
     /// Set heap top.
     pub fn set_heap_top(&mut self, top: u32) {
+        #[cfg(feature = "signals")]
+        if let Some(ref fm) = self.flat_memory {
+            let old = self.ctx().heap_top;
+            fm.update_guard_pages(old, top);
+        }
         self.ctx_mut().heap_top = top;
     }
 
@@ -959,6 +1047,11 @@ pub fn initialize_program_recompiled(
 
     rpvm.ctx_mut().heap_base = parsed.heap_base;
     rpvm.ctx_mut().heap_top = parsed.heap_top;
+
+    #[cfg(feature = "signals")]
+    if let Some(ref fm) = rpvm.flat_memory {
+        fm.install_guard_pages(parsed.heap_top);
+    }
 
     Some(rpvm)
 }

@@ -111,6 +111,16 @@ pub const EXIT_OOG: u32 = 2;
 pub const EXIT_PAGE_FAULT: u32 = 3;
 pub const EXIT_HOST_CALL: u32 = 4;
 
+/// Result of compilation.
+pub struct CompileResult {
+    pub native_code: Vec<u8>,
+    pub dispatch_table: Vec<i32>,
+    #[cfg(feature = "signals")]
+    pub trap_table: Vec<(u32, u32)>,
+    #[cfg(feature = "signals")]
+    pub exit_label_offset: u32,
+}
+
 /// Helper function pointers passed to compiled code.
 #[repr(C)]
 pub struct HelperFns {
@@ -166,6 +176,9 @@ pub struct Compiler {
     jump_table: Vec<u32>,
     /// Peephole: tracks how each PVM register was last defined.
     reg_defs: [RegDef; 13],
+    /// Trap table for signal-based bounds checking: (native_offset, pvm_pc).
+    #[cfg(feature = "signals")]
+    trap_entries: Vec<(u32, u32)>,
 }
 
 /// Sentinel label meaning "no label assigned for this PC".
@@ -201,6 +214,8 @@ impl Compiler {
             helpers,
             basic_block_starts,
             jump_table,
+            #[cfg(feature = "signals")]
+            trap_entries: Vec::new(),
         }
     }
 
@@ -222,9 +237,8 @@ impl Compiler {
     }
 
     /// Compile directly from raw code+bitmask. Single-pass: decode + gas sim + codegen.
-    /// Returns (native_code, dispatch_table).
     pub fn compile(mut self, code: &[u8], bitmask: &[u8],
-                   gas_starts: &[bool]) -> (Vec<u8>, Vec<i32>) {
+                   gas_starts: &[bool]) -> CompileResult {
         let code_len = code.len();
 
         // Emit prologue
@@ -335,7 +349,19 @@ impl Compiler {
         // PC=0 must always be valid (program start); if not already set, it'll be
         // set by the first basic block at PC 0.
 
-        (self.asm.finalize(), dispatch_table)
+        #[cfg(feature = "signals")]
+        let exit_label_offset = self.asm.label_offset(self.exit_label).unwrap_or(0) as u32;
+        #[cfg(feature = "signals")]
+        let trap_table = self.trap_entries;
+
+        CompileResult {
+            native_code: self.asm.finalize(),
+            dispatch_table,
+            #[cfg(feature = "signals")]
+            trap_table,
+            #[cfg(feature = "signals")]
+            exit_label_offset,
+        }
     }
 
     /// Save caller-saved registers (PVM registers in caller-saved x86-64 regs).
@@ -575,6 +601,7 @@ impl Compiler {
 
     /// Emit memory read with bounds check (cold fault path).
     /// Hot path: cmp + jae + load (2 instructions, no extra stores).
+    /// With `signals` feature: no bounds check, just the load (SIGSEGV handles OOB).
     fn emit_mem_read_sized(&mut self, dst: Reg, fn_addr: u64, width_bytes: u32, pvm_pc: u32) {
         let w = if width_bytes > 0 { width_bytes } else {
             if fn_addr == self.helpers.mem_read_u8 { 1 }
@@ -583,13 +610,29 @@ impl Compiler {
             else { 8 }
         };
 
-        let fault_label = self.asm.new_label();
+        #[cfg(feature = "signals")]
+        {
+            // Record trap entry before the load instruction.
+            self.trap_entries.push((self.asm.offset() as u32, pvm_pc));
+        }
+        #[cfg(not(feature = "signals"))]
+        {
+            let fault_label = self.asm.new_label();
+            self.asm.cmp_mem32_r(CTX, CTX_HEAP_TOP, SCRATCH);
+            self.asm.jcc_label(Cc::BE, fault_label);
+            // Load falls through; fault stub pushed below.
+            match w {
+                1 => self.asm.movzx_load8_sib(dst, CTX, SCRATCH),
+                2 => self.asm.movzx_load16_sib(dst, CTX, SCRATCH),
+                4 => self.asm.mov_load32_sib(dst, CTX, SCRATCH),
+                8 => self.asm.mov_load64_sib(dst, CTX, SCRATCH),
+                _ => unreachable!(),
+            }
+            self.fault_stubs.push((fault_label, pvm_pc));
+            return;
+        }
 
-        // Bounds check: cmp [R15 + CTX_HEAP_TOP], edx
-        self.asm.cmp_mem32_r(CTX, CTX_HEAP_TOP, SCRATCH);
-        self.asm.jcc_label(Cc::BE, fault_label);
-
-        // Direct load: [R15 + guest_addr] — falls through to next instruction
+        #[cfg(feature = "signals")]
         match w {
             1 => self.asm.movzx_load8_sib(dst, CTX, SCRATCH),
             2 => self.asm.movzx_load16_sib(dst, CTX, SCRATCH),
@@ -597,24 +640,37 @@ impl Compiler {
             8 => self.asm.mov_load64_sib(dst, CTX, SCRATCH),
             _ => unreachable!(),
         }
-        self.fault_stubs.push((fault_label, pvm_pc));
     }
 
     /// Emit memory write with bounds check (cold fault path).
-    /// Hot path: cmp + jae + store (2 instructions, no extra stores).
+    /// With `signals` feature: no bounds check, just the store.
     fn emit_mem_write(&mut self, _addr_in_scratch: bool, val_reg: Reg, fn_addr: u64, pvm_pc: u32) {
         let w = if fn_addr == self.helpers.mem_write_u8 { 1u32 }
             else if fn_addr == self.helpers.mem_write_u16 { 2 }
             else if fn_addr == self.helpers.mem_write_u32 { 4 }
             else { 8 };
 
-        let fault_label = self.asm.new_label();
+        #[cfg(feature = "signals")]
+        {
+            self.trap_entries.push((self.asm.offset() as u32, pvm_pc));
+        }
+        #[cfg(not(feature = "signals"))]
+        {
+            let fault_label = self.asm.new_label();
+            self.asm.cmp_mem32_r(CTX, CTX_HEAP_TOP, SCRATCH);
+            self.asm.jcc_label(Cc::BE, fault_label);
+            match w {
+                1 => self.asm.mov_store8_sib(CTX, SCRATCH, val_reg),
+                2 => self.asm.mov_store16_sib(CTX, SCRATCH, val_reg),
+                4 => self.asm.mov_store32_sib(CTX, SCRATCH, val_reg),
+                8 => self.asm.mov_store64_sib(CTX, SCRATCH, val_reg),
+                _ => unreachable!(),
+            }
+            self.fault_stubs.push((fault_label, pvm_pc));
+            return;
+        }
 
-        // Bounds check: cmp [R15 + CTX_HEAP_TOP], edx
-        self.asm.cmp_mem32_r(CTX, CTX_HEAP_TOP, SCRATCH);
-        self.asm.jcc_label(Cc::BE, fault_label);
-
-        // Direct store: [R15 + guest_addr]
+        #[cfg(feature = "signals")]
         match w {
             1 => self.asm.mov_store8_sib(CTX, SCRATCH, val_reg),
             2 => self.asm.mov_store16_sib(CTX, SCRATCH, val_reg),
@@ -622,7 +678,8 @@ impl Compiler {
             8 => self.asm.mov_store64_sib(CTX, SCRATCH, val_reg),
             _ => unreachable!(),
         }
-        self.fault_stubs.push((fault_label, pvm_pc));
+        #[cfg(not(feature = "signals"))]
+        unreachable!();
     }
 
     /// Compute a memory address into SCRATCH, using peephole optimizations when available.
