@@ -102,11 +102,10 @@ impl PvmInstance {
                 }
                 // Compare memory on host-call exits (when PVM wrote to memory)
                 if !mismatch {
-                    for (page, _access, page_data) in interp.memory.pages_iter() {
-                        let base = page * 4096;
-                        for offset in 0..4096u32 {
-                            let addr = base + offset;
-                            let i_byte = page_data[offset as usize];
+                    for (page_idx, chunk) in interp.flat_mem.chunks(4096).enumerate() {
+                        let base = (page_idx as u32) * 4096;
+                        for (offset, &i_byte) in chunk.iter().enumerate() {
+                            let addr = base + offset as u32;
                             let r_byte = recomp.read_byte(addr).unwrap_or(0);
                             if i_byte != r_byte {
                                 eprintln!(
@@ -179,10 +178,9 @@ impl PvmInstance {
     pub fn map_pages_rw(&mut self, start_page: u32, end_page: u32) {
         match &mut self.inner {
             Backend::Interpreter(pvm) => {
-                for p in start_page..end_page {
-                    if !pvm.memory.is_page_mapped(p) {
-                        pvm.memory.map_page(p, javm::memory::PageAccess::ReadWrite);
-                    }
+                let needed = (end_page as usize) * javm::PVM_PAGE_SIZE as usize;
+                if pvm.flat_mem.len() < needed {
+                    pvm.flat_mem.resize(needed, 0);
                 }
             }
             Backend::Recompiler(pvm) => {
@@ -195,10 +193,11 @@ impl PvmInstance {
                 }
             }
             Backend::Compare { interp, recomp, .. } => {
+                let needed = (end_page as usize) * javm::PVM_PAGE_SIZE as usize;
+                if interp.flat_mem.len() < needed {
+                    interp.flat_mem.resize(needed, 0);
+                }
                 for p in start_page..end_page {
-                    if !interp.memory.is_page_mapped(p) {
-                        interp.memory.map_page(p, javm::memory::PageAccess::ReadWrite);
-                    }
                     recomp.write_byte(p * javm::PVM_PAGE_SIZE, 0);
                 }
             }
@@ -243,7 +242,7 @@ impl PvmInstance {
 
     pub fn read_byte(&self, addr: u32) -> Option<u8> {
         match &self.inner {
-            Backend::Interpreter(pvm) => pvm.memory.read_u8(addr),
+            Backend::Interpreter(pvm) => pvm.read_u8(addr),
             Backend::Recompiler(pvm) => pvm.read_byte(addr),
             Backend::Compare { recomp, .. } => recomp.read_byte(addr),
         }
@@ -251,10 +250,10 @@ impl PvmInstance {
 
     pub fn write_byte(&mut self, addr: u32, value: u8) {
         match &mut self.inner {
-            Backend::Interpreter(pvm) => { pvm.memory.write_u8(addr, value); }
+            Backend::Interpreter(pvm) => { pvm.write_u8(addr, value); }
             Backend::Recompiler(pvm) => { pvm.write_byte(addr, value); }
             Backend::Compare { interp, recomp, .. } => {
-                interp.memory.write_u8(addr, value);
+                interp.write_u8(addr, value);
                 recomp.write_byte(addr, value);
             }
         }
@@ -264,7 +263,7 @@ impl PvmInstance {
         match &self.inner {
             Backend::Interpreter(pvm) => {
                 (0..len)
-                    .map(|i| pvm.memory.read_u8(addr + i).unwrap_or(0))
+                    .map(|i| pvm.read_u8(addr + i).unwrap_or(0))
                     .collect()
             }
             Backend::Recompiler(pvm) => {
@@ -283,7 +282,11 @@ impl PvmInstance {
     /// Try to read bytes; returns None on page fault (any inaccessible byte).
     pub fn try_read_bytes(&self, addr: u32, len: u32) -> Option<Vec<u8>> {
         match &self.inner {
-            Backend::Interpreter(pvm) => pvm.memory.read_bytes(addr, len),
+            Backend::Interpreter(pvm) => {
+                let a = addr as usize;
+                let end = a + len as usize;
+                pvm.flat_mem.get(a..end).map(|s| s.to_vec())
+            }
             Backend::Recompiler(pvm) => pvm.read_bytes(addr, len),
             Backend::Compare { recomp, .. } => recomp.read_bytes(addr, len),
         }
@@ -293,7 +296,7 @@ impl PvmInstance {
         match &mut self.inner {
             Backend::Interpreter(pvm) => {
                 for (i, &byte) in data.iter().enumerate() {
-                    pvm.memory.write_u8(addr + i as u32, byte);
+                    pvm.write_u8(addr + i as u32, byte);
                 }
             }
             Backend::Recompiler(pvm) => {
@@ -301,7 +304,7 @@ impl PvmInstance {
             }
             Backend::Compare { interp, recomp, .. } => {
                 for (i, &byte) in data.iter().enumerate() {
-                    interp.memory.write_u8(addr + i as u32, byte);
+                    interp.write_u8(addr + i as u32, byte);
                 }
                 recomp.write_bytes(addr, data);
             }
@@ -310,13 +313,11 @@ impl PvmInstance {
 
     /// Try to write bytes; returns None on page fault (any non-writable byte).
     pub fn try_write_bytes(&mut self, addr: u32, data: &[u8]) -> Option<()> {
-        use javm::memory::MemoryAccess;
         match &mut self.inner {
             Backend::Interpreter(pvm) => {
                 for (i, &byte) in data.iter().enumerate() {
-                    match pvm.memory.write_u8(addr.wrapping_add(i as u32), byte) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(_) => return None,
+                    if !pvm.write_u8(addr.wrapping_add(i as u32), byte) {
+                        return None;
                     }
                 }
                 Some(())
@@ -326,10 +327,8 @@ impl PvmInstance {
             }
             Backend::Compare { interp, recomp, .. } => {
                 for (i, &byte) in data.iter().enumerate() {
-                    let addr_i = addr.wrapping_add(i as u32);
-                    match interp.memory.write_u8(addr_i, byte) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(_) => return None,
+                    if !interp.write_u8(addr.wrapping_add(i as u32), byte) {
+                        return None;
                     }
                 }
                 if !recomp.write_bytes(addr, data) { return None; }

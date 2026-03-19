@@ -147,14 +147,17 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
         return None;
     }
 
-    // Build memory — all mapped pages are ReadWrite
-    let mut memory = Memory::new();
-    map_region(&mut memory, 0, mem_size, PageAccess::ReadWrite);
-
-    // Copy data into memory
-    copy_data(&mut memory, arg_start, arguments);
-    copy_data(&mut memory, ro_start, ro_data);
-    copy_data(&mut memory, rw_start, rw_data);
+    // Build flat memory buffer
+    let mut flat_mem = vec![0u8; mem_size as usize];
+    if !arguments.is_empty() {
+        flat_mem[arg_start as usize..arg_start as usize + arguments.len()].copy_from_slice(arguments);
+    }
+    if !ro_data.is_empty() {
+        flat_mem[ro_start as usize..ro_start as usize + ro_data.len()].copy_from_slice(ro_data);
+    }
+    if !rw_data.is_empty() {
+        flat_mem[rw_start as usize..rw_start as usize + rw_data.len()].copy_from_slice(rw_data);
+    }
 
     // Registers (JAR v0.8.0 linear)
     let mut registers = [0u64; 13];
@@ -168,7 +171,7 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
         s, arg_start, arguments.len(), ro_start, ro_size, rw_start, rw_size, heap_start, heap_end, registers[0]
     );
 
-    let mut pvm = Pvm::new(code, bitmask, jump_table, registers, memory, gas);
+    let mut pvm = Pvm::new(code, bitmask, jump_table, registers, flat_mem, gas);
     pvm.heap_base = heap_start;
     pvm.heap_top = heap_end;
 

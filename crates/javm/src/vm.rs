@@ -4,7 +4,6 @@
 
 use crate::args::{self, Args};
 use crate::instruction::Opcode;
-use crate::memory::{Memory, MemoryAccess};
 use crate::{Gas, PVM_REGISTER_COUNT};
 
 /// Exit reason for PVM execution (ε values, eq A.1).
@@ -59,8 +58,8 @@ pub struct Pvm {
     pub gas: Gas,
     /// φ: 13 general-purpose 64-bit registers.
     pub registers: [u64; PVM_REGISTER_COUNT],
-    /// µ: Memory state.
-    pub memory: Memory,
+    /// µ: Memory state (flat linear buffer).
+    pub flat_mem: Vec<u8>,
     /// ı: Instruction counter (program counter), indexes into code bytes.
     pub pc: u32,
     /// c: Instruction bytecode.
@@ -98,7 +97,7 @@ impl Pvm {
         bitmask: Vec<u8>,
         jump_table: Vec<u32>,
         registers: [u64; PVM_REGISTER_COUNT],
-        memory: Memory,
+        flat_mem: Vec<u8>,
         gas: Gas,
     ) -> Self {
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
@@ -108,7 +107,7 @@ impl Pvm {
         Self {
             gas,
             registers,
-            memory,
+            flat_mem,
             pc: 0,
             code,
             bitmask,
@@ -126,11 +125,65 @@ impl Pvm {
     }
 
     /// Create a simple PVM for testing (code only, trivial bitmask).
-    pub fn new_simple(code: Vec<u8>, registers: [u64; PVM_REGISTER_COUNT], memory: Memory, gas: Gas) -> Self {
+    pub fn new_simple(code: Vec<u8>, registers: [u64; PVM_REGISTER_COUNT], flat_mem: Vec<u8>, gas: Gas) -> Self {
         // Build a bitmask where every byte is marked as an instruction start
         // This is a simplified mode; real programs use deblob.
         let bitmask = vec![1u8; code.len()];
-        Self::new(code, bitmask, vec![], registers, memory, gas)
+        Self::new(code, bitmask, vec![], registers, flat_mem, gas)
+    }
+
+    // --- Flat memory accessors ---
+
+    #[inline(always)]
+    pub fn read_u8(&self, addr: u32) -> Option<u8> {
+        self.flat_mem.get(addr as usize).copied()
+    }
+
+    #[inline(always)]
+    fn read_u16_le(&self, addr: u32) -> Option<u16> {
+        let a = addr as usize;
+        self.flat_mem.get(a..a + 2).map(|s| u16::from_le_bytes(s.try_into().unwrap()))
+    }
+
+    #[inline(always)]
+    fn read_u32_le(&self, addr: u32) -> Option<u32> {
+        let a = addr as usize;
+        self.flat_mem.get(a..a + 4).map(|s| u32::from_le_bytes(s.try_into().unwrap()))
+    }
+
+    #[inline(always)]
+    fn read_u64_le(&self, addr: u32) -> Option<u64> {
+        let a = addr as usize;
+        self.flat_mem.get(a..a + 8).map(|s| u64::from_le_bytes(s.try_into().unwrap()))
+    }
+
+    #[inline(always)]
+    pub fn write_u8(&mut self, addr: u32, val: u8) -> bool {
+        if let Some(b) = self.flat_mem.get_mut(addr as usize) { *b = val; true } else { false }
+    }
+
+    #[inline(always)]
+    fn write_u16_le(&mut self, addr: u32, val: u16) -> bool {
+        let a = addr as usize;
+        if let Some(s) = self.flat_mem.get_mut(a..a + 2) {
+            s.copy_from_slice(&val.to_le_bytes()); true
+        } else { false }
+    }
+
+    #[inline(always)]
+    fn write_u32_le(&mut self, addr: u32, val: u32) -> bool {
+        let a = addr as usize;
+        if let Some(s) = self.flat_mem.get_mut(a..a + 4) {
+            s.copy_from_slice(&val.to_le_bytes()); true
+        } else { false }
+    }
+
+    #[inline(always)]
+    fn write_u64_le(&mut self, addr: u32, val: u64) -> bool {
+        let a = addr as usize;
+        if let Some(s) = self.flat_mem.get_mut(a..a + 8) {
+            s.copy_from_slice(&val.to_le_bytes()); true
+        } else { false }
     }
 
     /// Compute skip(i) — distance to next instruction minus one (eq A.3).
@@ -286,40 +339,32 @@ impl Pvm {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    match self.memory.write_u8(addr, imm_y as u8) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u8(addr, imm_y as u8) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmU16 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    match self.memory.write_u16_le(addr, imm_y as u16) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u16_le(addr, imm_y as u16) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmU32 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    match self.memory.write_u32_le(addr, imm_y as u32) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u32_le(addr, imm_y as u32) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmU64 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    match self.memory.write_u64_le(addr, imm_y) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u64_le(addr, imm_y) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
 
@@ -351,7 +396,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -361,7 +406,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -371,7 +416,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -381,7 +426,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -391,7 +436,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -401,7 +446,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -411,7 +456,7 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.read_u64_le(addr) {
+                    match self.read_u64_le(addr) {
                         Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -421,40 +466,32 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.write_u8(addr, self.registers[ra] as u8) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u8(addr, self.registers[ra] as u8) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreU16 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.write_u16_le(addr, self.registers[ra] as u16) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u16_le(addr, self.registers[ra] as u16) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreU32 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.write_u32_le(addr, self.registers[ra] as u32) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u32_le(addr, self.registers[ra] as u32) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreU64 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    match self.memory.write_u64_le(addr, self.registers[ra]) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u64_le(addr, self.registers[ra]) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
 
@@ -463,40 +500,32 @@ impl Pvm {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    match self.memory.write_u8(addr, imm_y as u8) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u8(addr, imm_y as u8) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmIndU16 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    match self.memory.write_u16_le(addr, imm_y as u16) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u16_le(addr, imm_y as u16) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmIndU32 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    match self.memory.write_u32_le(addr, imm_y as u32) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u32_le(addr, imm_y as u32) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreImmIndU64 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    match self.memory.write_u64_le(addr, imm_y) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u64_le(addr, imm_y) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
 
@@ -667,47 +696,39 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.write_u8(addr, self.registers[ra] as u8) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u8(addr, self.registers[ra] as u8) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreIndU16 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.write_u16_le(addr, self.registers[ra] as u16) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u16_le(addr, self.registers[ra] as u16) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreIndU32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.write_u32_le(addr, self.registers[ra] as u32) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u32_le(addr, self.registers[ra] as u32) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::StoreIndU64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.write_u64_le(addr, self.registers[ra]) {
-                        MemoryAccess::Ok => self.pc = next_pc,
-                        MemoryAccess::PageFault(a) => return Some(ExitReason::PageFault(a)),
-                    }
+                    if self.write_u64_le(addr, self.registers[ra]) { self.pc = next_pc; }
+                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
                 }
             }
             Opcode::LoadIndU8 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -717,7 +738,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -727,7 +748,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -737,7 +758,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -747,7 +768,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -757,7 +778,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -767,7 +788,7 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    match self.memory.read_u64_le(addr) {
+                    match self.read_u64_le(addr) {
                         Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
@@ -1612,49 +1633,49 @@ impl Pvm {
                 // === Indirect loads (two reg + imm) ===
                 Opcode::LoadIndU8 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndI8 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u8(addr) {
+                    match self.read_u8(addr) {
                         Some(v) => { self.registers[ra] = v as i8 as i64 as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndU16 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndI16 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u16_le(addr) {
+                    match self.read_u16_le(addr) {
                         Some(v) => { self.registers[ra] = v as i16 as i64 as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndU32 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndI32 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u32_le(addr) {
+                    match self.read_u32_le(addr) {
                         Some(v) => { self.registers[ra] = v as i32 as i64 as u64; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
                 }
                 Opcode::LoadIndU64 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.read_u64_le(addr) {
+                    match self.read_u64_le(addr) {
                         Some(v) => { self.registers[ra] = v; }
                         None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
                     }
@@ -1663,30 +1684,26 @@ impl Pvm {
                 // === Indirect stores (two reg + imm) ===
                 Opcode::StoreIndU8 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.write_u8(addr, self.registers[ra] as u8) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(a) => { exit = Some(ExitReason::PageFault(a)); }
+                    if !self.write_u8(addr, self.registers[ra] as u8) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
                     }
                 }
                 Opcode::StoreIndU16 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.write_u16_le(addr, self.registers[ra] as u16) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(a) => { exit = Some(ExitReason::PageFault(a)); }
+                    if !self.write_u16_le(addr, self.registers[ra] as u16) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
                     }
                 }
                 Opcode::StoreIndU32 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.write_u32_le(addr, self.registers[ra] as u32) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(a) => { exit = Some(ExitReason::PageFault(a)); }
+                    if !self.write_u32_le(addr, self.registers[ra] as u32) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
                     }
                 }
                 Opcode::StoreIndU64 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
-                    match self.memory.write_u64_le(addr, self.registers[ra]) {
-                        MemoryAccess::Ok => {}
-                        MemoryAccess::PageFault(a) => { exit = Some(ExitReason::PageFault(a)); }
+                    if !self.write_u64_le(addr, self.registers[ra]) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
                     }
                 }
 
@@ -2030,11 +2047,10 @@ fn predecode_instructions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::Memory;
 
     /// Helper to create a VM with simple bitmask (every byte is instruction start).
     fn simple_vm(code: Vec<u8>, gas: Gas) -> Pvm {
-        Pvm::new_simple(code, [0; 13], Memory::new(), gas)
+        Pvm::new_simple(code, [0; 13], Vec::new(), gas)
     }
 
     #[test]
@@ -2076,7 +2092,7 @@ mod tests {
         // Bitmask: [1, 0, 0, 0, 0, 0, 1] for the load_imm (6 bytes) + trap
         let code = vec![51, 0x00, 42, 0, 0, 0, 0]; // opcode + reg + 4-byte imm + trap
         let bitmask = vec![1, 0, 0, 0, 0, 0, 1];
-        let mut vm = Pvm::new(code, bitmask, vec![], [0; 13], Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], [0; 13], Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0], 42);
     }
@@ -2088,7 +2104,7 @@ mod tests {
         let bitmask = vec![1, 0, 0, 0, 0, 0, 1];
         let mut regs = [0u64; 13];
         regs[1] = 32;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0], 42);
     }
@@ -2101,7 +2117,7 @@ mod tests {
         let mut regs = [0u64; 13];
         regs[0] = 100;
         regs[1] = 200;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[2], 300);
     }
@@ -2113,7 +2129,7 @@ mod tests {
         let mut regs = [0u64; 13];
         regs[0] = 300;
         regs[1] = 100;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[2], 200);
     }
@@ -2126,7 +2142,7 @@ mod tests {
         let mut regs = [0u64; 13];
         regs[0] = 0xFF00;
         regs[1] = 0x0FF0;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[2], 0x0F00);
     }
@@ -2138,7 +2154,7 @@ mod tests {
         let mut regs = [0u64; 13];
         regs[0] = 5;
         regs[1] = 10;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[2], 1);
     }
@@ -2148,7 +2164,7 @@ mod tests {
         // ecalli (10), immediate = 7 (1 byte)
         let code = vec![10, 7];
         let bitmask = vec![1, 0];
-        let mut vm = Pvm::new(code, bitmask, vec![], [0; 13], Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], [0; 13], Vec::new(), 100);
         let exit = vm.step();
         assert_eq!(exit, Some(ExitReason::HostCall(7)));
     }
@@ -2159,7 +2175,7 @@ mod tests {
         let bitmask = vec![1, 0, 1];
         let mut regs = [0u64; 13];
         regs[1] = 42;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0], 42);
     }
@@ -2170,7 +2186,7 @@ mod tests {
         let bitmask = vec![1, 0, 1];
         let mut regs = [0u64; 13];
         regs[1] = 0xFF; // 8 bits set
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0], 8);
     }
@@ -2182,7 +2198,7 @@ mod tests {
         let mut regs = [0u64; 13];
         regs[0] = 100;
         regs[1] = 0; // divide by zero
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[2], u64::MAX);
     }
@@ -2193,7 +2209,7 @@ mod tests {
         let bitmask = vec![1, 0, 1];
         let mut regs = [0u64; 13];
         regs[1] = 0x80; // -128 as i8
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0] as i64, -128);
     }
@@ -2204,7 +2220,7 @@ mod tests {
         let bitmask = vec![1, 0, 1];
         let mut regs = [0u64; 13];
         regs[1] = 0x0123456789ABCDEF;
-        let mut vm = Pvm::new(code, bitmask, vec![], regs, Memory::new(), 100);
+        let mut vm = Pvm::new(code, bitmask, vec![], regs, Vec::new(), 100);
         vm.step();
         assert_eq!(vm.registers[0], 0xEFCDAB8967452301);
     }
