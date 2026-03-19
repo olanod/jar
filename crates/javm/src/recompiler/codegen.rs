@@ -87,21 +87,24 @@ const CALLER_SAVED: [Reg; 8] = [
 pub const CTX_OFFSET: i32 = 4096;         // JitContext at R15 - 4096
 pub const PERMS_OFFSET: i32 = CTX_OFFSET + (1 << 20); // perms at R15 - 1052672
 
-pub const CTX_REGS: i32 = -CTX_OFFSET;          // offset 0 in JitContext
-pub const CTX_GAS: i32 = -CTX_OFFSET + 104;
-pub const CTX_EXIT_REASON: i32 = -CTX_OFFSET + 112;
-pub const CTX_EXIT_ARG: i32 = -CTX_OFFSET + 116;
-pub const CTX_HEAP_BASE: i32 = -CTX_OFFSET + 120;
-pub const CTX_HEAP_TOP: i32 = -CTX_OFFSET + 124;
-pub const CTX_JT_PTR: i32 = -CTX_OFFSET + 128;
-pub const CTX_JT_LEN: i32 = -CTX_OFFSET + 136;
-pub const CTX_BB_STARTS: i32 = -CTX_OFFSET + 144;
-pub const CTX_BB_LEN: i32 = -CTX_OFFSET + 152;
-pub const CTX_ENTRY_PC: i32 = -CTX_OFFSET + 160;
-pub const CTX_PC: i32 = -CTX_OFFSET + 164;
-pub const CTX_DISPATCH_TABLE: i32 = -CTX_OFFSET + 168;
-pub const CTX_CODE_BASE: i32 = -CTX_OFFSET + 176;
-pub const CTX_FAST_REENTRY: i32 = -CTX_OFFSET + 200;
+use memoffset::offset_of;
+use super::JitContext;
+
+pub const CTX_REGS: i32 = -CTX_OFFSET + offset_of!(JitContext, regs) as i32;
+pub const CTX_GAS: i32 = -CTX_OFFSET + offset_of!(JitContext, gas) as i32;
+pub const CTX_EXIT_REASON: i32 = -CTX_OFFSET + offset_of!(JitContext, exit_reason) as i32;
+pub const CTX_EXIT_ARG: i32 = -CTX_OFFSET + offset_of!(JitContext, exit_arg) as i32;
+pub const CTX_HEAP_BASE: i32 = -CTX_OFFSET + offset_of!(JitContext, heap_base) as i32;
+pub const CTX_HEAP_TOP: i32 = -CTX_OFFSET + offset_of!(JitContext, heap_top) as i32;
+pub const CTX_JT_PTR: i32 = -CTX_OFFSET + offset_of!(JitContext, jt_ptr) as i32;
+pub const CTX_JT_LEN: i32 = -CTX_OFFSET + offset_of!(JitContext, jt_len) as i32;
+pub const CTX_BB_STARTS: i32 = -CTX_OFFSET + offset_of!(JitContext, bb_starts) as i32;
+pub const CTX_BB_LEN: i32 = -CTX_OFFSET + offset_of!(JitContext, bb_len) as i32;
+pub const CTX_ENTRY_PC: i32 = -CTX_OFFSET + offset_of!(JitContext, entry_pc) as i32;
+pub const CTX_PC: i32 = -CTX_OFFSET + offset_of!(JitContext, pc) as i32;
+pub const CTX_DISPATCH_TABLE: i32 = -CTX_OFFSET + offset_of!(JitContext, dispatch_table) as i32;
+pub const CTX_CODE_BASE: i32 = -CTX_OFFSET + offset_of!(JitContext, code_base) as i32;
+pub const CTX_FAST_REENTRY: i32 = -CTX_OFFSET + offset_of!(JitContext, fast_reentry) as i32;
 
 /// Exit reason codes (matching ExitReason enum).
 pub const EXIT_HALT: u32 = 0;

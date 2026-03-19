@@ -11,5 +11,6 @@ signals = []
 
 [dependencies]
 libc = "0.2"
+memoffset = "0.9"
 thiserror = { workspace = true }
 tracing = { workspace = true }
