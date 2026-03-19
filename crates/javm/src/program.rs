@@ -60,10 +60,23 @@ pub fn deblob(blob: &[u8]) -> Option<(Vec<u8>, Vec<u8>, Vec<u32>)> {
 
     // Unpack packed bits to one byte per instruction (LSB first per byte)
     let mut bitmask = vec![0u8; code_len];
-    for i in 0..code_len {
-        let byte_idx = i / 8;
-        let bit_idx = i % 8;
-        bitmask[i] = (packed_bitmask[byte_idx] >> bit_idx) & 1;
+    // Process 8 bits at a time for the bulk of the bitmask
+    let full_bytes = code_len / 8;
+    for i in 0..full_bytes {
+        let b = packed_bitmask[i];
+        let out = &mut bitmask[i * 8..i * 8 + 8];
+        out[0] = b & 1;
+        out[1] = (b >> 1) & 1;
+        out[2] = (b >> 2) & 1;
+        out[3] = (b >> 3) & 1;
+        out[4] = (b >> 4) & 1;
+        out[5] = (b >> 5) & 1;
+        out[6] = (b >> 6) & 1;
+        out[7] = (b >> 7) & 1;
+    }
+    // Handle remaining bits
+    for i in full_bytes * 8..code_len {
+        bitmask[i] = (packed_bitmask[i / 8] >> (i % 8)) & 1;
     }
 
     Some((code, bitmask, jump_table))
