@@ -36,7 +36,7 @@ pub struct Assembler {
     /// Labels: name → code offset
     labels: std::collections::HashMap<String, u32>,
     /// Pending fixups: (code_offset, label_name, fixup_size)
-    fixups: Vec<(usize, String, u8)>,
+    _fixups: Vec<(usize, String, u8)>,
 }
 
 impl Assembler {
@@ -50,7 +50,7 @@ impl Assembler {
             heap_pages: 0,
             stack_size: 4096,
             labels: std::collections::HashMap::new(),
-            fixups: Vec::new(),
+            _fixups: Vec::new(),
         }
     }
 
@@ -450,11 +450,11 @@ pub fn build_sample_service_precise() -> Vec<u8> {
     let mut bitmask = Vec::new();
 
     // Helper to push instruction byte
-    let mut push_inst = |code: &mut Vec<u8>, bitmask: &mut Vec<u8>, byte: u8| {
+    let push_inst = |code: &mut Vec<u8>, bitmask: &mut Vec<u8>, byte: u8| {
         code.push(byte);
         bitmask.push(1);
     };
-    let mut push_data = |code: &mut Vec<u8>, bitmask: &mut Vec<u8>, byte: u8| {
+    let push_data = |code: &mut Vec<u8>, bitmask: &mut Vec<u8>, byte: u8| {
         code.push(byte);
         bitmask.push(0);
     };

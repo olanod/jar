@@ -11,7 +11,7 @@ use grey_types::config::Config;
 use grey_types::header::*;
 use grey_types::state::ServiceAccount;
 use grey_types::work::*;
-use grey_types::{Ed25519Signature, Hash, ServiceId, Timeslot};
+use grey_types::{Hash, ServiceId, Timeslot};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -573,7 +573,7 @@ fn build_test_guarantee(
 /// Build a test guarantee with a specific payload/result.
 fn build_test_guarantee_with_payload(
     state: &grey_types::state::State,
-    config: &Config,
+    _config: &Config,
     secrets: &[grey_consensus::genesis::ValidatorSecrets],
     service_id: ServiceId,
     code_hash: Hash,

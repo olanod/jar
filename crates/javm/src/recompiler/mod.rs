@@ -559,7 +559,7 @@ pub struct RecompiledPvm {
     /// Jump table.
     jump_table: Vec<u32>,
     /// Initial gas.
-    initial_gas: Gas,
+    _initial_gas: Gas,
     /// Dispatch table: PVM PC → native code offset (-1 = invalid).
     dispatch_table: Vec<i32>,
     /// Cached debug flag.
@@ -711,7 +711,7 @@ impl RecompiledPvm {
             code,
             bitmask,
             jump_table,
-            initial_gas: gas,
+            _initial_gas: gas,
             dispatch_table,
             debug,
             flat_memory: Some(flat_memory),
@@ -1099,7 +1099,6 @@ pub fn initialize_program_recompiled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::PageAccess;
     use codegen::{CTX_REGS, CTX_GAS, CTX_EXIT_REASON, CTX_EXIT_ARG, CTX_ENTRY_PC, CTX_PC,
                   CTX_DISPATCH_TABLE, CTX_CODE_BASE, CTX_OFFSET};
 

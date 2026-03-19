@@ -7,11 +7,10 @@
 //! 4. Conflicting announcements trigger escalation to all validators
 
 use grey_consensus::genesis::ValidatorSecrets;
-use grey_state::refine::{self, RefineContext};
+use grey_state::refine::RefineContext;
 use grey_types::config::Config;
-use grey_types::header::Judgment;
 use grey_types::state::State;
-use grey_types::work::{WorkDigest, WorkReport, WorkResult};
+use grey_types::work::{WorkReport, WorkResult};
 use grey_types::{Ed25519Signature, Hash, Timeslot, ValidatorIndex};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -49,6 +48,7 @@ pub struct AuditState {
 #[derive(Debug, Clone)]
 pub struct PendingAudit {
     pub report: WorkReport,
+    #[allow(dead_code)]
     pub core_index: u16,
     pub report_timeslot: Timeslot,
     pub our_tranche: Option<u32>,
@@ -187,14 +187,14 @@ pub fn compute_audit_tranche(
 ///
 /// Returns true if the work report is valid (results match), false otherwise.
 pub fn audit_work_report(
-    config: &Config,
+    _config: &Config,
     report: &WorkReport,
-    ctx: &dyn RefineContext,
+    _ctx: &dyn RefineContext,
 ) -> bool {
     // Re-execute each work item and compare results
     for digest in &report.results {
         // Look up the service code
-        let code_blob = match ctx.get_code(&digest.code_hash) {
+        let _code_blob = match _ctx.get_code(&digest.code_hash) {
             Some(blob) => blob,
             None => {
                 // If code is not found, we can't audit — assume valid
@@ -209,7 +209,7 @@ pub fn audit_work_report(
 
         // Build a minimal work item for re-execution
         // We reconstruct what we can from the digest
-        let item = grey_types::work::WorkItem {
+        let _item = grey_types::work::WorkItem {
             service_id: digest.service_id,
             code_hash: digest.code_hash,
             gas_limit: digest.gas_used + 1000, // Give a bit more gas for re-execution

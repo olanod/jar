@@ -6,12 +6,12 @@ use common::{
     bandersnatch_from_hex, decode_hex, discover_test_stems, ed25519_from_hex, hash_from_hex,
     load_jar_test, parse_validator,
 };
-use grey_state::safrole::{self, SafroleError, SafroleInput, SafroleState};
+use grey_state::safrole::{self, SafroleInput, SafroleState};
 use grey_types::config::Config;
 use grey_types::header::{Ticket, TicketProof};
 use grey_types::state::SealKeySeries;
 use grey_types::validator::ValidatorKey;
-use grey_types::{BandersnatchPublicKey, BandersnatchRingRoot, Ed25519PublicKey, Hash};
+use grey_types::{BandersnatchRingRoot, Hash};
 
 fn parse_validators(arr: &serde_json::Value) -> Vec<ValidatorKey> {
     arr.as_array()

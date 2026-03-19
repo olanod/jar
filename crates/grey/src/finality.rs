@@ -9,6 +9,7 @@
 //! 3. Finalization: block is final when 2/3+1 precommits agree
 
 use grey_consensus::genesis::ValidatorSecrets;
+#[cfg(test)]
 use grey_types::config::Config;
 use grey_types::{Ed25519Signature, Hash, Timeslot, ValidatorIndex};
 use std::collections::{BTreeMap, BTreeSet};
@@ -464,7 +465,7 @@ mod tests {
     #[test]
     fn test_grandpa_finality() {
         let config = Config::tiny(); // V=6
-        let (chain_state, secrets) = grey_consensus::genesis::create_genesis(&config);
+        let (_chain_state, secrets) = grey_consensus::genesis::create_genesis(&config);
 
         let mut grandpa = GrandpaState::new(config.validators_count);
         let block_hash = Hash([42u8; 32]);
@@ -483,7 +484,7 @@ mod tests {
         assert!(precommit_msg.is_some());
 
         // Add precommits from other validators until finality
-        let threshold = grandpa.threshold();
+        let _threshold = grandpa.threshold();
         let mut finalized = None;
         for i in 1..config.validators_count {
             let vote = sign_vote(&block_hash, 5, 1, i, &secrets[i as usize], VoteType::Precommit);

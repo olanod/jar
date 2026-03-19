@@ -6,7 +6,7 @@
 use crate::pvm_backend::{ExitReason, PvmInstance};
 use grey_types::config::Config;
 use grey_types::constants::{
-    HOST_CASH, HOST_CORE, HOST_FULL, HOST_HUH, HOST_LOW, HOST_NONE, HOST_OOB, HOST_OK, HOST_WHAT,
+    HOST_CASH, HOST_CORE, HOST_FULL, HOST_HUH, HOST_LOW, HOST_NONE, HOST_OK, HOST_WHAT,
     HOST_WHO,
 };
 use grey_types::work::{WorkReport, WorkResult};
@@ -322,7 +322,7 @@ fn accumulate_single_service(
     entropy: &Hash,
     fetch_ctx: &FetchContext,
 ) -> ServiceAccResult {
-    let account = match accounts.get(&service_id) {
+    let _account = match accounts.get(&service_id) {
         Some(a) => a,
         None => {
             return ServiceAccResult {
@@ -629,7 +629,7 @@ fn run_accumulate_pvm(
     // Set entry point: ΨM(c, 5, ...) starts at instruction counter 5 for accumulate
     pvm.set_pc(5);
     let initial_gas = pvm.gas();
-    let mut host_call_count = 0u32;
+    let mut _host_call_count = 0u32;
 
     loop {
         let gas_before = pvm.gas();
@@ -674,13 +674,13 @@ fn run_accumulate_pvm(
                 let gas_used = initial_gas;
                 return (exceptional, gas_used);
             }
-            ExitReason::PageFault(addr) => {
+            ExitReason::PageFault(_addr) => {
                 let gas_used = initial_gas - pvm.gas();
                 return (exceptional, gas_used);
             }
             ExitReason::HostCall(id) => {
-                host_call_count += 1;
-                let gas_before_host = pvm.gas();
+                _host_call_count += 1;
+                let _gas_before_host = pvm.gas();
                 let ok = handle_host_call(
                     config,
                     id,
@@ -691,7 +691,7 @@ fn run_accumulate_pvm(
                     entropy,
                     fetch_ctx,
                 );
-                let gas_after_host = pvm.gas();
+                let _gas_after_host = pvm.gas();
                 if !ok {
                     let gas_used = initial_gas - pvm.gas();
                     return (exceptional, gas_used);
@@ -2016,8 +2016,8 @@ fn accumulate_batch(
     let mut per_service_privs: BTreeMap<ServiceId, AccPrivileges> = BTreeMap::new();
 
     for &sid in &involved {
-        let prev_designate = current_privileges.designate;
-        let prev_bless = current_privileges.bless;
+        let _prev_designate = current_privileges.designate;
+        let _prev_bless = current_privileges.bless;
         let result = accumulate_single_service(
             config,
             &current_accounts,
@@ -2163,8 +2163,7 @@ fn accumulate_all(
         eprintln!("acc_all t=24: budget={gas_budget} reports={max_reports}/{} xfers={} always={} n={n}",
             reports.len(), transfers.len(), privileges.always_acc.len());
     }
-    for t in &transfers {
-    }
+    let _ = &transfers;
     if n == 0 {
         return (0, accounts.clone(), vec![], vec![], privileges.clone(), None, None);
     }
@@ -2367,8 +2366,7 @@ pub fn process_accumulate(
     accum_stats.retain(|_, (g, n)| *g + *n as u64 != 0);
 
     // Step 13: Compute output hash (Keccak Merkle root of outputs)
-    for (sid, hash) in &outputs {
-    }
+    let _ = &outputs;
     let output_hash = compute_output_hash(&outputs);
     // Sort outputs by service ID (GP eq 12.17: θ is a sorted sequence)
     outputs.sort_by_key(|(sid, _)| *sid);
@@ -2708,7 +2706,7 @@ pub fn run_accumulation(
     available_reports: Vec<WorkReport>,
     opaque_data: &[([u8; 31], Vec<u8>)],
 ) -> (Hash, BTreeMap<ServiceId, (Gas, u32)>, Vec<([u8; 31], Vec<u8>)>) {
-    let epoch_length = config.epoch_length as usize;
+    let _epoch_length = config.epoch_length as usize;
 
 
     // GP eq 12.22-12.24: Δ+ is always called, even with no available reports.

@@ -5,7 +5,6 @@
 
 use grey_types::config::Config;
 use grey_types::state::State;
-use grey_types::Hash;
 use std::path::Path;
 
 /// A chain specification containing genesis configuration.
@@ -36,7 +35,7 @@ pub struct ChainSpecConfig {
 
 impl ChainSpec {
     /// Create a chain spec from a Config and genesis state.
-    pub fn from_genesis(config: &Config, genesis_state: &State) -> Self {
+    pub fn from_genesis(config: &Config, _genesis_state: &State) -> Self {
         // Compute genesis hash from the config blob
         let config_blob = config.encode_config_blob();
         let genesis_hash = grey_crypto::blake2b_256(&config_blob);

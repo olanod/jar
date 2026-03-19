@@ -3,7 +3,7 @@
 //! Given the current state and validator secrets, determines whether the
 //! validator is the slot author and constructs a valid block.
 
-use grey_codec::header_codec::{compute_header_hash, encode_header_unsigned};
+use grey_codec::header_codec::encode_header_unsigned;
 use grey_types::config::Config;
 use grey_types::header::*;
 use grey_types::state::{SealKeySeries, State};

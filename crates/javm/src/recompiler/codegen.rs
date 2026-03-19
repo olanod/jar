@@ -408,79 +408,9 @@ impl Compiler {
         }
     }
 
-    /// Call a helper function. Saves/restores caller-saved PVM registers.
-    /// Args should be set up in RDI, RSI before calling this.
-    /// Result will be in RAX after the call.
-    fn emit_helper_call(&mut self, fn_addr: u64) {
-        self.save_caller_saved();
-        self.asm.mov_ri64(SCRATCH, fn_addr);
-        self.asm.call_reg(SCRATCH);
-        // Save result in SCRATCH before restoring
-        self.asm.mov_rr(SCRATCH, Reg::RAX);
-        self.restore_caller_saved();
-        // Result is now in SCRATCH (RDX)
-    }
-
-    /// Check for page fault after a memory helper call.
-    /// Assumes result/fault info is ready.
-    fn emit_fault_check(&mut self) {
-        // Check ctx.exit_reason != 0
-        self.asm.cmp_ri(SCRATCH, 0);  // SCRATCH has fault flag
-        // Actually we check the context field set by the helper
-        // The helper sets ctx.exit_reason on fault.
-        // We use a simpler approach: check ctx.exit_reason
-        let fault_label = self.exit_label;
-        // cmp dword [r15 + CTX_EXIT_REASON], 0
-        self.asm.mov_load32(SCRATCH, CTX, CTX_EXIT_REASON);
-        // We only need 32-bit comparison but loading 64 is fine (upper bits are 0)
-        self.asm.cmp_ri(SCRATCH, 0);
-        self.asm.jcc_label(Cc::NE, fault_label);
-    }
-
-    /// Load the JitContext pointer (R15 - CTX_OFFSET) into a register.
+/// Load the JitContext pointer (R15 - CTX_OFFSET) into a register.
     fn emit_ctx_ptr(&mut self, dst: Reg) {
         self.asm.lea(dst, CTX, -CTX_OFFSET);
-    }
-
-    /// Emit a memory read via helper function call (slow path).
-    /// Address should be in SCRATCH (RDX). Result goes into dst.
-    fn emit_mem_read_helper(&mut self, dst: Reg, addr_reg: Reg, fn_addr: u64) {
-        self.save_caller_saved();
-        self.emit_ctx_ptr(Reg::RDI);
-        self.asm.mov_rr(Reg::RSI, addr_reg);
-        self.asm.mov_ri64(Reg::RAX, fn_addr);
-        self.asm.call_reg(Reg::RAX);
-        self.asm.mov_rr(SCRATCH, Reg::RAX);
-        self.restore_caller_saved();
-        self.asm.push(SCRATCH);
-        self.asm.mov_load32(SCRATCH, CTX, CTX_EXIT_REASON);
-        self.asm.cmp_ri(SCRATCH, 0);
-        self.asm.pop(SCRATCH);
-        self.asm.jcc_label(Cc::NE, self.exit_label);
-        if dst != SCRATCH {
-            self.asm.mov_rr(dst, SCRATCH);
-        }
-    }
-
-    /// Emit a memory write via helper function call (slow path).
-    fn emit_mem_write_helper(&mut self, val_reg: Reg, fn_addr: u64) {
-        self.asm.push(SCRATCH);
-        self.asm.push(val_reg);
-        self.save_caller_saved();
-        // Stack: [8 caller-saved regs (64 bytes)] [value] [addr]
-        self.asm.mov_load64(Reg::RDX, Reg::RSP, 64);  // value (8 regs * 8 = 64)
-        self.asm.mov_load64(Reg::RSI, Reg::RSP, 72);  // addr
-        self.emit_ctx_ptr(Reg::RDI);
-        self.asm.mov_ri64(Reg::RAX, fn_addr);
-        self.asm.call_reg(Reg::RAX);
-        self.restore_caller_saved();
-        self.asm.pop(SCRATCH);
-        self.asm.pop(SCRATCH);
-        self.asm.push(SCRATCH);
-        self.asm.mov_load32(SCRATCH, CTX, CTX_EXIT_REASON);
-        self.asm.cmp_ri(SCRATCH, 0);
-        self.asm.pop(SCRATCH);
-        self.asm.jcc_label(Cc::NE, self.exit_label);
     }
 
     /// Peephole: fuse scaled-index from raw code (no pre-decoded array).
@@ -708,8 +638,6 @@ impl Compiler {
             8 => self.asm.mov_store64_sib(CTX, SCRATCH, val_reg),
             _ => unreachable!(),
         }
-        #[cfg(not(feature = "signals"))]
-        unreachable!();
     }
 
     /// Compute a memory address into SCRATCH, using peephole optimizations when available.
@@ -2018,11 +1946,7 @@ impl Compiler {
         }
     }
 
-    fn shift_cl32(&mut self, op: u8, dst: Reg) {
-        self.asm.shift_cl32(op, dst);
-    }
-
-    /// Three-register 64-bit ALU: rd = ra OP rb
+/// Three-register 64-bit ALU: rd = ra OP rb
     fn emit_alu3_64(&mut self, args: &Args, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
         if let Args::ThreeReg { ra, rb, rd } = args {
 
@@ -2267,33 +2191,7 @@ impl Compiler {
         }
     }
 
-    /// Emit sbrk helper call.
-    fn emit_sbrk(&mut self, rd: usize, ra: usize) {
-        // sbrk(size) where size = φ[ra]
-        // If size == 0: return current heap top
-        // Else: allocate size pages, return new heap start or error
-        // We call the helper function which handles this.
-        let fn_addr = self.helpers.sbrk_helper;
-        self.asm.push(SCRATCH);
-        self.asm.push(REG_MAP[ra]);
-
-        self.save_caller_saved();
-        // Stack: [8 caller-saved (64)] [ra_value (8)] [saved_scratch (8)]
-        // Args: RDI = ctx, RSI = size
-        self.emit_ctx_ptr(Reg::RDI);                 // ctx = R15 - CTX_OFFSET
-        self.asm.mov_load64(Reg::RSI, Reg::RSP, 64); // ra value from stack
-        self.asm.mov_ri64(Reg::RAX, fn_addr);
-        self.asm.call_reg(Reg::RAX);
-        self.asm.mov_rr(SCRATCH, Reg::RAX);
-        self.restore_caller_saved();
-
-        // Discard the two saved values without clobbering any PVM registers
-        self.asm.add_ri(Reg::RSP, 16);
-
-        self.asm.mov_rr(REG_MAP[rd], SCRATCH);
-    }
-
-    /// Emit an exit sequence that sets exit_reason and exit_arg.
+/// Emit an exit sequence that sets exit_reason and exit_arg.
     fn emit_exit(&mut self, reason: u32, arg: u32) {
         self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, reason as i32);
         self.asm.mov_store32_imm(CTX, CTX_EXIT_ARG as i32, arg as i32);

@@ -138,6 +138,7 @@ impl PeerTracker {
         self.peers.len()
     }
 
+    #[allow(dead_code)]
     fn get_peer_for_validator(&self, validator_index: u16) -> Option<&PeerId> {
         self.validators.get(&validator_index)
     }

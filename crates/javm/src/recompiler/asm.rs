@@ -132,13 +132,7 @@ impl Assembler {
         self.code.push(b);
     }
 
-    /// Emit 2 bytes at once.
-    #[inline(always)]
-    fn emit2(&mut self, a: u8, b: u8) {
-        self.code.extend_from_slice(&[a, b]);
-    }
-
-    /// Emit 3 bytes at once.
+/// Emit 3 bytes at once.
     #[inline(always)]
     fn emit3(&mut self, a: u8, b: u8, c: u8) {
         self.code.extend_from_slice(&[a, b, c]);

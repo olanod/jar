@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{decode_hex, discover_test_stems, hash_from_hex, load_jar_test, parse_work_report, sig_from_hex};
+use common::{decode_hex, discover_test_stems, hash_from_hex, parse_work_report, sig_from_hex};
 use grey_state::assurances::process_assurances;
 use grey_types::config::Config;
 use grey_types::header::Assurance;

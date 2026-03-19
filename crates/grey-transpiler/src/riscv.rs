@@ -236,16 +236,7 @@ impl TranslationContext {
         Ok(4) // consumed one 32-bit instruction
     }
 
-    fn translate_compressed(&mut self, _inst: u16, addr: u64) -> Result<(), TranspileError> {
-        // JAM PVM uses rv64em (no C extension). Compressed instructions should
-        // not appear in properly compiled service code.
-        Err(TranspileError::UnsupportedInstruction {
-            offset: addr as usize,
-            detail: "compressed (RV64C) instructions are not supported — compile with -march=rv64em".into(),
-        })
-    }
-
-    fn translate_branch(&mut self, funct3: u32, rs1: u8, rs2: u8, target: u64) -> Result<(), TranspileError> {
+fn translate_branch(&mut self, funct3: u32, rs1: u8, rs2: u8, target: u64) -> Result<(), TranspileError> {
         let pvm_rs1 = self.require_reg(rs1)?;
         let pvm_rs2 = self.require_reg(rs2)?;
 
@@ -566,20 +557,7 @@ impl TranslationContext {
         self.emit_imm32(0); // placeholder
     }
 
-    pub(crate) fn emit_halt(&mut self) {
-        // Load halt address (0xFFFF0000) into T0 and djump
-        self.emit_inst(20); // load_imm_64
-        self.emit_data(2);  // T0
-        let halt = 0xFFFF0000u64;
-        for i in 0..8 {
-            self.emit_data((halt >> (i * 8)) as u8);
-        }
-        self.emit_inst(50); // jump_ind T0, 0
-        self.emit_data(2);  // T0
-        self.emit_imm32(0);
-    }
-
-    /// Emit a load_imm for a return address (RISC-V addr → absolute PVM PC).
+/// Emit a load_imm for a return address (RISC-V addr → absolute PVM PC).
     pub(crate) fn emit_return_address(&mut self, rd: u8, rv_ret_addr: u64) -> Result<(), TranspileError> {
         if rd == 0 { return Ok(()); }
         let pvm_rd = self.require_reg(rd)?;

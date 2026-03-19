@@ -6,7 +6,7 @@
 use grey_types::config::Config;
 use grey_types::state::*;
 use grey_types::validator::ValidatorKey;
-use grey_types::{BandersnatchPublicKey, BlsPublicKey, Ed25519PublicKey, Hash};
+use grey_types::{BandersnatchPublicKey, BlsPublicKey, Hash};
 use std::collections::BTreeMap;
 
 /// Validator secrets for the test network.

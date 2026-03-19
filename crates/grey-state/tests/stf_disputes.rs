@@ -2,14 +2,13 @@
 
 mod common;
 
-use common::{discover_test_stems, ed25519_from_hex, hash_from_hex, load_jar_test, sig_from_hex};
-use grey_state::disputes::{process_disputes, DisputeError};
+use common::{discover_test_stems, ed25519_from_hex, hash_from_hex, sig_from_hex};
+use grey_state::disputes::process_disputes;
 use grey_types::config::Config;
 use grey_types::header::*;
 use grey_types::state::{Judgments, PendingReport};
 use grey_types::validator::ValidatorKey;
-use grey_types::{Ed25519PublicKey, Hash};
-use std::collections::BTreeSet;
+use grey_types::Ed25519PublicKey;
 
 fn parse_judgments(json: &serde_json::Value) -> Judgments {
     Judgments {

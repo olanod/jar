@@ -370,25 +370,6 @@ fn map_region(memory: &mut Memory, base: u32, size: u32, access: PageAccess) {
     }
 }
 
-/// Map a memory region and copy data into it.
-fn map_region_with_data(memory: &mut Memory, base: u32, data: &[u8], size: u32, access: PageAccess) {
-    if size == 0 {
-        return;
-    }
-    let start_page = base / PVM_PAGE_SIZE;
-    let num_pages = (size + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE;
-    let page_size = PVM_PAGE_SIZE as usize;
-
-    for i in 0..num_pages {
-        let data_offset = i as usize * page_size;
-        if data_offset < data.len() {
-            let end = (data_offset + page_size).min(data.len());
-            memory.map_page_with_data(start_page + i, access, &data[data_offset..end]);
-        } else {
-            memory.map_page(start_page + i, access);
-        }
-    }
-}
 
 fn read_le_u16(data: &[u8], offset: &mut usize) -> Option<u16> {
     if *offset + 2 > data.len() {

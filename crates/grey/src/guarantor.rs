@@ -11,7 +11,7 @@
 use grey_codec::Encode;
 use grey_consensus::genesis::ValidatorSecrets;
 use grey_erasure::ErasureParams;
-use grey_state::refine::{self, RefineContext, SimpleRefineContext};
+use grey_state::refine::{self, RefineContext};
 use grey_store::Store;
 use grey_types::config::Config;
 use grey_types::header::{Assurance, Guarantee};
@@ -19,7 +19,6 @@ use grey_types::state::State;
 use grey_types::work::{WorkPackage, WorkReport};
 use grey_types::{Ed25519Signature, Hash};
 use std::collections::{BTreeMap, HashSet};
-use std::sync::Arc;
 
 /// Tracks pending guarantees and chunks for availability.
 pub struct GuarantorState {
@@ -402,7 +401,7 @@ impl<'a> RefineContext for StateRefineContext<'a> {
 /// Determine which core a work package should be assigned to.
 fn determine_core(config: &Config, state: &State, package: &WorkPackage) -> u16 {
     // Find a core whose authorization pool contains the package's auth code hash
-    let auth_hash = grey_crypto::blake2b_256(&package.auth_code_hash.0);
+    let _auth_hash = grey_crypto::blake2b_256(&package.auth_code_hash.0);
     for (core_idx, pool) in state.auth_pool.iter().enumerate() {
         for hash in pool {
             if *hash == package.auth_code_hash {

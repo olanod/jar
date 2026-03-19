@@ -8,7 +8,6 @@
 //! - 4 decode slots per cycle, 5 dispatch slots per cycle
 //! - Execution units: ALU:4, LOAD:4, STORE:4, MUL:1, DIV:1
 
-use crate::instruction::Opcode;
 
 // --- Data structures ---
 
@@ -1026,7 +1025,7 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: 
     let mut dispatch_slots: u8 = 5;
     let mut eu_avail: [u8; 5] = [4, 4, 4, 1, 1]; // alu, load, store, mul, div
 
-    let done_decoding = |idx: usize| idx >= instrs.len();
+    let _done_decoding = |idx: usize| idx >= instrs.len();
 
     for _safety in 0..100_000u32 {
         // Phase 1: Decode as many instructions as possible this cycle

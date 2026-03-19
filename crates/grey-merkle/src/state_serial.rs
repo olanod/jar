@@ -785,14 +785,6 @@ fn read_hash(data: &[u8], pos: &mut usize) -> Result<Hash, String> {
     Ok(Hash(h))
 }
 
-fn read_u16(data: &[u8], pos: &mut usize) -> Result<u16, String> {
-    if *pos + 2 > data.len() {
-        return Err("unexpected end reading u16".into());
-    }
-    let v = u16::from_le_bytes([data[*pos], data[*pos + 1]]);
-    *pos += 2;
-    Ok(v)
-}
 
 fn read_u32(data: &[u8], pos: &mut usize) -> Result<u32, String> {
     if *pos + 4 > data.len() {

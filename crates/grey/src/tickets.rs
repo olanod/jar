@@ -9,7 +9,7 @@
 
 use grey_consensus::genesis::ValidatorSecrets;
 use grey_types::config::Config;
-use grey_types::header::{Ticket, TicketProof};
+use grey_types::header::TicketProof;
 use grey_types::state::State;
 use grey_types::{Hash, Timeslot};
 use std::collections::BTreeSet;
@@ -261,7 +261,7 @@ mod tests {
     #[test]
     fn test_ticket_deduplication() {
         let config = Config::tiny();
-        let (chain_state, secrets) = grey_consensus::genesis::create_genesis(&config);
+        let (chain_state, _secrets) = grey_consensus::genesis::create_genesis(&config);
 
         let mut ticket_state = TicketState::new();
         let proof = TicketProof {

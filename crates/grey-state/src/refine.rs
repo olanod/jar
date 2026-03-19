@@ -9,7 +9,7 @@ use crate::pvm_backend::{ExitReason, PvmInstance};
 use grey_types::config::Config;
 use grey_types::constants::{GAS_IS_AUTHORIZED, HOST_OOB, HOST_WHAT};
 use grey_types::work::*;
-use grey_types::{Hash, ServiceId, Timeslot};
+use grey_types::{Hash, ServiceId};
 use javm::Gas;
 use std::collections::BTreeMap;
 
@@ -383,6 +383,7 @@ mod tests {
 
     /// Stub blob for structural tests (empty — PVM init will fail gracefully).
     /// PVM-based refine tests use the block trace vectors in stf_blocks instead.
+    #[allow(dead_code)]
     fn make_echo_blob() -> Vec<u8> {
         vec![]
     }

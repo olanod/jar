@@ -41,18 +41,6 @@ impl RelocType {
     }
 }
 
-/// A parsed ELF relocation entry.
-#[derive(Debug, Clone)]
-struct Reloc {
-    /// File offset of the instruction being relocated.
-    offset: u64,
-    /// Relocation type.
-    rtype: RelocType,
-    /// Symbol value (resolved address).
-    sym_value: u64,
-    /// Addend.
-    addend: i64,
-}
 
 /// Parsed ELF with relocation info for linking.
 struct LinkedElf {
@@ -61,10 +49,10 @@ struct LinkedElf {
     code_sections: Vec<(u64, u64, Vec<u8>)>,
     /// RO data blob and its PVM base address
     ro_data: Vec<u8>,
-    ro_base: u64,
+    _ro_base: u64,
     /// RW data blob and its PVM base address
     rw_data: Vec<u8>,
-    rw_base: u64,
+    _rw_base: u64,
     /// Stack size (= ro_base, so RO data is at the right PVM address)
     stack_size: u32,
     /// Heap pages
@@ -235,7 +223,7 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         file_off: usize,
         size: usize,
         link: usize,
-        info: usize,
+        _info: usize,
     }
 
     let mut sections = Vec::with_capacity(e_shnum);
@@ -250,7 +238,7 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
             file_off: u64::from_le_bytes(data[sh+24..sh+32].try_into().unwrap()) as usize,
             size: u64::from_le_bytes(data[sh+32..sh+40].try_into().unwrap()) as usize,
             link: u32::from_le_bytes(data[sh+40..sh+44].try_into().unwrap()) as usize,
-            info: u32::from_le_bytes(data[sh+44..sh+48].try_into().unwrap()) as usize,
+            _info: u32::from_le_bytes(data[sh+44..sh+48].try_into().unwrap()) as usize,
         });
     }
 
@@ -438,9 +426,9 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         is_64bit,
         code_sections,
         ro_data,
-        ro_base: stack_size,
+        _ro_base: stack_size,
         rw_data,
-        rw_base: rw_pvm_base,
+        _rw_base: rw_pvm_base,
         stack_size: stack_size as u32,
         heap_pages,
         hi20_targets,

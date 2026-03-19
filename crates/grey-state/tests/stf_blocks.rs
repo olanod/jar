@@ -3,6 +3,8 @@
 //! Each test loads pre-state from keyvals, parses a block from JSON,
 //! applies the full state transition, and compares the resulting state root.
 
+#![allow(dead_code)]
+
 mod common;
 
 use common::{
@@ -12,7 +14,7 @@ use common::{
 use grey_merkle::state_serial;
 use grey_types::config::Config;
 use grey_types::header::*;
-use grey_types::{BandersnatchPublicKey, BandersnatchSignature, Ed25519PublicKey, Hash};
+use grey_types::{BandersnatchPublicKey, BandersnatchSignature, Ed25519PublicKey};
 
 const BLOCKS_DIR: &str = "../../res/spec/tests/vectors/blocks";
 

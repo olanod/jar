@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{discover_test_stems, hash_from_hex, load_jar_test};
+use common::{discover_test_stems, hash_from_hex};
 use grey_state::history::{update_history, HistoryInput};
 use grey_types::Hash;
 use grey_types::state::{RecentBlockInfo, RecentBlocks};

@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{decode_hex, discover_test_stems, ed25519_from_hex, hash_from_hex, load_jar_test, parse_work_report, sig_from_hex};
+use common::{decode_hex, discover_test_stems, ed25519_from_hex, hash_from_hex, parse_work_report, sig_from_hex};
 use grey_state::statistics;
 use grey_types::header::*;
 use grey_types::state::{ValidatorRecord, ValidatorStatistics};

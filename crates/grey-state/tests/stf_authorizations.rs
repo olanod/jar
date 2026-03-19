@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{discover_test_stems, hash_from_hex, load_jar_test};
+use common::{discover_test_stems, hash_from_hex};
 use grey_state::authorizations::{update_authorizations, AuthorizationInput};
 use grey_types::config::Config;
 use grey_types::Hash;

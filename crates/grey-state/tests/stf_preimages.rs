@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{decode_hex, discover_test_stems, hash_from_hex, load_jar_test};
+use common::{decode_hex, discover_test_stems, hash_from_hex};
 use grey_state::preimages::{process_preimages, PreimageAccountData, PreimageServiceRecord};
 use grey_types::{Hash, ServiceId, Timeslot};
 use std::collections::{BTreeMap, BTreeSet};

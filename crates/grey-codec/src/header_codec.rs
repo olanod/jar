@@ -75,6 +75,7 @@ pub fn encode_header_unsigned(header: &Header) -> Vec<u8> {
 }
 
 /// Decode a full header from E(H) bytes.
+#[allow(unused_assignments)]
 pub fn decode_header(data: &[u8]) -> Option<Header> {
     use crate::decode::decode_compact_at;
     use grey_types::*;

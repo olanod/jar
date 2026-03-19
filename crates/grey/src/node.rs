@@ -14,16 +14,14 @@ use crate::guarantor::{self, GuarantorState};
 use crate::tickets::{self, TicketState};
 use grey_codec::header_codec::compute_header_hash;
 use grey_consensus::authoring;
-use grey_consensus::genesis::ValidatorSecrets;
+
 use grey_network::service::{NetworkCommand, NetworkConfig, NetworkEvent};
 use grey_store::Store;
 use grey_types::config::Config;
-use grey_types::header::{Assurance, Block, Guarantee};
+use grey_types::header::{Assurance, Block};
 use grey_types::state::State;
 use grey_types::{BandersnatchPublicKey, Hash, Timeslot};
-use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tokio::sync::mpsc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Node configuration.
 pub struct NodeConfig {
@@ -185,9 +183,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_secs();
-                let current_slot = ((now - genesis_time) / protocol.epoch_length as u64 * protocol.epoch_length as u64
-                    + (now - genesis_time) % protocol.epoch_length as u64) as Timeslot;
-                // Simpler: slot = (now - genesis_time) / slot_period
+                // slot = (now - genesis_time) / slot_period
                 let current_slot = ((now - genesis_time) / 6) as Timeslot + 1; // +1 because genesis is slot 0
 
                 // Only attempt authoring if this is a new slot we haven't authored yet
@@ -1090,7 +1086,7 @@ fn create_demo_work_package(
     service_id: u32,
     code_hash: Hash,
     payload: &[u8],
-    timeslot: u32,
+    _timeslot: u32,
 ) -> grey_types::work::WorkPackage {
     use grey_types::work::*;
 
