@@ -9,12 +9,10 @@
 pub mod args;
 pub mod gas_cost;
 pub mod instruction;
-pub mod memory;
 pub mod program;
 pub mod recompiler;
 pub mod vm;
 
-pub use memory::Memory;
 pub use vm::{ExitReason, Pvm};
 pub use recompiler::RecompiledPvm;
 

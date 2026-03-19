@@ -4,7 +4,6 @@
 //! initialization with basic block prevalidation.
 
 use crate::instruction::Opcode;
-use crate::memory::{Memory, PageAccess};
 use crate::vm::Pvm;
 use crate::{Gas, PVM_PAGE_SIZE};
 
@@ -195,17 +194,14 @@ pub struct ParsedProgram {
     pub bitmask: Vec<u8>,
     pub jump_table: Vec<u32>,
     pub registers: [u64; crate::PVM_REGISTER_COUNT],
-    pub memory: Memory,
     pub heap_base: u32,
     pub heap_top: u32,
-    /// Layout info for direct flat-buffer writes (avoids Memory page data).
+    /// Layout info for direct flat-buffer writes.
     pub layout: Option<DataLayout>,
 }
 
 /// Parse a program blob into raw components without building a full Pvm.
-/// When `meta_only` is true, Memory pages are metadata-only (no 4KB data allocations).
-/// The caller should use `layout` to write data directly into a flat buffer.
-pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas, meta_only: bool) -> Option<ParsedProgram> {
+pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas) -> Option<ParsedProgram> {
     let blob = skip_metadata(program_blob);
 
     if blob.len() < 15 {
@@ -249,25 +245,14 @@ pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas, meta
 
     if (mem_size as u64) > (1u64 << 32) { return None; }
 
-    let mut memory = Memory::new();
-    let layout = if meta_only {
-        // Skip Memory entirely — the recompiler uses flat_perms + flat_buf directly.
-        // Memory will be rebuilt on-demand if fallback/compare mode needs it.
-        Some(DataLayout {
-            mem_size,
-            arg_start,
-            arg_data: arguments.to_vec(),
-            ro_start,
-            ro_data: ro_data.to_vec(),
-            rw_start,
-            rw_data: rw_data.to_vec(),
-        })
-    } else {
-        map_region(&mut memory, 0, mem_size, PageAccess::ReadWrite);
-        copy_data(&mut memory, arg_start, arguments);
-        copy_data(&mut memory, ro_start, ro_data);
-        copy_data(&mut memory, rw_start, rw_data);
-        None
+    let layout = DataLayout {
+        mem_size,
+        arg_start,
+        arg_data: arguments.to_vec(),
+        ro_start,
+        ro_data: ro_data.to_vec(),
+        rw_start,
+        rw_data: rw_data.to_vec(),
     };
 
     let mut registers = [0u64; crate::PVM_REGISTER_COUNT];
@@ -277,10 +262,10 @@ pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas, meta
     registers[8] = arguments.len() as u64;
 
     Some(ParsedProgram {
-        code, bitmask, jump_table, registers, memory,
+        code, bitmask, jump_table, registers,
         heap_base: heap_start,
         heap_top: heap_end,
-        layout,
+        layout: Some(layout),
     })
 }
 
@@ -314,12 +299,6 @@ fn validate_basic_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> boo
     true
 }
 
-/// Copy data bytes into memory at the given base address.
-fn copy_data(memory: &mut Memory, base: u32, data: &[u8]) {
-    for (i, &byte) in data.iter().enumerate() {
-        memory.write_u8(base + i as u32, byte);
-    }
-}
 
 /// Decode a variable-length natural number (JAM codec format).
 /// Returns (value, bytes_consumed) or None.
@@ -361,17 +340,6 @@ fn decode_natural(data: &[u8], offset: usize) -> Option<(usize, usize)> {
     }
 }
 
-/// Map a memory region with zero-filled pages.
-fn map_region(memory: &mut Memory, base: u32, size: u32, access: PageAccess) {
-    if size == 0 {
-        return;
-    }
-    let start_page = base / PVM_PAGE_SIZE;
-    let num_pages = (size + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE;
-    for i in 0..num_pages {
-        memory.map_page(start_page + i, access);
-    }
-}
 
 
 fn read_le_u16(data: &[u8], offset: &mut usize) -> Option<u16> {
