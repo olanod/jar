@@ -177,6 +177,7 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
 
 /// Memory layout offsets for direct flat-buffer writes.
 pub struct DataLayout {
+    pub mem_size: u32,
     pub arg_start: u32,
     pub arg_data: Vec<u8>,
     pub ro_start: u32,
@@ -247,12 +248,10 @@ pub fn parse_program_blob(program_blob: &[u8], arguments: &[u8], _gas: Gas, meta
 
     let mut memory = Memory::new();
     let layout = if meta_only {
-        // Metadata-only: no 4KB page data allocations.
-        let num_pages = (mem_size + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE;
-        for i in 0..num_pages {
-            memory.map_page_meta(i, PageAccess::ReadWrite);
-        }
+        // Skip Memory entirely — the recompiler uses flat_perms + flat_buf directly.
+        // Memory will be rebuilt on-demand if fallback/compare mode needs it.
         Some(DataLayout {
+            mem_size,
             arg_start,
             arg_data: arguments.to_vec(),
             ro_start,

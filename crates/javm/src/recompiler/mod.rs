@@ -195,8 +195,14 @@ impl FlatMemory {
             }
         }
 
-        // If layout is provided (meta-only Memory), write data directly
+        // If layout is provided (no Memory pages), write data + perms directly
         if let Some(dl) = layout {
+            // Set all pages in [0, mem_size) as read-write
+            let num_pages = (dl.mem_size as usize + 4095) / 4096;
+            unsafe {
+                std::ptr::write_bytes(perms, 2u8, num_pages.min(NUM_PAGES)); // 2 = RW
+            }
+            // Copy data directly into flat buffer
             unsafe {
                 if !dl.arg_data.is_empty() {
                     std::ptr::copy_nonoverlapping(dl.arg_data.as_ptr(), buf.add(dl.arg_start as usize), dl.arg_data.len());
@@ -503,15 +509,21 @@ extern "sysv64" fn sbrk_helper(ctx: *mut JitContext, size: u64) -> u64 {
     // Map any pages in [old_top, new_top) that aren't mapped yet
     let start_page = old_top / ps;
     let end_page = if new_top_u32 == 0 { u32::MAX / ps } else { (new_top_u32 - 1) / ps };
-    for p in start_page..=end_page {
-        if !mem.is_page_mapped(p) {
-            mem.map_page(p, crate::memory::PageAccess::ReadWrite);
-            // Update flat memory permission table
-            if !ctx.flat_perms.is_null() {
-                let perms = ctx.flat_perms as *mut u8;
-                unsafe {
+    if !ctx.flat_perms.is_null() {
+        // Fast path: use permission table directly (avoids BTreeMap lookups)
+        let perms = ctx.flat_perms as *mut u8;
+        for p in start_page..=end_page {
+            unsafe {
+                if *perms.add(p as usize) == 0 {
                     *perms.add(p as usize) = 2; // read-write
                 }
+            }
+        }
+    } else {
+        // Fallback: use Memory struct
+        for p in start_page..=end_page {
+            if !mem.is_page_mapped(p) {
+                mem.map_page(p, crate::memory::PageAccess::ReadWrite);
             }
         }
     }
