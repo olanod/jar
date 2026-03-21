@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Replay genesis state from git history.
 #
-# Usage: tools/genesis-replay.sh [--verify | --rebuild]
-#   --verify   Re-evaluate each SignedCommit and compare against stored CommitIndex (default)
-#   --rebuild  Re-evaluate all SignedCommits and output rebuilt genesis.json to stdout
+# Usage: tools/genesis-replay.sh [--verify | --verify-cache | --rebuild]
+#   --verify        Re-evaluate each SignedCommit and compare against stored CommitIndex (default)
+#   --verify-cache  Rebuild from git history and compare against genesis-state branch cache
+#   --rebuild       Re-evaluate all SignedCommits and output rebuilt genesis.json to stdout
 #
 # Requires: jq, genesis_evaluate and genesis_validate built
 #   lake build genesis_evaluate genesis_validate
@@ -84,7 +85,50 @@ elif [ "$MODE" = "--verify" ]; then
     exit 1
   fi
 
+elif [ "$MODE" = "--verify-cache" ]; then
+  # Rebuild from git history, then compare against genesis-state branch cache
+  REBUILT="[]"
+  for i in $(seq 0 $((REPLAYABLE - 1))); do
+    COMMIT=$(echo "$SIGNED_COMMITS" | jq -c ".[$i]")
+    INPUT=$(jq -n --argjson commit "$COMMIT" --argjson pastIndices "$REBUILT" \
+      '{commit: $commit, pastIndices: $pastIndices}')
+    INDEX=$(echo "$INPUT" | .lake/build/bin/genesis_evaluate)
+    REBUILT=$(echo "$REBUILT" | jq --argjson idx "$INDEX" '. + [$idx]')
+  done
+
+  # Fetch cache from genesis-state branch
+  git fetch origin genesis-state 2>/dev/null || { echo "ERROR: cannot fetch genesis-state branch." >&2; exit 1; }
+  CACHE=$(git show origin/genesis-state:genesis.json 2>/dev/null || echo "[]")
+
+  CACHE_LEN=$(echo "$CACHE" | jq 'length')
+  REBUILT_LEN=$(echo "$REBUILT" | jq 'length')
+
+  if [ "$REBUILT_LEN" -ne "$CACHE_LEN" ]; then
+    echo "MISMATCH: rebuilt $REBUILT_LEN indices but cache has $CACHE_LEN." >&2
+    exit 1
+  fi
+
+  ERRORS=0
+  for i in $(seq 0 $((REBUILT_LEN - 1))); do
+    R=$(echo "$REBUILT" | jq -c ".[$i]")
+    C=$(echo "$CACHE" | jq -c ".[$i]")
+    if [ "$R" != "$C" ]; then
+      R_HASH=$(echo "$R" | jq -r '.commitHash')
+      echo "MISMATCH at index $i (commit $R_HASH):" >&2
+      echo "  rebuilt: $R" >&2
+      echo "  cache:   $C" >&2
+      ERRORS=$((ERRORS + 1))
+    fi
+  done
+
+  if [ "$ERRORS" -eq 0 ]; then
+    echo "Cache verified: $REBUILT_LEN indices match rebuilt state." >&2
+  else
+    echo "Cache verification failed: $ERRORS mismatches in $REBUILT_LEN indices." >&2
+    exit 1
+  fi
+
 else
-  echo "Usage: tools/genesis-replay.sh [--verify | --rebuild]" >&2
+  echo "Usage: tools/genesis-replay.sh [--verify | --verify-cache | --rebuild]" >&2
   exit 1
 fi
