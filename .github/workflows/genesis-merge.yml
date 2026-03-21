@@ -87,8 +87,8 @@ jobs:
           HEAD_SHA=$(echo "$PR_JSON" | jq -r '.headRefOid')
           AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
 
-          # Collect reviews + meta-reviews (reactions on review comments)
-          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER")
+          # Collect reviews + meta-reviews (replace "currentPR" with actual SHA)
+          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER" "$HEAD_SHA")
           REVIEWS=$(echo "$COLLECTED" | jq '.reviews')
           META_REVIEWS=$(echo "$COLLECTED" | jq '.metaReviews')
 

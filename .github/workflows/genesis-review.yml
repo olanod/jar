@@ -52,8 +52,11 @@ jobs:
           PR_NUMBER=${{ github.event.issue.number }}
           CACHE=$(cat .github/cache/genesis.json)
 
-          # Collect reviews + meta-reviews (reactions on review comments)
-          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER")
+          # Get PR head SHA for replacing "currentPR" in rankings
+          HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
+
+          # Collect reviews + meta-reviews (replace "currentPR" with actual SHA)
+          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER" "$HEAD_SHA")
           REVIEWS=$(echo "$COLLECTED" | jq '.reviews')
           META_REVIEWS=$(echo "$COLLECTED" | jq '.metaReviews')
 

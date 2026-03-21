@@ -2,8 +2,10 @@
 # Collect all /review comments and their meta-reviews (reactions)
 # from a GitHub PR.
 #
-# Usage: genesis-collect-reviews.sh <pr_number>
+# Usage: genesis-collect-reviews.sh <pr_number> [head_sha]
 # Requires: GH_TOKEN, gh cli, jq
+#
+# If head_sha is provided, "currentPR" in rankings is replaced with the SHA.
 #
 # Output (JSON to stdout):
 #   {"reviews": [...], "metaReviews": [...]}
@@ -11,6 +13,7 @@
 set -euo pipefail
 
 PR_NUMBER="$1"
+HEAD_SHA="${2:-}"
 REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner --jq '.nameWithOwner')}"
 
 to_json_array() { echo "$1" | tr ',' '\n' | jq -R . | jq -s .; }
@@ -18,10 +21,20 @@ to_json_array() { echo "$1" | tr ',' '\n' | jq -R . | jq -s .; }
 parse_review() {
   local BODY="$1"
   local AUTHOR="$2"
-  local DIFF=$(echo "$BODY" | grep -i '^difficulty:' | sed 's/^difficulty:\s*//' | tr -d ' ')
-  local NOV=$(echo "$BODY" | grep -i '^novelty:' | sed 's/^novelty:\s*//' | tr -d ' ')
-  local DES=$(echo "$BODY" | grep -i '^design:' | sed 's/^design:\s*//' | tr -d ' ')
+  local RAW_DIFF=$(echo "$BODY" | grep -i '^difficulty:' | sed 's/^difficulty:\s*//' | tr -d ' ')
+  local RAW_NOV=$(echo "$BODY" | grep -i '^novelty:' | sed 's/^novelty:\s*//' | tr -d ' ')
+  local RAW_DES=$(echo "$BODY" | grep -i '^design:' | sed 's/^design:\s*//' | tr -d ' ')
   local VERD=$(echo "$BODY" | grep -i '^verdict:' | sed 's/^verdict:\s*//' | tr -d ' ')
+  # Replace "currentPR" with actual commit SHA if provided
+  if [ -n "$HEAD_SHA" ]; then
+    local DIFF=$(echo "$RAW_DIFF" | sed "s/currentPR/$HEAD_SHA/g")
+    local NOV=$(echo "$RAW_NOV" | sed "s/currentPR/$HEAD_SHA/g")
+    local DES=$(echo "$RAW_DES" | sed "s/currentPR/$HEAD_SHA/g")
+  else
+    local DIFF="$RAW_DIFF"
+    local NOV="$RAW_NOV"
+    local DES="$RAW_DES"
+  fi
   if [ -n "$DIFF" ] && [ -n "$NOV" ] && [ -n "$DES" ] && [ -n "$VERD" ]; then
     jq -n \
       --arg reviewer "$AUTHOR" \
