@@ -85,8 +85,8 @@ structure CommitIndex where
 structure EvalState where
   /-- Current contributor weights (for reviewer weight lookups). -/
   contributors : List Contributor
-  /-- Past commit IDs (for comparison target selection). -/
-  pastCommitIds : List CommitId
+  /-- Scored commits with their merge epochs (for comparison target selection). -/
+  scoredCommits : List (CommitId × Epoch)
 
 /-- Update or insert a contributor in a list. -/
 private def upsertContributor (cs : List Contributor) (updated : Contributor) : List Contributor :=
@@ -101,7 +101,7 @@ private def upsertContributor (cs : List Contributor) (updated : Contributor) : 
 def reconstructState (pastIndices : List CommitIndex) (ep : EvalParams := .default) : EvalState :=
   let init : EvalState := {
     contributors := [⟨founder, 0, founderWeight, true⟩],
-    pastCommitIds := []
+    scoredCommits := []
   }
   pastIndices.foldl (fun state (idx : CommitIndex) =>
     -- Apply weight change to the contributor (author)
@@ -114,9 +114,9 @@ def reconstructState (pastIndices : List CommitIndex) (ep : EvalParams := .defau
         let meetsThreshold := newWeight ≥ ep.reviewerThreshold
         let updated : Contributor := ⟨c.id, c.balance, newWeight, c.isReviewer || meetsThreshold⟩
         upsertContributor state.contributors updated
-    -- Record commit ID for future target selection
-    let pastCommitIds := state.pastCommitIds ++ [idx.commitHash]
-    { contributors := contributors, pastCommitIds := pastCommitIds }
+    -- Record scored commit with epoch for target selection
+    let scoredCommits := state.scoredCommits ++ [(idx.commitHash, idx.epoch)]
+    { contributors := contributors, scoredCommits := scoredCommits }
   ) init
 
 /-- Get reviewer weight from an EvalState. -/
@@ -144,7 +144,7 @@ def evaluate
     (ep : EvalParams := .default) : CommitIndex :=
   let state := reconstructState pastIndices ep
   let score := commitScore ep commit
-    state.pastCommitIds (state.reviewerWeight ·)
+    state.scoredCommits (state.reviewerWeight ·)
   let approved := filterReviews commit.reviews commit.metaReviews (state.reviewerWeight ·)
   let approvedReviewers := approved
     |>.filter (fun (r : EmbeddedReview) => state.reviewerWeight r.reviewer > 0)

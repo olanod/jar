@@ -154,8 +154,13 @@ structure SignedCommit where
   prId : PRId
   author : ContributorId
   mergeEpoch : Epoch
+  /-- PR's created_at timestamp (immutable, set by GitHub at PR open).
+      Used to anchor comparison target selection: only commits merged
+      before this timestamp are eligible as targets. For legacy commits
+      without this field, falls back to mergeEpoch. -/
+  prCreatedAt : Epoch
   /-- The comparison targets selected by the bot.
-      Validated against hash(prId) at spec time. -/
+      Validated against hash(prId) + prCreatedAt at spec time. -/
   comparisonTargets : List CommitId
   /-- Reviews: each reviewer's rankings and verdicts. -/
   reviews : List EmbeddedReview

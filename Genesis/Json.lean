@@ -116,6 +116,7 @@ instance : ToJson SignedCommit where
     ("prId", toJson c.prId),
     ("author", toJson c.author),
     ("mergeEpoch", toJson c.mergeEpoch),
+    ("prCreatedAt", toJson c.prCreatedAt),
     ("comparisonTargets", toJson c.comparisonTargets),
     ("reviews", toJson c.reviews),
     ("metaReviews", toJson c.metaReviews),
@@ -128,11 +129,13 @@ instance : FromJson SignedCommit where
     let prId ← j.getObjValAs? Nat "prId"
     let author ← j.getObjValAs? String "author"
     let mergeEpoch ← j.getObjValAs? Nat "mergeEpoch"
+    -- Backward compat: legacy commits without prCreatedAt use mergeEpoch
+    let prCreatedAt ← (j.getObjValAs? Nat "prCreatedAt") <|> pure mergeEpoch
     let comparisonTargets ← j.getObjValAs? (List String) "comparisonTargets"
     let reviews ← j.getObjValAs? (List EmbeddedReview) "reviews"
     let metaReviews ← j.getObjValAs? (List MetaReview) "metaReviews"
     let founderOverride ← j.getObjValAs? Bool "founderOverride"
-    return { id, prId, author, mergeEpoch, comparisonTargets, reviews, metaReviews, founderOverride }
+    return { id, prId, author, mergeEpoch, prCreatedAt, comparisonTargets, reviews, metaReviews, founderOverride }
 
 -- ============================================================================
 -- Contributor

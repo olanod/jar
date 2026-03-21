@@ -49,7 +49,9 @@ jobs:
           git fetch origin genesis-state
           CACHE=$(git show origin/genesis-state:genesis.json)
           PR_ID=${{ github.event.pull_request.number }}
-          echo "{\"prId\":${PR_ID},\"indices\":${CACHE}}" | \
+          PR_CREATED_AT="${{ github.event.pull_request.created_at }}"
+          PR_CREATED_EPOCH=$(date -d "$PR_CREATED_AT" +%s)
+          echo "{\"prId\":${PR_ID},\"prCreatedAt\":${PR_CREATED_EPOCH},\"indices\":${CACHE}}" | \
             .lake/build/bin/genesis_select_targets > /tmp/targets.json
 
       - name: Post review template

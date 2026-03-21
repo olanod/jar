@@ -1,7 +1,7 @@
 /-
   genesis_select_targets CLI
 
-  Input:  {"prId": 42, "indices": [...]}
+  Input:  {"prId": 42, "prCreatedAt": 1774000000, "indices": [...]}
   Output: {"targets": ["abc123", ...]}
 -/
 
@@ -12,7 +12,9 @@ open Genesis.Cli
 
 def main : IO UInt32 := runJsonPipe fun j => do
   let prId ← IO.ofExcept (j.getObjValAs? Nat "prId")
+  let prCreatedAt ← IO.ofExcept (j.getObjValAs? Nat "prCreatedAt")
   let indices ← IO.ofExcept (j.getObjValAs? (List CommitIndex) "indices")
-  let pastIds := indices.map (·.commitHash)
-  let targets := selectComparisonTargets pastIds (min rankingSize pastIds.length) prId
+  let scoredCommits := indices.map (fun idx => (idx.commitHash, idx.epoch))
+  let eligible := scoredCommits.filter (fun (_, epoch) => epoch < prCreatedAt)
+  let targets := selectComparisonTargets scoredCommits (min rankingSize eligible.length) prId prCreatedAt
   return Json.mkObj [("targets", toJson targets)]

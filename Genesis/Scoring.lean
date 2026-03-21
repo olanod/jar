@@ -65,11 +65,15 @@ def prIdHash (prId : PRId) : Nat :=
   (prId * a) % (2^32)
 
 /-- Select comparison targets from past scored commits.
-    Divides into buckets, picks one per bucket using hash(prId). -/
+    Only commits merged before prCreatedAt are eligible.
+    Divides eligible commits into buckets, picks one per bucket using hash(prId). -/
 def selectComparisonTargets
-    (pastCommitIds : List CommitId)
+    (scoredCommits : List (CommitId × Epoch))
     (numTargets : Nat)
-    (prId : PRId) : List CommitId :=
+    (prId : PRId)
+    (prCreatedAt : Epoch) : List CommitId :=
+  let eligible := scoredCommits.filter (fun (_, epoch) => epoch < prCreatedAt)
+  let pastCommitIds := eligible.map (·.1)
   let n := pastCommitIds.length
   if n == 0 then []
   else
@@ -88,11 +92,12 @@ def selectComparisonTargets
 /-- Validate comparison targets in a signed commit. -/
 def validateComparisonTargets
     (commit : SignedCommit)
-    (pastCommitIds : List CommitId) : Bool :=
-  if pastCommitIds.isEmpty then commit.comparisonTargets.isEmpty
+    (scoredCommits : List (CommitId × Epoch)) : Bool :=
+  let eligible := scoredCommits.filter (fun (_, epoch) => epoch < commit.prCreatedAt)
+  if eligible.isEmpty then commit.comparisonTargets.isEmpty
   else
-    let expected := selectComparisonTargets pastCommitIds
-      (min rankingSize pastCommitIds.length) commit.prId
+    let expected := selectComparisonTargets scoredCommits
+      (min rankingSize eligible.length) commit.prId commit.prCreatedAt
     commit.comparisonTargets == expected
 
 /-! ### Meta-Review Filtering
@@ -237,12 +242,12 @@ def deriveScore
 def commitScore
     (ep : EvalParams)
     (commit : SignedCommit)
-    (pastCommitIds : List CommitId)
+    (scoredCommits : List (CommitId × Epoch))
     (getWeight : ContributorId → Nat)
     : CommitScore :=
   let zeroScore : CommitScore := { difficulty := 0, novelty := 0, designQuality := 0 }
-  -- Step 1: Validate comparison targets
-  if !validateComparisonTargets commit pastCommitIds then
+  -- Step 1: Validate comparison targets (anchored to prCreatedAt)
+  if !validateComparisonTargets commit scoredCommits then
     zeroScore
   else
     -- Step 2: Filter reviews by meta-review
