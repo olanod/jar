@@ -87,36 +87,10 @@ jobs:
           HEAD_SHA=$(echo "$PR_JSON" | jq -r '.headRefOid')
           AUTHOR=$(echo "$PR_JSON" | jq -r '.author.login')
 
-          # Collect all /genesis-review comments
-          COMMENTS=$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.body | startswith("/genesis-review"))')
-
-          # Parse reviews from comments (collect last review per author)
-          REVIEWS="[]"
-          while IFS= read -r comment; do
-            [ -z "$comment" ] && continue
-            BODY=$(echo "$comment" | jq -r '.body')
-            REVIEWER=$(echo "$comment" | jq -r '.author.login')
-
-            DIFFICULTY=$(echo "$BODY" | grep -i '^difficulty:' | sed 's/^difficulty:\s*//' | tr -d ' ')
-            NOVELTY=$(echo "$BODY" | grep -i '^novelty:' | sed 's/^novelty:\s*//' | tr -d ' ')
-            DESIGN=$(echo "$BODY" | grep -i '^design:' | sed 's/^design:\s*//' | tr -d ' ')
-            VERDICT=$(echo "$BODY" | grep -i '^verdict:' | sed 's/^verdict:\s*//' | tr -d ' ')
-
-            if [ -n "$DIFFICULTY" ] && [ -n "$NOVELTY" ] && [ -n "$DESIGN" ] && [ -n "$VERDICT" ]; then
-              to_json_array() { echo "$1" | tr ',' '\n' | jq -R . | jq -s .; }
-              REVIEW=$(jq -n \
-                --arg reviewer "$REVIEWER" \
-                --argjson diff "$(to_json_array "$DIFFICULTY")" \
-                --argjson nov "$(to_json_array "$NOVELTY")" \
-                --argjson des "$(to_json_array "$DESIGN")" \
-                --arg verdict "$VERDICT" \
-                '{reviewer: $reviewer, difficultyRanking: $diff, noveltyRanking: $nov, designQualityRanking: $des, verdict: $verdict}')
-
-              # Replace existing review from same reviewer, or add new
-              REVIEWS=$(echo "$REVIEWS" | jq --arg r "$REVIEWER" --argjson rev "$REVIEW" \
-                '[.[] | select(.reviewer != $r)] + [$rev]')
-            fi
-          done <<< "$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.body | startswith("/genesis-review"))')"
+          # Collect reviews + meta-reviews (reactions on review comments)
+          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER")
+          REVIEWS=$(echo "$COLLECTED" | jq '.reviews')
+          META_REVIEWS=$(echo "$COLLECTED" | jq '.metaReviews')
 
           # Get comparison targets
           TARGETS_JSON=$(echo "{\"prId\":${PR_NUMBER},\"indices\":${CACHE}}" | \
@@ -137,10 +111,11 @@ jobs:
             --argjson mergeEpoch "$EPOCH" \
             --argjson targets "$TARGETS" \
             --argjson reviews "$REVIEWS" \
+            --argjson metaReviews "$META_REVIEWS" \
             --argjson founderOverride "$FOUNDER_OVERRIDE" \
             '{id: $id, prId: $prId, author: $author, mergeEpoch: $mergeEpoch,
               comparisonTargets: $targets, reviews: $reviews,
-              metaReviews: [], founderOverride: $founderOverride}')
+              metaReviews: $metaReviews, founderOverride: $founderOverride}')
 
           # Evaluate
           INPUT=$(jq -n \

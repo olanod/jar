@@ -52,40 +52,13 @@ jobs:
           PR_NUMBER=${{ github.event.issue.number }}
           CACHE=$(cat .github/cache/genesis.json)
 
-          to_json_array() { echo "$1" | tr ',' '\n' | jq -R . | jq -s .; }
-
-          parse_review() {
-            local BODY="$1"
-            local AUTHOR="$2"
-            local DIFF=$(echo "$BODY" | grep -i '^difficulty:' | sed 's/^difficulty:\s*//' | tr -d ' ')
-            local NOV=$(echo "$BODY" | grep -i '^novelty:' | sed 's/^novelty:\s*//' | tr -d ' ')
-            local DES=$(echo "$BODY" | grep -i '^design:' | sed 's/^design:\s*//' | tr -d ' ')
-            local VERD=$(echo "$BODY" | grep -i '^verdict:' | sed 's/^verdict:\s*//' | tr -d ' ')
-            if [ -n "$DIFF" ] && [ -n "$NOV" ] && [ -n "$DES" ] && [ -n "$VERD" ]; then
-              jq -n \
-                --arg reviewer "$AUTHOR" \
-                --argjson diff "$(to_json_array "$DIFF")" \
-                --argjson nov "$(to_json_array "$NOV")" \
-                --argjson des "$(to_json_array "$DES")" \
-                --arg verdict "$VERD" \
-                '{reviewer: $reviewer, difficultyRanking: $diff, noveltyRanking: $nov, designQualityRanking: $des, verdict: $verdict}'
-            fi
-          }
-
-          # Scan ALL /genesis-review comments on this PR (last review per author wins)
-          REVIEWS="[]"
-          while IFS= read -r comment; do
-            [ -z "$comment" ] && continue
-            BODY=$(echo "$comment" | jq -r '.body')
-            REVIEWER=$(echo "$comment" | jq -r '.author.login')
-            REVIEW=$(parse_review "$BODY" "$REVIEWER")
-            if [ -n "$REVIEW" ]; then
-              REVIEWS=$(echo "$REVIEWS" | jq --arg r "$REVIEWER" --argjson rev "$REVIEW" \
-                '[.[] | select(.reviewer != $r)] + [$rev]')
-            fi
-          done <<< "$(gh pr view "$PR_NUMBER" --json comments --jq '.comments[] | select(.body | startswith("/genesis-review"))')"
+          # Collect reviews + meta-reviews (reactions on review comments)
+          COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER")
+          REVIEWS=$(echo "$COLLECTED" | jq '.reviews')
+          META_REVIEWS=$(echo "$COLLECTED" | jq '.metaReviews')
 
           REVIEW_COUNT=$(echo "$REVIEWS" | jq 'length')
+          META_COUNT=$(echo "$META_REVIEWS" | jq 'length')
           if [ "$REVIEW_COUNT" -eq 0 ]; then
             gh pr comment "$PR_NUMBER" --body "**JAR Bot:** Could not parse any reviews. Please check the format."
             exit 0
@@ -94,8 +67,9 @@ jobs:
           # Check merge readiness
           INPUT=$(jq -n \
             --argjson reviews "$REVIEWS" \
+            --argjson metaReviews "$META_REVIEWS" \
             --argjson indices "$CACHE" \
-            '{reviews: $reviews, metaReviews: [], indices: $indices}')
+            '{reviews: $reviews, metaReviews: $metaReviews, indices: $indices}')
 
           RESULT=$(echo "$INPUT" | .lake/build/bin/genesis_check_merge)
 
@@ -105,7 +79,7 @@ jobs:
 
           if [ "$READY" = "true" ]; then
             gh pr comment "$PR_NUMBER" --body \
-              "**JAR Bot:** Review recorded from @${COMMENT_AUTHOR} (${REVIEW_COUNT} total reviews).
+              "**JAR Bot:** Review recorded from @${COMMENT_AUTHOR} (${REVIEW_COUNT} reviews, ${META_COUNT} meta-reviews).
               Merge weight: ${MERGE_W}/${TOTAL_W}. Quorum reached — merging."
 
             # Trigger the merge workflow
@@ -113,6 +87,6 @@ jobs:
               -f pr_number="$PR_NUMBER"
           else
             gh pr comment "$PR_NUMBER" --body \
-              "**JAR Bot:** Review recorded from @${COMMENT_AUTHOR} (${REVIEW_COUNT} total reviews).
+              "**JAR Bot:** Review recorded from @${COMMENT_AUTHOR} (${REVIEW_COUNT} reviews, ${META_COUNT} meta-reviews).
               Merge weight: ${MERGE_W}/${TOTAL_W} (need >50%)."
           fi
