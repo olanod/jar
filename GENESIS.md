@@ -124,7 +124,7 @@ Each commit is evaluated by the spec version at the **previous** signed commit. 
 
 ## Current Status
 
-The protocol is live. The genesis commit is [`8f124a2`](https://github.com/jarchain/jar/commit/8f124a276a81c4d429d2c2f6ef15823f4fb5c59d). Every PR merged after this point is scored and recorded.
+The protocol is live. The genesis commit is [`4cc102a`](https://github.com/jarchain/jar/commit/4cc102a03d715c6bb2b119d8a3a1c49e4694751f). Every PR merged after this point is scored and recorded.
 
 Current parameters:
 - Ranking size: 7 comparison targets per review
@@ -134,3 +134,17 @@ Current parameters:
 - Design quality weight: 3x
 
 These can be changed by future PRs — which will themselves be scored by the current parameters.
+
+### Centralization and the path forward
+
+The current version is centralized. The source of truth is GitHub — PRs, merge commits, review comments, and the bot running in GitHub Actions. This is unavoidable at bootstrap. Every blockchain starts centralized: Bitcoin had Satoshi's client, Ethereum had the foundation's genesis block. The question is not whether you start centralized, but whether the system is designed to move beyond it.
+
+The genesis protocol is designed for exactly this transition. The scoring spec is written in Lean 4 — a formal language with machine-checked correctness. The full history is self-contained in git merge commit trailers (`Genesis-Commit` and `Genesis-Index`), replayable by anyone without GitHub. The cache is a convenience, not an authority.
+
+### Self-bootstrapping
+
+The protocol is self-bootstrapping: **those who build JAR receive the genesis allocation of JAR.**
+
+Contributors earn weight by writing the protocol specification, the consensus implementation, the PVM, the cryptographic primitives, the test infrastructure — the actual substance of the blockchain. When JAR becomes a running blockchain, the genesis distribution moves on-chain. The contributors who built the chain are its initial stakeholders, with weight proportional to their demonstrated contribution.
+
+This is not a token that exists separately from the protocol it governs. The token IS the development history. The weight IS the track record of intelligence applied to the codebase. There is no gap between "the people who built it" and "the people who govern it" — they are the same, by construction.
