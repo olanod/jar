@@ -210,7 +210,7 @@ fn run_disputes_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/disputes";
+const DIR: &str = "../../../spec/tests/vectors/disputes";
 
 // Generate test functions for all dispute test vectors
 macro_rules! dispute_test {

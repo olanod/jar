@@ -381,7 +381,7 @@ fn run_reports_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/reports";
+const DIR: &str = "../../../spec/tests/vectors/reports";
 
 macro_rules! report_test {
     ($name:ident, $stem:expr) => {

@@ -92,7 +92,7 @@ fn run_authorizations_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/authorizations";
+const DIR: &str = "../../../spec/tests/vectors/authorizations";
 
 #[test]
 fn test_stf_authorizations_1() {

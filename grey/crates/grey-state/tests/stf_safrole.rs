@@ -370,7 +370,7 @@ fn run_safrole_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/safrole";
+const DIR: &str = "../../../spec/tests/vectors/safrole";
 
 macro_rules! safrole_test {
     ($name:ident, $stem:expr) => {

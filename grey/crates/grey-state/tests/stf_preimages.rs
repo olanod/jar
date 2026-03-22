@@ -156,7 +156,7 @@ fn run_preimages_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/preimages";
+const DIR: &str = "../../../spec/tests/vectors/preimages";
 
 macro_rules! preimage_test {
     ($name:ident, $stem:expr) => {

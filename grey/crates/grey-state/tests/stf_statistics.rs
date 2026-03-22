@@ -183,7 +183,7 @@ fn run_statistics_test(dir: &str, stem: &str) {
     );
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/statistics";
+const DIR: &str = "../../../spec/tests/vectors/statistics";
 
 #[test]
 fn test_stf_statistics_empty_extrinsic() {

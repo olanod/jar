@@ -132,7 +132,7 @@ fn run_history_test(dir: &str, stem: &str) {
     );
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/history";
+const DIR: &str = "../../../spec/tests/vectors/history";
 
 #[test]
 fn test_stf_history_1() {

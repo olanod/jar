@@ -34,7 +34,7 @@ fn load_block_pre_state(path: &str) -> (Vec<([u8; 31], Vec<u8>)>, String) {
 #[test]
 fn test_deserialize_initial_state() {
     let (kvs, _) = load_block_pre_state(
-        "../../res/spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
+        "../../../spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
     );
     let config = Config::tiny();
 
@@ -67,7 +67,7 @@ fn test_deserialize_initial_state() {
 #[test]
 fn test_roundtrip_initial_state() {
     let (kvs, _) = load_block_pre_state(
-        "../../res/spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
+        "../../../spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
     );
     let config = Config::tiny();
 
@@ -109,7 +109,7 @@ fn test_roundtrip_initial_state() {
 #[test]
 fn test_state_root_matches_expected() {
     let (kvs, expected_root_hex) = load_block_pre_state(
-        "../../res/spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
+        "../../../spec/tests/vectors/blocks/fallback/block-00000001.input.gp072_tiny.json",
     );
 
     let expected_bytes = decode_hex(&expected_root_hex);

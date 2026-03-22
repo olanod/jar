@@ -16,7 +16,7 @@ use grey_types::config::Config;
 use grey_types::header::*;
 use grey_types::{BandersnatchPublicKey, BandersnatchSignature, Ed25519PublicKey};
 
-const BLOCKS_DIR: &str = "../../res/spec/tests/vectors/blocks";
+const BLOCKS_DIR: &str = "../../../spec/tests/vectors/blocks";
 
 // ---------------------------------------------------------------------------
 // JSON → Grey type parsers

@@ -132,7 +132,7 @@ fn run_assurances_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/assurances";
+const DIR: &str = "../../../spec/tests/vectors/assurances";
 
 #[test]
 fn test_assurances_no_assurances() {

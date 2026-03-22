@@ -341,7 +341,7 @@ fn run_accumulate_test(dir: &str, stem: &str) {
     }
 }
 
-const DIR: &str = "../../res/spec/tests/vectors/accumulate";
+const DIR: &str = "../../../spec/tests/vectors/accumulate";
 
 #[traced_test]
 #[test]
