@@ -74,9 +74,12 @@ def proveCircuit (circuit : Circuit) (witness : Witness) (seed : Int := 1234)
   while poly.size < targetSize do
     poly := poly.push 0
 
-  -- Create config and prove
+  -- Create config and prove. Bind public inputs to Fiat-Shamir transcript.
   let config := mkProverConfig targetLogSize
-  let ts := mkTranscript seed
+  let mut ts := mkTranscript seed
+  -- Absorb public inputs so the proof is tied to these specific inputs.
+  for pi in inst.publicInputs do
+    ts := absorbGF32 ts pi
   let (proof, _) := prove config poly ts
 
   some {
@@ -93,7 +96,10 @@ def verifyProof (proof : WIProof) (expectedPublicInputs : Array UInt32)
   if proof.publicInputs != expectedPublicInputs then return false
 
   let config := mkVerifierConfig proof.logSize
-  let ts := mkTranscript seed
+  let mut ts := mkTranscript seed
+  -- Must absorb the same public inputs the prover did.
+  for pi in expectedPublicInputs do
+    ts := absorbGF32 ts pi
   let (valid, _) := verify config proof.commitmentProof ts
   valid
 
@@ -121,7 +127,9 @@ def proveFromBlock (block : EncodedBlock) (poly : Array GF32)
   let config := mkProverConfig logSize
 
   -- Reuse DA block as initial witness — ZERO re-encoding cost
-  let ts := mkTranscript seed
+  let mut ts := mkTranscript seed
+  for pi in inst.publicInputs do
+    ts := absorbGF32 ts pi
   let (proof, _) := proveFromDABlock config block paddedPoly ts
 
   some {

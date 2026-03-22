@@ -89,6 +89,11 @@ def proveCore (config : ProverConfig) (poly : Array GF32)
     let (s0, s1, s2) := computeSumcheckCoefficients currentPoly
     sumcheckTranscript := sumcheckTranscript.push (s0, s1, s2)
 
+    -- Absorb round polynomial into Fiat-Shamir before squeezing challenge.
+    ts := absorbGF128 ts s0
+    ts := absorbGF128 ts s1
+    ts := absorbGF128 ts s2
+
     let (ri, ts') := challengeGF128 ts
     ts := ts'
 

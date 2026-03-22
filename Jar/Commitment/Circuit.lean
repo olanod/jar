@@ -194,7 +194,8 @@ def checkField (c : Constraint) (witness : Array GF32) : GF32 :=
     let mut reconstructed : GF32 := 0
     for i in [:bits.size] do
       let bitVal := getWire witness (bits[i]!)
-      let power := gf32Pow 2 i
+      -- Integer 2^i via bit shift, NOT field x^i via gf32Pow.
+      let power : GF32 := (1 : UInt32) <<< i.toUInt32
       reconstructed := gf32Add reconstructed (gf32Mul bitVal power)
     result := gf32Add result (gf32Add (getWire witness wire) reconstructed)
     result

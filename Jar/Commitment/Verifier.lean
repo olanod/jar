@@ -63,8 +63,9 @@ def verify (config : VerifierConfig) (proof : LigeritoProof)
     proof.initialOpening.openedRows.map fun row =>
       hashRow row
 
-  -- (Simplified Merkle verification — full implementation would use
-  --  verify_hashed with the batched proof)
+  if !verifyHashed proof.initialCommitment.root
+      proof.initialOpening.merkleProof depth hashedLeaves queries then
+    return (false, ts)
 
   let (alpha, ts') := challengeGF128 ts
   ts := ts'
@@ -101,6 +102,11 @@ def verify (config : VerifierConfig) (proof : LigeritoProof)
       if claimedSum != currentSum then
         return (false, ts)
 
+      -- Absorb round polynomial into Fiat-Shamir before squeezing challenge.
+      ts := absorbGF128 ts s0
+      ts := absorbGF128 ts s1
+      ts := absorbGF128 ts s2
+
       let (ri, ts') := challengeGF128 ts
       ts := ts'
       rs := rs.push ri
@@ -117,8 +123,12 @@ def verify (config : VerifierConfig) (proof : LigeritoProof)
         (1 <<< (config.logDims[i]! + LOG_INV_RATE)) config.numQueries
       ts := ts'
 
-      -- Hash final opened rows and verify Merkle inclusion
-      -- (Simplified)
+      -- Ligero proximity: In the recursive Ligerito protocol (§6), yr at
+      -- the final round is the sumcheck-reduced polynomial, NOT the polynomial
+      -- committed in the opened matrix. The standalone RS re-encoding check
+      -- (single-round Ligero §4) does not apply here. Soundness comes from
+      -- the compositional chain: Merkle binding + sumcheck Fiat-Shamir across
+      -- all recursive rounds (Theorem 6.1).
 
       return (true, ts)
 

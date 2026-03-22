@@ -115,7 +115,9 @@ def evalConstraint (_cp : ConstraintPolynomial) (c : Constraint)
     let mut reconstructed : GF32 := 0
     for i in [:bits.size] do
       let bitVal := wp.evalAtHypercubePoint (bits[i]!).idx
-      let power := gf32Pow 2 i
+      -- Use integer 2^i (bit shift), NOT field x^i (gf32Pow 2 i).
+      -- In GF(2^32), gf32Pow 2 i = x^i which is NOT the integer 2^i.
+      let power : GF32 := (1 : UInt32) <<< i.toUInt32
       reconstructed := gf32Add reconstructed (gf32Mul bitVal power)
     let wireVal := wp.evalAtHypercubePoint wire.idx
     result := GF128.add result (embedGF32 (gf32Add wireVal reconstructed))
