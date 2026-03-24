@@ -25,29 +25,6 @@ jobs:
         with:
           workspaces: grey
 
-      - name: Build bench-ecrecover ELF (grey/javm target)
-        working-directory: grey/services/bench-ecrecover
-        run: |
-          cargo +nightly build --release --bin bench-ecrecover \
-            --target ../riscv64em-javm.json \
-            -Zbuild-std=core,alloc -Zjson-target-spec
-
-      - name: Build sample-service ELF
-        working-directory: grey/services/sample-service
-        run: |
-          cargo +nightly build --release \
-            --target ../riscv64em-javm.json \
-            -Zbuild-std=core -Zjson-target-spec
-
-      - name: Build bench-ecrecover ELF (polkavm target)
-        working-directory: grey/services/bench-ecrecover
-        run: |
-          RUSTFLAGS="-Zunstable-options -Cpanic=immediate-abort" \
-          RUSTC_BOOTSTRAP=1 CARGO_PROFILE_RELEASE_STRIP=false \
-          cargo +nightly build --release --lib \
-            --target ../riscv64emac-polkavm.json \
-            -Zbuild-std=core,alloc -Zjson-target-spec
-
       - name: Workspace tests (interpreter)
         working-directory: grey
         run: cargo +stable test --workspace
