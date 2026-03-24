@@ -1514,7 +1514,7 @@ impl Compiler {
                 }
             }
             Opcode::Add64 => {
-                self.emit_alu3_64(args, |a, d, s| { a.add_rr(d, s); });
+                self.emit_alu3_64_comm(args, true, |a, d, s| { a.add_rr(d, s); });
                 // reg_defs tracking handled by update_reg_defs() in main loop
             }
             Opcode::Sub64 => {
@@ -1533,23 +1533,11 @@ impl Compiler {
                 }
             }
             Opcode::Mul64 => {
-                if let Args::ThreeReg { ra, rb, rd } = args {
-
-                    let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    if *rd == *rb && *rd != *ra {
-                        self.asm.mov_rr(SCRATCH, b);
-                        self.asm.mov_rr(d, a);
-                        self.asm.imul_rr(d, SCRATCH);
-                    } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
-                        self.asm.imul_rr(d, b);
-                    }
-
-                }
+                self.emit_alu3_64_comm(args, true, |a, d, s| { a.imul_rr(d, s); });
             }
-            Opcode::And => { self.emit_alu3_64(args, |a, d, s| { a.and_rr(d, s); }); }
-            Opcode::Or => { self.emit_alu3_64(args, |a, d, s| { a.or_rr(d, s); }); }
-            Opcode::Xor => { self.emit_alu3_64(args, |a, d, s| { a.xor_rr(d, s); }); }
+            Opcode::And => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.and_rr(d, s); }); }
+            Opcode::Or => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.or_rr(d, s); }); }
+            Opcode::Xor => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.xor_rr(d, s); }); }
 
             // Division (32-bit and 64-bit)
             Opcode::DivU32 => { self.emit_div(args, false, false, true); }
@@ -1871,15 +1859,9 @@ impl Compiler {
         self.asm.test_rr(SCRATCH, SCRATCH);
         self.asm.jcc_label(Cc::E, self.panic_label);
 
-        // addr % 2 != 0 → panic (test bit 0)
-        self.asm.push(SCRATCH);
-        self.asm.and_ri(SCRATCH, 1);
-        self.asm.test_rr(SCRATCH, SCRATCH);
-        self.asm.pop(SCRATCH);
-        self.asm.jcc_label(Cc::NE, self.panic_label);
-
-        // idx = addr/2 - 1
-        self.asm.shr_ri64(SCRATCH, 1);
+        // idx = addr/2 - 1 (also checks alignment: bit 0 goes to CF via SHR)
+        self.asm.shr_ri64(SCRATCH, 1);  // CF = bit 0 (alignment)
+        self.asm.jcc_label(Cc::B, self.panic_label); // odd addr → panic (B = carry set)
         self.asm.sub_ri(SCRATCH, 1);
 
         // Inline djump resolution: idx is in SCRATCH (RDX).
@@ -1930,8 +1912,14 @@ impl Compiler {
             self.asm.jcc_label(cc, self.panic_label);
             return;
         }
-        self.asm.mov_ri64(SCRATCH, imm);
-        self.asm.cmp_rr(reg, SCRATCH);
+        // Use cmp_ri for small immediates (avoids mov_ri64 + cmp_rr)
+        let imm_i64 = imm as i64;
+        if imm_i64 >= i32::MIN as i64 && imm_i64 <= i32::MAX as i64 {
+            self.asm.cmp_ri(reg, imm_i64 as i32);
+        } else {
+            self.asm.mov_ri64(SCRATCH, imm);
+            self.asm.cmp_rr(reg, SCRATCH);
+        }
         let label = self.label_for_pc(target);
         self.asm.jcc_label(cc, label);
     }
@@ -1998,16 +1986,23 @@ impl Compiler {
 
 /// Three-register 64-bit ALU: rd = ra OP rb
     fn emit_alu3_64(&mut self, args: &Args, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
-        if let Args::ThreeReg { ra, rb, rd } = args {
+        self.emit_alu3_64_comm(args, false, op);
+    }
 
+    /// Three-register 64-bit ALU with optional commutativity optimization.
+    /// When `commutative` is true and rd == rb, emit `op(d, a)` directly
+    /// instead of saving/restoring via SCRATCH.
+    fn emit_alu3_64_comm(&mut self, args: &Args, commutative: bool, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
+        if let Args::ThreeReg { ra, rb, rd } = args {
             let d = REG_MAP[*rd];
             let a = REG_MAP[*ra];
             let b = REG_MAP[*rb];
             if *rd == *ra {
-                // d is already a, just apply op with b
                 op(&mut self.asm, d, b);
+            } else if *rd == *rb && commutative {
+                // Commutative: rd = rb OP ra = ra OP rb — just op(d, a)
+                op(&mut self.asm, d, a);
             } else if *rd == *rb {
-                // d is b — save b to SCRATCH before overwriting d
                 self.asm.mov_rr(SCRATCH, b);
                 self.asm.mov_rr(d, a);
                 op(&mut self.asm, d, SCRATCH);
@@ -2015,7 +2010,6 @@ impl Compiler {
                 self.asm.mov_rr(d, a);
                 op(&mut self.asm, d, b);
             }
-
         }
     }
 
