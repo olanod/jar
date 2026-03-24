@@ -891,39 +891,66 @@ impl Compiler {
             // === A.5.4: Two immediates (store_imm) ===
             Opcode::StoreImmU8 | Opcode::StoreImmU16 | Opcode::StoreImmU32 | Opcode::StoreImmU64 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
+                    // Reuse StoreImmInd logic: treat as register 0 with the address
+                    // replaced by a direct constant load into SCRATCH.
                     let addr = *imm_x as u32;
-                    let fn_addr = match opcode {
-                        Opcode::StoreImmU8 => self.helpers.mem_write_u8,
-                        Opcode::StoreImmU16 => self.helpers.mem_write_u16,
-                        Opcode::StoreImmU32 => self.helpers.mem_write_u32,
-                        Opcode::StoreImmU64 => self.helpers.mem_write_u64,
-                        _ => unreachable!(),
-                    };
-                    // addr in SCRATCH, value in a temp
-                    self.asm.mov_ri64(SCRATCH, addr as u64);
-                    // For the value, use a push-based approach
-                    let val = *imm_y;
-                    // We need val_reg - use a temp approach: push SCRATCH (addr), load val
-                    self.asm.push(SCRATCH); // save addr
-                    self.asm.mov_ri64(SCRATCH, val); // SCRATCH = value
-                    self.asm.push(SCRATCH); // push value
+                    self.asm.mov_ri32(SCRATCH, addr);
+                    let imm_val = *imm_y;
+                    let imm_i64 = imm_val as i64;
+                    let fits_i32 = imm_i64 >= i32::MIN as i64 && imm_i64 <= i32::MAX as i64;
 
-                    self.save_caller_saved();
-                    // Stack: [8 caller-saved (64)] [value (8)] [addr (8)]
-                    self.asm.mov_load64(Reg::RDX, Reg::RSP, 64); // value
-                    self.asm.mov_load64(Reg::RSI, Reg::RSP, 72); // addr
-                    self.emit_ctx_ptr(Reg::RDI);                 // ctx = R15 - CTX_OFFSET
-                    self.asm.mov_ri64(Reg::RAX, fn_addr);
-                    self.asm.call_reg(Reg::RAX);
-                    self.restore_caller_saved();
-                    self.asm.pop(SCRATCH);
-                    self.asm.pop(SCRATCH);
-                    // fault check
-                    self.asm.push(SCRATCH);
-                    self.asm.mov_load32(SCRATCH, CTX, CTX_EXIT_REASON);
-                    self.asm.cmp_ri(SCRATCH, 0);
-                    self.asm.pop(SCRATCH);
-                    self.asm.jcc_label(Cc::NE, self.exit_label);
+                    #[cfg(feature = "signals")]
+                    {
+                        self.trap_entries.push((self.asm.offset() as u32, pc));
+                        match opcode {
+                            Opcode::StoreImmU8 => {
+                                self.asm.mov_store8_sib_imm(CTX, SCRATCH, imm_val as u8);
+                            }
+                            Opcode::StoreImmU16 => {
+                                self.asm.mov_store16_sib_imm(CTX, SCRATCH, imm_val as u16);
+                            }
+                            Opcode::StoreImmU32 => {
+                                self.asm.mov_store32_sib_imm(CTX, SCRATCH, imm_val as i32);
+                            }
+                            Opcode::StoreImmU64 if fits_i32 => {
+                                self.asm.mov_store64_sib_imm(CTX, SCRATCH, imm_val as i32);
+                            }
+                            Opcode::StoreImmU64 => {
+                                self.asm.push(Reg::RCX);
+                                self.asm.mov_ri64(Reg::RCX, imm_val);
+                                self.asm.mov_store64_sib(CTX, SCRATCH, Reg::RCX);
+                                self.asm.pop(Reg::RCX);
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    #[cfg(not(feature = "signals"))]
+                    {
+                        let fn_addr = match opcode {
+                            Opcode::StoreImmU8 => self.helpers.mem_write_u8,
+                            Opcode::StoreImmU16 => self.helpers.mem_write_u16,
+                            Opcode::StoreImmU32 => self.helpers.mem_write_u32,
+                            Opcode::StoreImmU64 => self.helpers.mem_write_u64,
+                            _ => unreachable!(),
+                        };
+                        self.asm.push(SCRATCH);
+                        self.asm.mov_ri64(SCRATCH, imm_val);
+                        self.asm.push(SCRATCH);
+                        self.save_caller_saved();
+                        self.asm.mov_load64(Reg::RDX, Reg::RSP, 64);
+                        self.asm.mov_load64(Reg::RSI, Reg::RSP, 72);
+                        self.emit_ctx_ptr(Reg::RDI);
+                        self.asm.mov_ri64(Reg::RAX, fn_addr);
+                        self.asm.call_reg(Reg::RAX);
+                        self.restore_caller_saved();
+                        self.asm.pop(SCRATCH);
+                        self.asm.pop(SCRATCH);
+                        self.asm.push(SCRATCH);
+                        self.asm.mov_load32(SCRATCH, CTX, CTX_EXIT_REASON);
+                        self.asm.cmp_ri(SCRATCH, 0);
+                        self.asm.pop(SCRATCH);
+                        self.asm.jcc_label(Cc::NE, self.exit_label);
+                    }
                 }
             }
 
