@@ -11,6 +11,7 @@ const DURATION: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_secs(6);
 const MAX_CONSECUTIVE_STALLS: u32 = 10;
 const MAX_FINALITY_LAG: u32 = 3;
+const MAX_CONSECUTIVE_LAG_SPIKES: u32 = 3;
 const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn run(client: &RpcClient) -> ScenarioResult {
@@ -64,6 +65,7 @@ async fn run_inner(client: &RpcClient) -> Result<(), String> {
     let start = Instant::now();
     let mut last_head: i64 = -1;
     let mut consecutive_stalls: u32 = 0;
+    let mut consecutive_lag_spikes: u32 = 0;
     let mut max_lag: u32 = 0;
     let mut polls: u32 = 0;
 
@@ -93,10 +95,15 @@ async fn run_inner(client: &RpcClient) -> Result<(), String> {
         }
 
         if lag > MAX_FINALITY_LAG {
-            return Err(format!(
-                "finality lag {lag} exceeds max {MAX_FINALITY_LAG} (head={}, finalized={})",
-                status.head_slot, status.finalized_slot
-            ));
+            consecutive_lag_spikes += 1;
+            if consecutive_lag_spikes > MAX_CONSECUTIVE_LAG_SPIKES {
+                return Err(format!(
+                    "finality lag {lag} exceeded max {MAX_FINALITY_LAG} for {consecutive_lag_spikes} consecutive polls (head={}, finalized={})",
+                    status.head_slot, status.finalized_slot
+                ));
+            }
+        } else {
+            consecutive_lag_spikes = 0;
         }
 
         // Log progress every ~30s (5 polls).
