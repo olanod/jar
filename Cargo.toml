@@ -27,6 +27,8 @@ exclude = [
     "grey/services/pixels-service",
     "grey/services/pixels-authorizer",
     "grey/services/bench-ecrecover",
+    "spec/crypto-ffi",
+    "spec/fuzz",
 ]
 
 [workspace.package]
