@@ -56,6 +56,12 @@ jobs:
           git show origin/genesis-state:genesis.json > /tmp/genesis_cache.json
           git show origin/genesis-state:ranking.json 2>/dev/null > /tmp/genesis_ranking.json || echo '{}' > /tmp/genesis_ranking.json
 
+          # Verify cache is not stale
+          if ! bash tools/genesis-check-cache.sh /tmp/genesis_cache.json; then
+            gh pr comment "$PR_NUMBER" --body "**JAR Bot:** Genesis cache is stale — cannot process review. A prior merge may have failed to update the cache."
+            exit 1
+          fi
+
           # Get PR head SHA and created_at for target anchoring
           PR_JSON=$(gh pr view "$PR_NUMBER" --json headRefOid,createdAt)
           HEAD_SHA=$(echo "$PR_JSON" | jq -r '.headRefOid')
@@ -84,12 +90,22 @@ jobs:
           COLLECTED=$(bash tools/genesis-collect-reviews.sh "$PR_NUMBER" "$HEAD_SHA" "$TARGETS")
           REVIEWS=$(echo "$COLLECTED" | jq '.reviews')
           META_REVIEWS=$(echo "$COLLECTED" | jq '.metaReviews')
+          COLLECT_WARNINGS=$(echo "$COLLECTED" | jq -r '.warnings[]' 2>/dev/null || true)
 
           REVIEW_COUNT=$(echo "$REVIEWS" | jq 'length')
           META_COUNT=$(echo "$META_REVIEWS" | jq 'length')
           if [ "$REVIEW_COUNT" -eq 0 ]; then
             gh pr comment "$PR_NUMBER" --body "**JAR Bot:** Could not parse any reviews. Please check the format."
             exit 0
+          fi
+
+          # Surface collection warnings
+          if [ -n "$COLLECT_WARNINGS" ]; then
+            WARNING_BODY=$(echo "$COLLECT_WARNINGS" | sed 's/^/- /')
+            gh pr comment "$PR_NUMBER" --body "**JAR Bot:** Review warnings:
+          ${WARNING_BODY}
+
+          The review was recorded but these issues may affect scoring."
           fi
 
           # Check merge readiness
