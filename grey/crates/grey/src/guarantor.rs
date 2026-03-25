@@ -21,6 +21,7 @@ use grey_types::{Ed25519Signature, Hash};
 use std::collections::{BTreeMap, HashSet};
 
 /// Tracks pending guarantees and chunks for availability.
+#[derive(Default)]
 pub struct GuarantorState {
     /// Guarantees we've produced, pending inclusion in a block.
     pub pending_guarantees: Vec<Guarantee>,
@@ -32,6 +33,7 @@ pub struct GuarantorState {
 }
 
 impl GuarantorState {
+    /// Creates a new, empty `GuarantorState`.
     pub fn new() -> Self {
         Self {
             pending_guarantees: Vec::new(),
