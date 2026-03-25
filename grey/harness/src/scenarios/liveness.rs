@@ -10,12 +10,13 @@ use crate::scenarios::ScenarioResult;
 const DURATION: Duration = Duration::from_secs(300);
 const POLL_INTERVAL: Duration = Duration::from_secs(6);
 const MAX_CONSECUTIVE_STALLS: u32 = 10;
-const MAX_FINALITY_LAG: u32 = 5; // relaxed from 3; CI runners see lag 4 under load
+const MAX_FINALITY_LAG: u32 = 3;
+const SETTLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn run(client: &RpcClient) -> ScenarioResult {
     let start = Instant::now();
 
-    let result = run_inner(client, start).await;
+    let result = run_inner(client).await;
 
     match result {
         Ok(()) => ScenarioResult {
@@ -33,7 +34,34 @@ pub async fn run(client: &RpcClient) -> ScenarioResult {
     }
 }
 
-async fn run_inner(client: &RpcClient, start: Instant) -> Result<(), String> {
+async fn run_inner(client: &RpcClient) -> Result<(), String> {
+    // Wait for finality to settle after prior scenarios (pixel submissions
+    // can leave a large finality backlog).
+    let settle_deadline = Instant::now() + SETTLE_TIMEOUT;
+    loop {
+        let status = client
+            .get_status()
+            .await
+            .map_err(|e| format!("RPC error: {e}"))?;
+        let lag = status.head_slot.saturating_sub(status.finalized_slot);
+        if lag <= MAX_FINALITY_LAG {
+            info!(
+                "finality settled (head={}, finalized={}, lag={lag})",
+                status.head_slot, status.finalized_slot
+            );
+            break;
+        }
+        if Instant::now() > settle_deadline {
+            return Err(format!(
+                "finality did not settle within {:?} (head={}, finalized={}, lag={lag})",
+                SETTLE_TIMEOUT, status.head_slot, status.finalized_slot
+            ));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    // Reset timer — monitoring starts after settling.
+    let start = Instant::now();
     let mut last_head: i64 = -1;
     let mut consecutive_stalls: u32 = 0;
     let mut max_lag: u32 = 0;
