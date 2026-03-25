@@ -176,13 +176,32 @@ verdict: merge
 
 Rank all comparison targets + `currentPR` from best to worst on each dimension. Use short commit hashes (8 chars) from the bot's comment. React with 👍/👎 on other reviewers' `/review` comments to meta-review.
 
-### Verifying
+### Tooling
 
-Anyone can independently verify the entire scoring history:
+Genesis tooling is a Rust binary (`jar-genesis`) that replaces the previous bash scripts. It handles review collection, replay verification, cache management, and the full merge workflow.
 
 ```bash
-lake build genesis_evaluate genesis_validate
-bash tools/genesis-replay.sh --verify        # check trailers are consistent
-bash tools/genesis-replay.sh --verify-cache  # check cache matches git history
-bash tools/genesis-replay.sh --rebuild       # rebuild cache from scratch
+# Build (requires Lean tools built first: cd spec && lake build genesis_*)
+cargo build -p jar-genesis
+
+# Verify scoring history
+cargo run -p jar-genesis -- replay --mode verify        # check trailers are consistent
+cargo run -p jar-genesis -- replay --mode verify-cache  # check cache matches git history
+cargo run -p jar-genesis -- replay --mode rebuild       # rebuild cache from scratch
+
+# Check cache staleness
+cargo run -p jar-genesis -- check-cache <genesis.json>
+
+# Collect reviews from a PR
+cargo run -p jar-genesis -- collect-reviews --pr <N> --head-sha <SHA> --targets '<JSON>'
 ```
+
+The three GitHub Actions workflows (`genesis-pr-opened.yml`, `genesis-review.yml`, `genesis-merge.yml`) delegate to `jar-genesis` subcommands:
+
+```bash
+jar-genesis workflow pr-opened --pr <N> --created-at <ISO8601>
+jar-genesis workflow review --pr <N> --comment-author <user> --comment-body <text>
+jar-genesis workflow merge --pr <N> [--founder-override]
+```
+
+Founder merge override is via `gh workflow run genesis-merge.yml -f pr_number=N -f founder_override=true`.
