@@ -2016,7 +2016,7 @@ fn smod_i64(a: i64, b: i64) -> i64 {
 /// Compact bitset: 1 bit per code byte, stored as Vec<u64>.
 /// 64x more cache-friendly than Vec<bool> for the compilation hot loop.
 pub struct BitSet {
-    words: Vec<u64>,
+    pub words: Vec<u64>,
 }
 
 impl BitSet {
@@ -2035,6 +2035,43 @@ impl BitSet {
     #[inline(always)]
     pub fn get(&self, i: usize) -> bool {
         (self.words[i / 64] >> (i % 64)) & 1 != 0
+    }
+
+    /// Build a rank index for O(1) rank queries.
+    /// rank_index[i] = number of set bits in words[0..i] (prefix popcount sum).
+    pub fn build_rank_index(&self) -> Vec<u32> {
+        let mut idx = Vec::with_capacity(self.words.len());
+        let mut sum = 0u32;
+        for &w in &self.words {
+            idx.push(sum);
+            sum += w.count_ones();
+        }
+        idx
+    }
+
+    /// Count set bits before position `pos` using the pre-built rank index.
+    /// This is the rank(pos) operation: number of 1-bits at positions 0..pos.
+    #[inline(always)]
+    pub fn rank(&self, rank_index: &[u32], pos: usize) -> usize {
+        let word_idx = pos / 64;
+        let bit_idx = pos % 64;
+        let prefix = rank_index[word_idx] as usize;
+        let mask = if bit_idx == 0 { 0 } else { (1u64 << bit_idx) - 1 };
+        prefix + (self.words[word_idx] & mask).count_ones() as usize
+    }
+
+    /// Collect all set bit positions into a Vec.
+    pub fn collect_set_positions(&self) -> Vec<u32> {
+        let mut positions = Vec::new();
+        for (word_idx, &word) in self.words.iter().enumerate() {
+            let mut bits = word;
+            while bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                positions.push((word_idx * 64 + bit) as u32);
+                bits &= bits - 1;
+            }
+        }
+        positions
     }
 }
 

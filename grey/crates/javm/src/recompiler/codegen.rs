@@ -149,10 +149,15 @@ enum RegDef {
 /// PVM-to-x86-64 compiler.
 pub struct Compiler {
     pub asm: Assembler,
-    /// PVM PC → native code label (Label(0) = invalid/unset).
-    block_labels: Vec<Label>,
-    /// PCs that have labels assigned (for fast dispatch table construction).
-    labeled_pcs: Vec<u32>,
+    /// Pre-created labels for gas block starts, indexed by gas_block_index.
+    /// Replaces the 448KB dense block_labels Vec with a compact ~80KB structure.
+    gas_block_labels: Vec<Label>,
+    /// Sorted PCs of gas block starts (for dispatch table construction).
+    gas_block_pcs: Vec<u32>,
+    /// Rank index for O(1) PC → gas_block_index lookup.
+    gas_rank_index: Vec<u32>,
+    /// The gas_starts BitSet (borrowed from compile, stored for rank queries).
+    gas_starts_words: Vec<u64>,
     /// Label for the exit sequence.
     exit_label: Label,
     /// Label for the shared out-of-gas exit (sets EXIT_OOG + jumps to exit).
@@ -184,12 +189,6 @@ pub struct Compiler {
     trap_entries: Vec<(u32, u32)>,
 }
 
-/// Sentinel label meaning "no label assigned for this PC".
-/// Label(0) is reserved (index 0 in the assembler's label table) so that
-/// block_labels can use zero-initialized memory (OS-provided zeroed pages
-/// via mmap/calloc are much faster than explicit memset with 0xFF).
-const NO_LABEL: Label = Label(0);
-
 impl Compiler {
     pub fn new(
         bitmask: &[u8],
@@ -209,16 +208,18 @@ impl Compiler {
         } else {
             Assembler::with_capacity(estimated_native, estimated_labels)
         };
-        // Reserve label 0 as the NO_LABEL sentinel.
-        let _reserved = asm.new_label(); // Label(0) — never bound
+        // Reserve label 0 so label IDs start from 1 (for consistency with fixed labels).
+        let _reserved = asm.new_label(); // Label(0)
         let exit_label = asm.new_label();
         let oog_label = asm.new_label();
         let panic_label = asm.new_label();
         let fault_exit_label = asm.new_label();
         let oog_pc_label = asm.new_label();
         Self {
-            block_labels: vec![NO_LABEL; code_len + 1],
-            labeled_pcs: Vec::with_capacity(code_len / 16),
+            gas_block_labels: Vec::new(), // populated in compile()
+            gas_block_pcs: Vec::new(),
+            gas_rank_index: Vec::new(),
+            gas_starts_words: Vec::new(),
             asm,
             exit_label,
             oog_label,
@@ -239,18 +240,17 @@ impl Compiler {
         }
     }
 
-    /// Get or create a label for a PVM PC offset.
-    fn label_for_pc(&mut self, pc: u32) -> Label {
-        let idx = pc as usize;
-        let l = self.block_labels[idx];
-        if l != NO_LABEL {
-            l
-        } else {
-            let l = self.asm.new_label();
-            self.block_labels[idx] = l;
-            self.labeled_pcs.push(pc);
-            l
-        }
+    /// Look up the pre-created label for a gas block start PC.
+    /// Uses O(1) rank query on the gas_starts BitSet.
+    #[inline]
+    fn label_for_pc(&self, pc: u32) -> Label {
+        let pos = pc as usize;
+        let word_idx = pos / 64;
+        let bit_idx = pos % 64;
+        let prefix = self.gas_rank_index[word_idx] as usize;
+        let mask = if bit_idx == 0 { 0 } else { (1u64 << bit_idx) - 1 };
+        let idx = prefix + (self.gas_starts_words[word_idx] & mask).count_ones() as usize;
+        self.gas_block_labels[idx]
     }
 
     fn is_basic_block_start(&self, idx: u32) -> bool {
@@ -281,9 +281,21 @@ impl Compiler {
             (gs, st) // gas_starts is now immutable
         };
 
+        // Pre-create labels for ALL gas block starts using ranked bitset.
+        // This replaces the 448KB dense block_labels Vec with ~87KB of compact
+        // data structures (gas_block_pcs + gas_block_labels + rank_index).
+        self.gas_rank_index = gas_starts.build_rank_index();
+        self.gas_block_pcs = gas_starts.collect_set_positions();
+        self.gas_starts_words = gas_starts.words.clone();
+        self.gas_block_labels = Vec::with_capacity(self.gas_block_pcs.len());
+        for _ in 0..self.gas_block_pcs.len() {
+            self.gas_block_labels.push(self.asm.new_label());
+        }
+
         // Single streaming pass: decode + gas blocks + codegen
         let mut gas_sim = GasSimulator::new();
         let mut pending_gas: Option<(Label, u32, usize)> = None;
+        let mut gas_block_counter: usize = 0;
 
         // Find first instruction start
         let mut pc: usize = 0;
@@ -332,10 +344,11 @@ impl Compiler {
                 _ => args::decode_args(code, pc, skip, category),
             };
 
-            // Gas block boundary: consolidated check (was 3 separate checks).
-            // Handles label binding, reg invalidation, and gas metering in one branch.
+            // Gas block boundary: consolidated check.
+            // Uses counter-based label access (O(1), no rank query needed).
             if gas_starts.get(pc) {
-                let label = self.label_for_pc(pc as u32);
+                let label = self.gas_block_labels[gas_block_counter];
+                gas_block_counter += 1;
                 self.asm.bind_label(label);
                 self.invalidate_all_regs();
 
@@ -388,11 +401,11 @@ impl Compiler {
         self.emit_exit_sequences();
 
         // Build dispatch table: PVM PC → native code offset.
-        // Only iterate PCs that have labels (tracked by labeled_pcs), not all code bytes.
+        // Iterate pre-created gas block PCs (compact, ~10K entries).
         let table_len = code_len + 1;
         let mut dispatch_table = vec![0i32; table_len];
-        for &pvm_pc in &self.labeled_pcs {
-            let label = self.block_labels[pvm_pc as usize];
+        for (idx, &pvm_pc) in self.gas_block_pcs.iter().enumerate() {
+            let label = self.gas_block_labels[idx];
             if let Some(offset) = self.asm.label_offset(label) {
                 dispatch_table[pvm_pc as usize] = offset as i32;
             }
@@ -509,8 +522,15 @@ impl Compiler {
 
         // Bind labels for all 4 instructions
         for &ipc in &[pc, pc2, pc3, pc4] {
-            let label = self.block_labels[ipc];
-            if label != NO_LABEL { self.asm.bind_label(label); }
+            // Bind label if this PC is a gas block start (checked via ranked bitset)
+            if ipc < self.gas_starts_words.len() * 64 {
+                let word_idx = ipc / 64;
+                let bit_idx = ipc % 64;
+                if (self.gas_starts_words[word_idx] >> bit_idx) & 1 != 0 {
+                    let label = self.label_for_pc(ipc as u32);
+                    self.asm.bind_label(label);
+                }
+            }
         }
 
         match op4 {
@@ -571,8 +591,15 @@ impl Compiler {
 
         // Bind labels
         for &ipc in &[pc, pc2] {
-            let label = self.block_labels[ipc];
-            if label != NO_LABEL { self.asm.bind_label(label); }
+            // Bind label if this PC is a gas block start (checked via ranked bitset)
+            if ipc < self.gas_starts_words.len() * 64 {
+                let word_idx = ipc / 64;
+                let bit_idx = ipc % 64;
+                if (self.gas_starts_words[word_idx] >> bit_idx) & 1 != 0 {
+                    let label = self.label_for_pc(ipc as u32);
+                    self.asm.bind_label(label);
+                }
+            }
         }
 
         let (a, b) = (REG_MAP[*m_ra], REG_MAP[*m_rb]);
