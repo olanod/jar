@@ -364,13 +364,65 @@ impl Compiler {
                     Args::RegImm { ra, imm: args::read_signed_imm(code, pc + 2, lx) }
                 }
                 crate::instruction::InstructionCategory::OneRegExtImm => {
-                    // load_imm_64 (opcode 20): register + 8-byte LE immediate
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let ra = (reg_byte & 0x0F).min(12) as usize;
-                    let imm = args::read_le_imm(code, pc + 2, 8);
-                    Args::RegExtImm { ra, imm }
+                    Args::RegExtImm { ra, imm: args::read_le_imm(code, pc + 2, 8) }
                 }
-                _ => args::decode_args(code, pc, skip, category),
+                crate::instruction::InstructionCategory::TwoImm => {
+                    let first = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let lx = (first as usize % 8).min(4);
+                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    Args::TwoImm {
+                        imm_x: args::read_signed_imm(code, pc + 2, lx),
+                        imm_y: args::read_signed_imm(code, pc + 2 + lx, ly),
+                    }
+                }
+                crate::instruction::InstructionCategory::OneOffset => {
+                    let lx = skip.min(4);
+                    let signed_off = args::read_signed_imm(code, pc + 1, lx) as i64;
+                    Args::Offset { offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                }
+                crate::instruction::InstructionCategory::OneRegTwoImm => {
+                    let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let ra = (reg_byte & 0x0F).min(12) as usize;
+                    let lx = ((reg_byte as usize / 16) % 8).min(4);
+                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    Args::RegTwoImm {
+                        ra,
+                        imm_x: args::read_signed_imm(code, pc + 2, lx),
+                        imm_y: args::read_signed_imm(code, pc + 2 + lx, ly),
+                    }
+                }
+                crate::instruction::InstructionCategory::OneRegImmOffset => {
+                    let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let ra = (reg_byte & 0x0F).min(12) as usize;
+                    let lx = ((reg_byte as usize / 16) % 8).min(4);
+                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let imm = args::read_signed_imm(code, pc + 2, lx);
+                    let signed_off = args::read_signed_imm(code, pc + 2 + lx, ly) as i64;
+                    Args::RegImmOffset { ra, imm, offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                }
+                crate::instruction::InstructionCategory::TwoRegOneOffset => {
+                    let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let ra = (reg_byte & 0x0F).min(12) as usize;
+                    let rb = (reg_byte >> 4).min(12) as usize;
+                    let lx = if skip > 1 { (skip - 1).min(4) } else { 0 };
+                    let signed_off = args::read_signed_imm(code, pc + 2, lx) as i64;
+                    Args::TwoRegOffset { ra, rb, offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                }
+                crate::instruction::InstructionCategory::TwoRegTwoImm => {
+                    let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let ra = (reg_byte & 0x0F).min(12) as usize;
+                    let rb = (reg_byte >> 4).min(12) as usize;
+                    let lx_byte = if pc + 2 < code.len() { code[pc + 2] } else { 0 };
+                    let lx = (lx_byte as usize % 8).min(4);
+                    let ly = if skip > lx + 2 { (skip - lx - 2).min(4) } else { 0 };
+                    Args::TwoRegTwoImm {
+                        ra, rb,
+                        imm_x: args::read_signed_imm(code, pc + 3, lx),
+                        imm_y: args::read_signed_imm(code, pc + 3 + lx, ly),
+                    }
+                }
             };
 
             // Gas block boundary: consolidated check.
