@@ -253,6 +253,9 @@ impl TranslationContext {
                             // Condition is x0 (always 0) → always execute: rd = rs1
                             if rs1 == 0 {
                                 self.emit_load_imm(rd, 0)?;
+                            } else if rd == rs1 {
+                                // Self-move is a nop
+                                self.emit_inst(1); // fallthrough
                             } else {
                                 let pvm_rd = self.require_reg(rd)?;
                                 let pvm_rs1 = self.require_reg(rs1)?;

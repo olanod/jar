@@ -120,6 +120,13 @@ pub fn read_signed_imm(code: &[u8], offset: usize, n: usize) -> u64 {
     read_signed_at(code, offset, n)
 }
 
+/// Read `n` bytes from code at offset as little-endian u64 (no sign extension).
+/// Public for use by the recompiler's inline decode path (e.g., OneRegExtImm).
+#[inline(always)]
+pub fn read_le_imm(code: &[u8], offset: usize, n: usize) -> u64 {
+    read_le_at(code, offset, n)
+}
+
 /// Read `n` bytes and sign-extend (no allocation).
 #[inline(always)]
 fn read_signed_at(code: &[u8], offset: usize, n: usize) -> u64 {

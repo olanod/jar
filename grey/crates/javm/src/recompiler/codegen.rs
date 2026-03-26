@@ -363,6 +363,13 @@ impl Compiler {
                     let lx = if skip > 1 { (skip - 1).min(4) } else { 0 };
                     Args::RegImm { ra, imm: args::read_signed_imm(code, pc + 2, lx) }
                 }
+                crate::instruction::InstructionCategory::OneRegExtImm => {
+                    // load_imm_64 (opcode 20): register + 8-byte LE immediate
+                    let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
+                    let ra = (reg_byte & 0x0F).min(12) as usize;
+                    let imm = args::read_le_imm(code, pc + 2, 8);
+                    Args::RegExtImm { ra, imm }
+                }
                 _ => args::decode_args(code, pc, skip, category),
             };
 
