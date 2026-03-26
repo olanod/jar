@@ -166,10 +166,15 @@ impl FlatMemory {
         let perms = region;
         let buf = unsafe { region.add(HEADER_SIZE) };
 
-        // Set all pages in [0, mem_size) as read-write
-        let num_pages = (layout.mem_size as usize + 4095) / 4096;
-        unsafe {
-            std::ptr::write_bytes(perms, 2u8, num_pages.min(NUM_PAGES));
+        // Set all pages in [0, mem_size) as read-write in the permission table.
+        // With signals feature, bounds checking uses guard pages instead of the
+        // permission table, so we skip the 1MB write.
+        #[cfg(not(feature = "signals"))]
+        {
+            let num_pages = (layout.mem_size as usize + 4095) / 4096;
+            unsafe {
+                std::ptr::write_bytes(perms, 2u8, num_pages.min(NUM_PAGES));
+            }
         }
         // Copy data directly into flat buffer
         unsafe {
@@ -444,7 +449,19 @@ impl RecompiledPvm {
         gas: Gas,
         data_layout: Option<crate::program::DataLayout>,
     ) -> Result<Self, String> {
-        let debug = std::env::var("GREY_PVM_DEBUG").is_ok();
+        let debug = {
+            use std::sync::atomic::{AtomicU8, Ordering};
+            static CACHED: AtomicU8 = AtomicU8::new(0); // 0=unchecked, 1=false, 2=true
+            match CACHED.load(Ordering::Relaxed) {
+                2 => true,
+                1 => false,
+                _ => {
+                    let val = std::env::var("GREY_PVM_DEBUG").is_ok();
+                    CACHED.store(if val { 2 } else { 1 }, Ordering::Relaxed);
+                    val
+                }
+            }
+        };
 
         // Gas blocks and validation are now computed inline during the compile loop.
         // No separate pre-passes needed.
