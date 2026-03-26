@@ -467,7 +467,52 @@ impl Compiler {
             }
 
             self.compile_instruction(opcode, &decoded_args, pc as u32, next_pc);
-            self.update_reg_defs(opcode, &decoded_args);
+
+            // Fast reg_defs update: for special-case opcodes that produce
+            // trackable patterns (Add64→Shifted, LoadImm→Const, etc.), call
+            // the full update_reg_defs. For all other opcodes, just invalidate
+            // the destination register directly from the decoded args. This
+            // avoids the opcode match + Args re-destructuring for ~95% of
+            // instructions.
+            match opcode {
+                Opcode::Add64 | Opcode::LoadImm | Opcode::LoadImm64
+                | Opcode::ShloLImm64 | Opcode::MoveReg => {
+                    self.update_reg_defs(opcode, &decoded_args);
+                }
+                _ => {
+                    // Fast path: invalidate dest register based on category.
+                    // The destination is the first register field for most categories.
+                    match category {
+                        crate::instruction::InstructionCategory::ThreeReg => {
+                            if let Args::ThreeReg { rd, .. } = decoded_args {
+                                self.invalidate_reg(rd);
+                            }
+                        }
+                        crate::instruction::InstructionCategory::TwoReg => {
+                            if let Args::TwoReg { rd, .. } = decoded_args {
+                                self.invalidate_reg(rd);
+                            }
+                        }
+                        crate::instruction::InstructionCategory::TwoRegOneImm
+                        | crate::instruction::InstructionCategory::OneRegOneImm
+                        | crate::instruction::InstructionCategory::OneRegExtImm
+                        | crate::instruction::InstructionCategory::OneRegTwoImm
+                        | crate::instruction::InstructionCategory::OneRegImmOffset => {
+                            // Destination = first register (ra in raw byte low nibble)
+                            let ra = if pc + 1 < code.len() { (code[pc + 1] & 0x0F).min(12) as usize } else { 0 };
+                            self.invalidate_reg(ra);
+                        }
+                        _ => {
+                            // NoArgs, OneImm, OneOffset, TwoRegOneOffset, TwoRegTwoImm:
+                            // These either don't write to a register or are terminators
+                            // (which invalidate_all_regs at the next gas block boundary).
+                            if opcode.is_terminator() {
+                                self.invalidate_all_regs();
+                            }
+                        }
+                    }
+                }
+            }
 
             pc += 1 + skip;
         }
