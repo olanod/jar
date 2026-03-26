@@ -2078,6 +2078,19 @@ impl BitSet {
 /// Compute basic block starts as a compact bitset + precomputed skip table.
 /// The bitset is 64x smaller than Vec<bool>, improving L1 cache utilization
 /// during the hot compilation loop (~1.75KB vs ~112KB for ecrecover).
+/// Compute the skip (number of argument bytes) for instruction at `pc` by
+/// scanning the bitmask for the next instruction start. Inline-friendly.
+#[inline(always)]
+pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
+    let mut s = 0;
+    for j in 0..25 {
+        let idx = pc + 1 + j;
+        let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
+        if bit == 1 { s = j; break; }
+    }
+    s
+}
+
 pub fn compute_basic_block_starts_bitset(code: &[u8], bitmask: &[u8]) -> (BitSet, Vec<u8>) {
     let len = code.len();
     if len == 0 {
@@ -2178,6 +2191,92 @@ pub fn compute_basic_block_starts_bitset(code: &[u8], bitmask: &[u8]) -> (BitSet
     }
 
     (starts, skip_table)
+}
+
+/// Like compute_basic_block_starts_bitset but does NOT allocate a skip_table.
+/// Returns only the gas_starts BitSet. The caller should use `skip_for_bitmask()`
+/// to compute skip inline during the main compilation loop.
+pub fn compute_gas_starts_bitset(code: &[u8], bitmask: &[u8]) -> BitSet {
+    let len = code.len();
+    if len == 0 {
+        return BitSet::new(0);
+    }
+
+    let mut starts = BitSet::new(len);
+
+    if !bitmask.is_empty() && bitmask[0] == 1 {
+        if Opcode::from_byte(code[0]).is_some() {
+            starts.set(0);
+        }
+    }
+
+    let mut i = 0;
+    while i < len {
+        if i >= bitmask.len() || bitmask[i] != 1 { i += 1; continue; }
+        let Some(op) = Opcode::from_byte(code[i]) else { i += 1; continue; };
+        let skip = skip_for_bitmask(bitmask, i);
+
+        if op.is_terminator() && !matches!(op, Opcode::Fallthrough | Opcode::Unlikely) {
+            let next = i + 1 + skip;
+            if next < len && next < bitmask.len() && bitmask[next] == 1 {
+                starts.set(next);
+            }
+        }
+
+        if matches!(op, Opcode::Ecalli) {
+            let next = i + 1 + skip;
+            if next < len && next < bitmask.len() && bitmask[next] == 1 {
+                starts.set(next);
+            }
+        }
+
+        let cat = op.category();
+        match cat {
+            crate::instruction::InstructionCategory::OneOffset => {
+                if i + 5 <= len {
+                    let off = i32::from_le_bytes([code[i+1], code[i+2], code[i+3], code[i+4]]);
+                    let target = (i as i64 + off as i64) as usize;
+                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                        starts.set(target);
+                    }
+                }
+            }
+            crate::instruction::InstructionCategory::TwoRegOneOffset => {
+                if i + 6 <= len {
+                    let off = i32::from_le_bytes([code[i+2], code[i+3], code[i+4], code[i+5]]);
+                    let target = (i as i64 + off as i64) as usize;
+                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                        starts.set(target);
+                    }
+                }
+            }
+            crate::instruction::InstructionCategory::OneRegImmOffset => {
+                if i + 2 <= len {
+                    let reg_byte = code[i + 1];
+                    let lx = ((reg_byte as usize / 16) % 8).min(4);
+                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let off_start = i + 2 + lx;
+                    if ly > 0 && off_start + ly <= len {
+                        let mut buf = [0u8; 4];
+                        buf[..ly].copy_from_slice(&code[off_start..off_start + ly]);
+                        if ly < 4 && buf[ly - 1] & 0x80 != 0 {
+                            for b in &mut buf[ly..4] { *b = 0xFF; }
+                        }
+                        let off = i32::from_le_bytes(buf);
+                        let target = (i as i64 + off as i64) as usize;
+                        if target < len && target < bitmask.len() && bitmask[target] == 1 {
+                            starts.set(target);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        i += 1 + skip;
+    }
+
+    starts
 }
 
 /// Compute basic block starts AND a precomputed skip table in a single pass.
