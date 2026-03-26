@@ -10,6 +10,9 @@
 /grey/.cargo/
 /grey/services/*/target
 
+# Docs (Zensical build output)
+/site
+
 # Shared
 /.claude/settings.local.json
 .devcontainer/

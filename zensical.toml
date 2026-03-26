@@ -1,0 +1,36 @@
+[project]
+site_name = "JAR"
+site_url = "https://jarchain.org/"
+site_description = "JAR: JAM Axiomatic Reference — formal specification and tools for the JAM protocol"
+site_author = "JAR Contributors"
+copyright = "Copyright &copy; 2025-2026 JAR Contributors"
+
+[project.theme]
+language = "en"
+features = [
+    "content.code.copy",
+    "content.code.select",
+    "navigation.footer",
+    "navigation.indexes",
+    "navigation.instant",
+    "navigation.instant.prefetch",
+    "navigation.path",
+    "navigation.sections",
+    "navigation.top",
+    "navigation.tracking",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/jarchain/jar"
