@@ -45,4 +45,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Run harness
-        run: cargo run -p harness
+        run: cargo run -p harness -- --seq-testnet
