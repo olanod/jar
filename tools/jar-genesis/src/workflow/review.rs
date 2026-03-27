@@ -13,6 +13,14 @@ pub fn run(
     comment_author: &str,
     _comment_body: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Guard against already-merged PRs
+    let state_json = github::pr_view(pr, "state")?;
+    let state = state_json["state"].as_str().unwrap_or("");
+    if state == "MERGED" {
+        github::pr_comment(pr, "**JAR Bot:** PR is already merged — ignoring `/review`.")?;
+        return Ok(());
+    }
+
     let repo_root = git::repo_root()?;
     let spec_dir = Path::new(&repo_root).join("spec");
 
