@@ -68,9 +68,9 @@ CLI tools read JSON stdin, write JSON stdout. Error → `{"error": "..."}` to st
 | Script | Purpose |
 |--------|---------|
 | `tools/genesis-collect-reviews.sh` | Collect `/review` comments + meta-reviews (reactions) from a PR |
-| `tools/genesis-replay.sh --verify` | Re-evaluate all commits from git trailers, check consistency |
-| `tools/genesis-replay.sh --verify-cache` | Rebuild from git history, compare against `genesis-state` cache |
-| `tools/genesis-replay.sh --rebuild` | Output rebuilt cache to stdout |
+| `cargo run -p jar-genesis -- replay --mode verify` | Re-evaluate all commits from git trailers, check consistency |
+| `cargo run -p jar-genesis -- replay --mode verify-cache` | Rebuild from git history, compare against `genesis-state` cache |
+| `cargo run -p jar-genesis -- replay --mode rebuild` | Output rebuilt cache to stdout |
 
 ## crypto-ffi
 
@@ -114,7 +114,7 @@ lake build jarstf
 
 For commit N, any spec version ≥ the spec at commit N-1 must produce the same `CommitIndex`. The spec is backward compatible (new handles old) but not necessarily forward compatible (old may not handle new).
 
-**What this means for contributors**: if you change files in `Genesis/`, the current spec must still produce identical results for all past scored commits. CI enforces this via `genesis-replay.sh --verify`. If your change needs different behavior for new vs old commits, add explicit version logic (e.g., check `prCreatedAt` field presence, branch on epoch ranges).
+**What this means for contributors**: if you change files in `Genesis/`, the current spec must still produce identical results for all past scored commits. CI enforces this via `cargo run -p jar-genesis -- replay --mode verify`. If your change needs different behavior for new vs old commits, add explicit version logic (e.g., check `prCreatedAt` field presence, branch on epoch ranges).
 
 ## GitHub Workflows
 
@@ -160,7 +160,7 @@ genesis-merge.yml:
 
 **Comparison targets anchored to `prCreatedAt`**: targets are selected from commits merged before the PR's `created_at` timestamp (immutable, set by GitHub at PR open). This prevents targets from shifting when other PRs merge concurrently. The `SignedCommit` stores `prCreatedAt`; for legacy commits it falls back to `mergeEpoch`.
 
-**Short hash expansion**: reviewers use 8-char hashes in `/review` comments (copied from the bot's template), but the Lean spec needs full 40-char SHAs. `tools/genesis-collect-reviews.sh` expands short hashes by prefix-matching against comparison targets. `tools/genesis-replay.sh` does the same expansion when replaying from git trailers.
+**Short hash expansion**: reviewers use 8-char hashes in `/review` comments (copied from the bot's template), but the Lean spec needs full 40-char SHAs. `tools/genesis-collect-reviews.sh` expands short hashes by prefix-matching against comparison targets. `jar-genesis replay` does the same expansion when replaying from git trailers.
 
 **`issue_comment` workflows run from the default branch**: the review and merge workflows are triggered by `issue_comment`, which always runs from master regardless of which branch the PR targets. This means workflow changes for these files are always chicken-and-egg — they take effect immediately for ALL PRs, and bug fixes require direct pushes to master.
 
@@ -174,17 +174,17 @@ genesis-merge.yml:
 - "base branch policy prohibits the merge" → CI hasn't passed. The workflow should wait via `gh pr checks --watch`, but if CI fails, the merge fails.
 - "not mergeable" → merge conflict. The PR needs a rebase.
 
-**Cache out of sync**: run `tools/genesis-replay.sh --verify-cache` to compare the `genesis-state` cache against a full rebuild from git trailers. If mismatched, rebuild:
+**Cache out of sync**: run `cargo run -p jar-genesis -- replay --mode verify-cache` to compare the `genesis-state` cache against a full rebuild from git trailers. If mismatched, rebuild:
 ```bash
 lake build genesis_evaluate genesis_validate
-bash tools/genesis-replay.sh --rebuild > /tmp/cache.json
+cargo run -p jar-genesis -- replay --mode rebuild > /tmp/cache.json
 # Then push to genesis-state branch
 ```
 
 **Verify scoring integrity**: run both checks:
 ```bash
-bash tools/genesis-replay.sh --verify        # trailers self-consistent
-bash tools/genesis-replay.sh --verify-cache  # cache matches rebuild
+cargo run -p jar-genesis -- replay --mode verify        # trailers self-consistent
+cargo run -p jar-genesis -- replay --mode verify-cache  # cache matches rebuild
 ```
 
 **Check current weights**:

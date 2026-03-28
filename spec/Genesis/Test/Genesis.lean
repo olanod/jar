@@ -97,13 +97,20 @@ structure RankingInput where
 
 structure RankingOutput where
   ranking : List CommitId
+  variances : Option (List (CommitId × Nat)) := none
 
 def runRankingTest (input : RankingInput) : RankingOutput :=
   let contexts := input.signedCommits.zip input.indices |>.map fun (commit, _) =>
     let state := reconstructState (input.indices.takeWhile (·.commitHash != commit.id))
     let v := activeVariant commit.prCreatedAt
     { variant := v, getWeight := state.reviewerWeight : RankingCommitCtx }
-  { ranking := computeRanking input.signedCommits contexts }
+  let useBT := contexts.getLast?.map (·.variant.useBradleyTerry) |>.getD false
+  if useBT then
+    let (ranking, btState) := computeRankingBTWithState input.signedCommits contexts
+    let variances := btState.map fun (c, e) => (c, e.sigma2)
+    { ranking, variances := some variances }
+  else
+    { ranking := computeRanking input.signedCommits contexts }
 
 /-! ### Finalize Tests -/
 
