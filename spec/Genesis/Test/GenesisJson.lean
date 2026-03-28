@@ -70,12 +70,20 @@ instance : FromJson RankingInput where
     return { signedCommits, indices }
 
 instance : ToJson RankingOutput where
-  toJson o := Json.mkObj [("ranking", toJson o.ranking)]
+  toJson o :=
+    let fields := [("ranking", toJson o.ranking)]
+    let fields := match o.variances with
+      | some v => fields ++ [("variances", toJson v)]
+      | none => fields
+    Json.mkObj fields
 
 instance : FromJson RankingOutput where
   fromJson? j := do
     let ranking ← j.getObjValAs? (List CommitId) "ranking"
-    return { ranking }
+    let variances ← match j.getObjVal? "variances" with
+      | .ok v => some <$> @fromJson? (List (CommitId × Nat)) _ v
+      | .error _ => pure none
+    return { ranking, variances }
 
 instance : FromJson FinalizeInput where
   fromJson? j := do

@@ -302,121 +302,223 @@ def computeRankingNetWins
 
 /-! ### Bradley-Terry Ranking (v3)
 
-  Replaces net-wins with a maximum-likelihood strength model.
-  Fixes observation-frequency bias: frequently-targeted commits no longer
-  accumulate disproportionate losses from deduplicated pairwise counting.
+  Online Bayesian BT with Weng-Lin moment-matching updates.
+  Fixes observation-frequency bias from v2's deduplicated net-wins.
 
-  Algorithm: iterative MM (minorization-maximization).
-  For each commit i: strength_i = W_i / Σ_j(n_ij / (strength_i + strength_j))
-  where W_i = total wins, n_ij = total comparisons between i and j.
-  Uses exact rational arithmetic (Ratio) for determinism.
+  Each commit carries a score μ (Int, can be negative) and variance σ² (Nat).
+  For each new commit, pairwise evidence is extracted and O(1) updates are
+  applied to each pair. Virtual prior (1 win + 1 loss against phantom)
+  regularizes scores and ensures graph connectivity.
+
+  Uses fixed-point arithmetic (BT_SCALE = 10^6) for determinism.
 -/
 
-/-- Collect ALL pairwise outcomes (no deduplication) from quantile-selected
-    reviewers. Each review contributes all its (winner, loser) pairs. -/
-def collectAllPairwise
+/-- Fixed-point scale factor. 1.0 = BT_SCALE. -/
+def BT_SCALE : Nat := 1000000
+
+/-- π² × BT_SCALE, used in the γ scaling factor. -/
+def PI_SQUARED_SCALED : Nat := 9869604
+
+/-- Minimum variance floor (0.1 × BT_SCALE) to prevent collapse. -/
+def BT_VARIANCE_FLOOR : Nat := BT_SCALE / 10
+
+/-- Sigmoid lookup table. Index i maps to sigmoid(i - 10) × BT_SCALE.
+    Covers x ∈ [-10, 10] in unscaled units. Values outside are clamped. -/
+private def sigmoidTable : Array Nat := #[
+  45, 123, 335, 911, 2473, 6693, 17986, 47426, 119203, 268941,
+  500000,
+  731059, 880797, 952574, 982014, 993307, 997527, 999089, 999665, 999877, 999955
+]
+
+/-- Fixed-point sigmoid with linear interpolation.
+    Input: score difference (μ_w - μ_l) already divided by γ, scaled by BT_SCALE.
+    Output: sigmoid value × BT_SCALE. -/
+def fpSigmoid (diff : Int) : Nat :=
+  -- Map to table coordinates: table index = diff / BT_SCALE + 10
+  -- With interpolation between integer points
+  let shifted := diff + 10 * (BT_SCALE : Int)  -- shift so 0 maps to index 10
+  if shifted ≤ 0 then sigmoidTable[0]!
+  else if shifted ≥ 20 * (BT_SCALE : Int) then sigmoidTable[20]!
+  else
+    let idx := (shifted / (BT_SCALE : Int)).toNat
+    let frac := (shifted % (BT_SCALE : Int)).toNat  -- fractional part, 0..BT_SCALE-1
+    if idx ≥ 20 then sigmoidTable[20]!
+    else
+      let lo := sigmoidTable[idx]!
+      let hi := sigmoidTable[idx + 1]!
+      -- Linear interpolation: lo + (hi - lo) × frac / BT_SCALE
+      if hi ≥ lo then lo + (hi - lo) * frac / BT_SCALE
+      else lo - (lo - hi) * frac / BT_SCALE  -- shouldn't happen (sigmoid is monotone)
+
+/-- Per-commit Bayesian BT state: score μ (scaled Int) and variance σ² (scaled Nat). -/
+structure BTEntry where
+  mu : Int
+  sigma2 : Nat
+  deriving Repr, BEq
+
+/-- Full BT state. -/
+abbrev BTState := List (CommitId × BTEntry)
+
+/-- Phantom commit for virtual prior observations. -/
+def btPhantom : CommitId := .valid "0000000000000000000000000000000000000000"
+
+/-- Look up a commit's BT entry. Returns default (μ=0, σ²=BT_SCALE) if not found. -/
+def btLookup (state : BTState) (c : CommitId) : BTEntry :=
+  (state.find? (fun (x, _) => x == c)).map (·.2) |>.getD ⟨0, BT_SCALE⟩
+
+/-- Update or insert a BT entry. -/
+def btSet (state : BTState) (c : CommitId) (e : BTEntry) : BTState :=
+  if state.any (fun (x, _) => x == c) then
+    state.map (fun (x, v) => if x == c then (x, e) else (x, v))
+  else
+    state ++ [(c, e)]
+
+/-- Integer square root via Newton's method. -/
+def isqrt (n : Nat) : Nat :=
+  if n ≤ 1 then n
+  else
+    let init := n
+    let x := Nat.fold 20 (fun _ _ x => (x + n / x) / 2) init
+    -- Ensure exact: x² ≤ n < (x+1)²
+    if (x + 1) * (x + 1) ≤ n then x + 1 else x
+
+/-- O(1) Weng-Lin update for one pairwise observation "winner beats loser".
+    Updates μ and σ² for both winner and loser. -/
+def btUpdate (state : BTState) (winner loser : CommitId) : BTState :=
+  let ew := btLookup state winner
+  let el := btLookup state loser
+  -- γ = sqrt(BT_SCALE² + 3 × (σ²_w + σ²_l) × BT_SCALE / π²)
+  -- We compute γ scaled by BT_SCALE
+  let gamma := isqrt (BT_SCALE * BT_SCALE + 3 * (ew.sigma2 + el.sigma2) * BT_SCALE / PI_SQUARED_SCALED * BT_SCALE)
+  if gamma == 0 then state  -- shouldn't happen
+  else
+    -- p = sigmoid((μ_w - μ_l) × BT_SCALE / γ), result is × BT_SCALE
+    let scaledDiff := (ew.mu - el.mu) * (BT_SCALE : Int) / (gamma : Int)
+    let p := fpSigmoid scaledDiff
+    let surprise := BT_SCALE - p  -- (1 - p) × BT_SCALE
+    -- μ updates: Δμ = σ² × surprise / (γ × BT_SCALE)
+    let delta_w : Int := (ew.sigma2 * surprise / gamma : Nat)
+    let delta_l : Int := (el.sigma2 * surprise / gamma : Nat)
+    let mu_w' := ew.mu + delta_w
+    let mu_l' := el.mu - delta_l
+    -- σ² updates: Δσ² = (σ²/γ)² × p × surprise / BT_SCALE²
+    let s2g_w := ew.sigma2 / gamma  -- σ²_w / γ (unscaled ratio)
+    let s2g_l := el.sigma2 / gamma
+    let var_reduction_w := s2g_w * s2g_w * p / BT_SCALE * surprise / BT_SCALE
+    let var_reduction_l := s2g_l * s2g_l * p / BT_SCALE * surprise / BT_SCALE
+    let sigma2_w' := if ew.sigma2 > var_reduction_w + BT_VARIANCE_FLOOR
+      then ew.sigma2 - var_reduction_w else BT_VARIANCE_FLOOR
+    let sigma2_l' := if el.sigma2 > var_reduction_l + BT_VARIANCE_FLOOR
+      then el.sigma2 - var_reduction_l else BT_VARIANCE_FLOOR
+    let state := btSet state winner ⟨mu_w', sigma2_w'⟩
+    btSet state loser ⟨mu_l', sigma2_l'⟩
+
+/-- Ensure a commit has a BT entry, initializing with given variance if absent. -/
+def btEnsure (state : BTState) (c : CommitId) (initialVariance : Nat) : BTState :=
+  if state.any (fun (x, _) => x == c) then state
+  else state ++ [(c, ⟨0, initialVariance⟩)]
+
+/-- Process one commit: initialize, apply virtual prior, apply pairwise evidence. -/
+def btProcessCommit [gv : GenesisVariant]
+    (commit : SignedCommit)
+    (ctx : RankingCommitCtx)
+    (state : BTState) : BTState :=
+  letI := ctx.variant
+  let iv := gv.btInitialVariance
+  -- Ensure commit and phantom exist
+  let state := btEnsure state commit.id iv
+  let state := btEnsure state btPhantom iv
+  -- Virtual prior: 1 win + 1 loss against phantom
+  let state := btUpdate state commit.id btPhantom
+  let state := btUpdate state btPhantom commit.id
+  -- Extract pairwise evidence from quantile-selected reviewer
+  match selectQuantileReviewer commit.reviews ctx.getWeight commit.id with
+  | none => state
+  | some review =>
+    let pairs := extractPairwise review
+    pairs.foldl (fun s (w, l) =>
+      let s := btEnsure s w iv
+      let s := btEnsure s l iv
+      btUpdate s w l
+    ) state
+
+/-- Compute ranking and BT state using online Bradley-Terry updates.
+    Returns (ranking, full BTState including variances). -/
+def computeRankingBTWithState
     (signedCommits : List SignedCommit)
-    (contexts : List RankingCommitCtx) : List (CommitId × CommitId) :=
-  signedCommits.zip contexts |>.foldl (fun acc (commit, ctx) =>
-    letI := ctx.variant
-    match selectQuantileReviewer commit.reviews ctx.getWeight commit.id with
-    | some review => acc ++ extractPairwise review
-    | none => acc
-  ) []
+    (contexts : List RankingCommitCtx) : List CommitId × BTState :=
+  let allCommitIds := signedCommits.map (·.id)
+  -- Sequential fold: process each commit
+  let finalState := signedCommits.zip contexts |>.foldl
+    (fun state (commit, ctx) =>
+      letI := ctx.variant
+      btProcessCommit commit ctx state
+    ) ([] : BTState)
+  -- Sort by μ descending, tiebreak by input order
+  let indexed := allCommitIds.zip (List.range allCommitIds.length)
+  let withMu := indexed.map fun (c, i) => (c, (btLookup finalState c).mu, i)
+  let sorted := withMu.toArray.qsort (fun (_, m1, i1) (_, m2, i2) =>
+    if m1 != m2 then m1 > m2 else i1 < i2
+  ) |>.toList
+  let ranking := sorted.map (fun (c, _, _) => c)
+  -- Remove phantom from state
+  let cleanState := finalState.filter (fun (c, _) => !(c == btPhantom))
+  (ranking, cleanState)
 
-/-- Precomputed pairwise statistics for Bradley-Terry. -/
-structure BTStats where
-  /-- Total wins per commit. -/
-  wins : List (CommitId × Nat)
-  /-- Comparison counts between ordered pairs: (ci, cj, count) where ci < cj by index. -/
-  comparisons : List (CommitId × CommitId × Nat)
-
-/-- Build pairwise statistics from a flat list of outcomes. -/
-def buildBTStats (pairs : List (CommitId × CommitId))
-    (commits : List CommitId) : BTStats :=
-  let wins := commits.map fun c =>
-    (c, pairs.foldl (fun n (w, _) => if w == c then n + 1 else n) 0)
-  let indexed := commits.zip (List.range commits.length)
-  let comparisons := indexed.foldl (fun acc (ci, ii) =>
-    acc ++ indexed.filterMap (fun (cj, ij) =>
-      if ii < ij then
-        let n := pairs.foldl (fun cnt (w, l) =>
-          if (w == ci && l == cj) || (w == cj && l == ci) then cnt + 1 else cnt) 0
-        if n > 0 then some (ci, cj, n) else none
-      else none)
-  ) []
-  { wins, comparisons }
-
-/-- Look up comparison count between two commits. -/
-private def lookupComparisons (stats : BTStats) (ci cj : CommitId) : Nat :=
-  stats.comparisons.foldl (fun cnt (a, b, n) =>
-    if (a == ci && b == cj) || (a == cj && b == ci) then cnt + n else cnt) 0
-
-/-- One iteration of the Bradley-Terry MM update.
-    strength_i = W_i / Σ_j(n_ij / (strength_i + strength_j))
-    Only updates commits with at least 1 win. Zero-win commits are
-    excluded from iteration (assigned rank at the bottom later).
-    Normalize so strengths of active commits sum to N_active. -/
-def bradleyTerryStep
-    (activeCommits : List CommitId)
-    (stats : BTStats)
-    (strengths : List (CommitId × Ratio)) : List (CommitId × Ratio) :=
-  let n := Ratio.ofNat activeCommits.length
-  let getStrength (c : CommitId) : Ratio :=
-    (strengths.find? (fun (x, _) => x == c)).map (·.2) |>.getD Ratio.one
-  let raw := activeCommits.map fun ci =>
-    let si := getStrength ci
-    let wi := (stats.wins.find? (fun (c, _) => c == ci)).map (·.2) |>.getD 0
-    let denom := activeCommits.foldl (fun acc cj =>
-      if cj == ci then acc
-      else
-        let nij := lookupComparisons stats ci cj
-        if nij == 0 then acc
-        else Ratio.add acc (Ratio.div (Ratio.ofNat nij) (Ratio.add si (getStrength cj)))
-    ) Ratio.zero
-    if denom.num == 0 then (ci, Ratio.one)
-    else (ci, Ratio.div (Ratio.ofNat wi) denom)
-  -- Normalize: scale so sum = N_active
-  let total := raw.foldl (fun acc (_, s) => Ratio.add acc s) Ratio.zero
-  if total.num == 0 then raw
-  else raw.map (fun (c, s) => (c, Ratio.div (Ratio.mul s n) total))
-
-/-- Run Bradley-Terry MM algorithm for a fixed number of iterations.
-    Zero-win commits are excluded from iteration and given floor strength. -/
-def bradleyTerry
-    (commits : List CommitId)
-    (pairs : List (CommitId × CommitId))
-    (iterations : Nat := 20) : List (CommitId × Ratio) :=
-  let stats := buildBTStats pairs commits
-  -- Partition: only iterate on commits with ≥1 win
-  let hasWins (c : CommitId) : Bool :=
-    match (stats.wins.find? (fun (x, _) => x == c)).map (·.2) with
-    | some w => w != 0
-    | none => false
-  let activeCommits := commits.filter hasWins
-  let zeroWinCommits := commits.filter (fun c => !hasWins c)
-  let init := activeCommits.map (fun c => (c, Ratio.one))
-  let result := Nat.fold iterations
-    (fun _ _ strengths => bradleyTerryStep activeCommits stats strengths) init
-  -- Append zero-win commits with floor strength (ranked last, tiebreak by input order)
-  result ++ zeroWinCommits.map (fun c => (c, Ratio.zero))
-
-/-- Compute ranking using Bradley-Terry model. -/
+/-- Compute ranking using online Bradley-Terry model (v3). -/
 def computeRankingBT
     (signedCommits : List SignedCommit)
     (contexts : List RankingCommitCtx) : List CommitId :=
-  let allCommitIds := signedCommits.map (·.id)
-  let pairs := collectAllPairwise signedCommits contexts
-  if pairs.isEmpty then allCommitIds
+  (computeRankingBTWithState signedCommits contexts).1
+
+/-! ### Variance-Weighted Target Selection (v3)
+
+  Same bucket structure as v2 (rank-ordered buckets, secure against manipulation).
+  Within each bucket, selection is weighted by σ² — uncertain commits are more
+  likely to be picked, but the hash-jitter makes selection unpredictable. -/
+
+/-- Select comparison targets using ranking + variance-weighted sampling (v3).
+    Within each bucket, commits are sampled with probability proportional to σ².
+    Hash-jitter from prId ensures unpredictability. -/
+def selectComparisonTargetsVariance
+    (ranking : List CommitId)
+    (variances : List (CommitId × Nat))
+    (eligibleEpochs : List (CommitId × Epoch))
+    (numTargets : Nat)
+    (prId : PRId)
+    (prCreatedAt : Epoch) : List CommitId :=
+  let eligible := eligibleEpochs.filter (fun (_, epoch) => epoch < prCreatedAt)
+  let eligibleIds := eligible.map (·.1)
+  let rankedEligible := ranking.filter (eligibleIds.contains ·)
+  let n := rankedEligible.length
+  if n == 0 then []
   else
-    let strengths := bradleyTerry allCommitIds pairs
-    let indexed := strengths.zip (List.range strengths.length)
-    let sorted := indexed.toArray.qsort (fun ((_, s1), i1) ((_, s2), i2) =>
-      if Ratio.gt s1 s2 then true
-      else if Ratio.gt s2 s1 then false
-      else i1 < i2
-    ) |>.toList
-    sorted.map (fun ((c, _), _) => c)
+    let k := min numTargets n
+    let hash := prIdHash prId
+    List.range k |>.map fun i =>
+      let bucketStart := n * i / k
+      let bucketEnd := n * (i + 1) / k
+      let bucketSize := bucketEnd - bucketStart
+      if bucketSize == 0 then
+        rankedEligible[bucketStart]!
+      else if bucketSize == 1 then
+        rankedEligible[bucketStart]!
+      else
+        -- Variance-weighted selection within bucket
+        let bucketCommits := (List.range bucketSize).map fun j => rankedEligible[bucketStart + j]!
+        let getVar (c : CommitId) : Nat :=
+          (variances.find? (fun (x, _) => x == c)).map (·.2) |>.getD BT_SCALE
+        -- Cumulative weights
+        let totalWeight := bucketCommits.foldl (fun acc c => acc + getVar c) 0
+        if totalWeight == 0 then rankedEligible[bucketStart]!
+        else
+          let target := (hash + i * 7) % totalWeight
+          -- Walk cumulative weights to find selected commit
+          let (_, selected) := bucketCommits.foldl (fun (cumWeight, sel) c =>
+            let newCum := cumWeight + getVar c
+            if cumWeight ≤ target && target < newCum then (newCum, c) else (newCum, sel)
+          ) (0, bucketCommits.head!)
+          selected
 
 /-! ### Ranking Dispatch -/
 

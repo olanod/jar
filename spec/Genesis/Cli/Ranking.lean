@@ -26,5 +26,15 @@ def main : IO UInt32 := runJsonPipe fun j => do
       let ctx : RankingCommitCtx := { variant := v, getWeight := state.reviewerWeight }
       (ctxs ++ [ctx], pastIndices ++ [idx])
     ) (([] : List RankingCommitCtx), ([] : List CommitIndex))
-  let ranking := computeRanking signedCommits contexts
-  return Json.mkObj [("ranking", toJson ranking)]
+  -- Check if BT is active (v3+) — if so, output variances too
+  let useBT := contexts.getLast?.map (·.variant.useBradleyTerry) |>.getD false
+  if useBT then
+    let (ranking, btState) := computeRankingBTWithState signedCommits contexts
+    let variances := btState.map fun (c, e) => (c, e.sigma2)
+    return Json.mkObj [
+      ("ranking", toJson ranking),
+      ("variances", toJson variances)
+    ]
+  else
+    let ranking := computeRanking signedCommits contexts
+    return Json.mkObj [("ranking", toJson ranking)]

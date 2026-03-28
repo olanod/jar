@@ -73,6 +73,9 @@ structure GenesisConfig where
   /-- When true, global ranking uses Bradley-Terry model (v3) instead of
       deduplicated net-wins (v2). Fixes observation-frequency bias. -/
   useBradleyTerry : Bool
+  /-- Initial variance (σ²) for new commits in BT ranking, scaled by BT_SCALE (10^6).
+      Higher = more uncertain. Only used when useBradleyTerry = true. -/
+  btInitialVariance : Nat
   deriving Repr
 
 /-- Protocol configuration typeclass. All configurable constants are
@@ -95,6 +98,7 @@ def GenesisConfig.v1 : GenesisConfig where
   numWeightedDimensions := 5
   useRankedTargets := false
   useBradleyTerry := false
+  btInitialVariance := 0
 
 instance GenesisVariant.v1 : GenesisVariant where
   toGenesisConfig := .v1
@@ -110,6 +114,7 @@ def GenesisConfig.v2 : GenesisConfig where
   numWeightedDimensions := 5
   useRankedTargets := true
   useBradleyTerry := false
+  btInitialVariance := 0
 
 instance GenesisVariant.v2 : GenesisVariant where
   toGenesisConfig := .v2
@@ -125,6 +130,7 @@ def GenesisConfig.v3 : GenesisConfig where
   numWeightedDimensions := 5
   useRankedTargets := true
   useBradleyTerry := true
+  btInitialVariance := 25000000  -- 25.0 × BT_SCALE
 
 instance GenesisVariant.v3 : GenesisVariant where
   toGenesisConfig := .v3

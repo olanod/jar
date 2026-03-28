@@ -22,7 +22,13 @@ def main : IO UInt32 := runJsonPipe fun j => do
   let v := activeVariant prCreatedAt
   letI := v
   let eligible := scoredCommits.filter (fun (_, epoch) => epoch < prCreatedAt)
-  if v.useRankedTargets then do
+  if v.useBradleyTerry then do
+    let ranking ← IO.ofExcept (j.getObjValAs? (List CommitId) "ranking")
+    let variances ← IO.ofExcept (j.getObjValAs? (List (CommitId × Nat)) "variances")
+    let targets := selectComparisonTargetsVariance ranking variances scoredCommits
+      (min v.rankingSize eligible.length) prId prCreatedAt
+    return Json.mkObj [("targets", toJson targets)]
+  else if v.useRankedTargets then do
     let ranking ← IO.ofExcept (j.getObjValAs? (List CommitId) "ranking")
     let targets := selectComparisonTargetsRanked ranking scoredCommits
       (min v.rankingSize eligible.length) prId prCreatedAt
