@@ -105,10 +105,11 @@ impl AuditState {
 
         let mut due = Vec::new();
         for (hash, audit) in &self.pending_audits {
-            if let Some(our_tranche) = audit.our_tranche {
-                if our_tranche <= current_tranche && !self.completed_audits.contains(hash) {
-                    due.push(*hash);
-                }
+            if let Some(our_tranche) = audit.our_tranche
+                && our_tranche <= current_tranche
+                && !self.completed_audits.contains(hash)
+            {
+                due.push(*hash);
             }
         }
         due
@@ -125,10 +126,8 @@ impl AuditState {
                 escalations.push(*hash);
             }
             // Also escalate if enough announcements to trigger it
-            if valid_count + invalid_count >= threshold {
-                if valid_count > 0 && invalid_count > 0 {
-                    escalations.push(*hash);
-                }
+            if valid_count + invalid_count >= threshold && valid_count > 0 && invalid_count > 0 {
+                escalations.push(*hash);
             }
         }
         escalations.sort();
@@ -445,7 +444,7 @@ mod tests {
 
         let ann = create_announcement(&report_hash, true, 0, &secrets[0]);
         assert!(verify_announcement(&ann, &chain_state));
-        assert_eq!(ann.is_valid, true);
+        assert!(ann.is_valid);
         assert_eq!(ann.validator_index, 0);
 
         // Invalid announcement should not verify with wrong key

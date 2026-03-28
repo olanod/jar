@@ -77,7 +77,7 @@ fn run_preimages_test(dir: &str, stem: &str) {
             err_code
         );
     } else {
-        let stats = result.expect(&format!("expected Ok but got error in {}", path));
+        let stats = result.unwrap_or_else(|_| panic!("expected Ok but got error in {}", path));
 
         // Verify post-state accounts
         let post = &json["post_state"];

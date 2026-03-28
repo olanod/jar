@@ -172,7 +172,7 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
 
     // Patch dispatch header: jump to refine at byte 0, jump to accumulate at byte 5
     ctx.code[0] = 40; // jump opcode
-    let refine_rel = (refine_pvm as i32) - 0;
+    let refine_rel = refine_pvm as i32;
     ctx.code[1..5].copy_from_slice(&refine_rel.to_le_bytes());
 
     ctx.code[5] = 40; // jump opcode
@@ -358,10 +358,13 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
             symbols_by_idx.push((name.to_string(), st_value));
             let st_type = st_info & 0xf;
             let st_bind = st_info >> 4;
-            if (st_type == 2 || st_type == 0) && (st_bind == 1 || st_bind == 2) && st_value != 0 {
-                if !name.is_empty() && !name.starts_with('$') {
-                    named_symbols.push((name.to_string(), st_value));
-                }
+            if (st_type == 2 || st_type == 0)
+                && (st_bind == 1 || st_bind == 2)
+                && st_value != 0
+                && !name.is_empty()
+                && !name.starts_with('$')
+            {
+                named_symbols.push((name.to_string(), st_value));
             }
         }
     }
@@ -400,7 +403,7 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     }
 
     // RW data: placed after ro_data (with page rounding)
-    let ro_pages = (ro_data.len() + page_size as usize - 1) / page_size as usize;
+    let ro_pages = ro_data.len().div_ceil(page_size as usize);
     let rw_pvm_base = stack_size + (ro_pages as u64 * page_size);
     let mut rw_data = Vec::new();
     if !rw_sections.is_empty() {
@@ -414,10 +417,10 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         rw_data = vec![0u8; rw_blob_size];
         for (addr, sz, d) in &rw_sections {
             let off = (*addr - rw_pvm_base.min(rw_min)) as usize;
-            if let Some(d) = d {
-                if off + sz <= rw_data.len() {
-                    rw_data[off..off + sz].copy_from_slice(d);
-                }
+            if let Some(d) = d
+                && off + sz <= rw_data.len()
+            {
+                rw_data[off..off + sz].copy_from_slice(d);
             }
         }
     }
@@ -570,31 +573,31 @@ fn translate_section_linked(
                 // skip it and set pending_load_imm to enable cascading fusion
                 // with the instruction after (load_ind, store_ind, ALU, branch).
                 let next_addr = rv_addr + 4;
-                if offset + 8 <= data.len() {
-                    if let Some(&_) = elf.lo12_targets.get(&next_addr) {
-                        let next_inst = u32::from_le_bytes([
-                            data[offset + 4],
-                            data[offset + 5],
-                            data[offset + 6],
-                            data[offset + 7],
-                        ]);
-                        let next_opcode = next_inst & 0x7f;
-                        let next_funct3 = (next_inst >> 12) & 0x7;
-                        let next_rd = ((next_inst >> 7) & 0x1f) as u8;
-                        let next_rs1 = ((next_inst >> 15) & 0x1f) as u8;
+                if offset + 8 <= data.len()
+                    && let Some(&_) = elf.lo12_targets.get(&next_addr)
+                {
+                    let next_inst = u32::from_le_bytes([
+                        data[offset + 4],
+                        data[offset + 5],
+                        data[offset + 6],
+                        data[offset + 7],
+                    ]);
+                    let next_opcode = next_inst & 0x7f;
+                    let next_funct3 = (next_inst >> 12) & 0x7;
+                    let next_rd = ((next_inst >> 7) & 0x1f) as u8;
+                    let next_rs1 = ((next_inst >> 15) & 0x1f) as u8;
 
-                        if next_opcode == 0x13 && next_funct3 == 0 && next_rs1 == rd {
-                            // LO12 ADDI: address is already complete from HI20.
-                            // Emit load_imm into the ADDI's destination register
-                            // and set pending_load_imm for cascading fusion.
-                            let dest = if next_rd != 0 { next_rd } else { rd };
-                            let pos = ctx.code.len();
-                            ctx.emit_load_imm(dest, target_addr as i64)?;
-                            ctx.pending_load_imm = Some((dest, target_addr as i64, pos));
-                            ctx.address_map.insert(next_addr, ctx.code.len() as u32);
-                            offset += 8; // skip both AUIPC and ADDI
-                            continue;
-                        }
+                    if next_opcode == 0x13 && next_funct3 == 0 && next_rs1 == rd {
+                        // LO12 ADDI: address is already complete from HI20.
+                        // Emit load_imm into the ADDI's destination register
+                        // and set pending_load_imm for cascading fusion.
+                        let dest = if next_rd != 0 { next_rd } else { rd };
+                        let pos = ctx.code.len();
+                        ctx.emit_load_imm(dest, target_addr as i64)?;
+                        ctx.pending_load_imm = Some((dest, target_addr as i64, pos));
+                        ctx.address_map.insert(next_addr, ctx.code.len() as u32);
+                        offset += 8; // skip both AUIPC and ADDI
+                        continue;
                     }
                 }
 
@@ -628,8 +631,6 @@ fn translate_section_linked(
                     let pvm_dst = ctx.require_reg(rd)?;
                     ctx.emit_inst(100); // move_reg
                     ctx.emit_data(pvm_dst | (pvm_src << 4));
-                } else if rd == 0 {
-                    ctx.emit_inst(1); // fallthrough
                 } else {
                     ctx.emit_inst(1); // fallthrough
                 }

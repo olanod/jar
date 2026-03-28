@@ -96,7 +96,7 @@ impl GrandpaState {
     fn threshold(&self) -> usize {
         let n = self.total_validators as usize;
         // 2/3 + 1 supermajority
-        (n * 2 + 2) / 3
+        (n * 2).div_ceil(3)
     }
 
     /// Update best block (called on block import/authoring).
@@ -288,14 +288,14 @@ impl GrandpaState {
     /// supermajorities reached, or timeout).
     pub fn should_advance_round(&self) -> bool {
         // Advance if we've finalized something in this round
-        let has_precommit_majority = {
+
+        {
             let mut vote_counts: BTreeMap<Hash, usize> = BTreeMap::new();
             for vote in self.precommits.values() {
                 *vote_counts.entry(vote.block_hash).or_insert(0) += 1;
             }
             vote_counts.values().any(|&c| c >= self.threshold())
-        };
-        has_precommit_majority
+        }
     }
 }
 

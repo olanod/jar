@@ -79,7 +79,7 @@ pub fn encode(params: &ErasureParams, data: &[u8]) -> Result<Vec<Vec<u8>>, Erasu
     let k = if data.is_empty() {
         1
     } else {
-        (data.len() + piece_size - 1) / piece_size
+        data.len().div_ceil(piece_size)
     };
     let padded_len = k * piece_size;
 
@@ -182,8 +182,8 @@ pub fn recover(
     // The original split_{2k}(d) produced data_shards contiguous chunks,
     // so recovery is just concatenation in shard order.
     let mut result = Vec::with_capacity(k * piece_size);
-    for j in 0..params.data_shards {
-        result.extend_from_slice(data_shards_ref[j]);
+    for shard in data_shards_ref.iter().take(params.data_shards) {
+        result.extend_from_slice(shard);
     }
 
     result.truncate(original_len);

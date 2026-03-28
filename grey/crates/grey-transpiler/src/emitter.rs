@@ -29,7 +29,7 @@ pub fn encode_natural(value: u64) -> Vec<u8> {
 /// Pack a bitmask array (one byte per bit, 0 or 1) into packed bytes (LSB first).
 /// GP eq C.9: bit i is at byte i/8, position i%8.
 pub fn pack_bitmask(bitmask: &[u8]) -> Vec<u8> {
-    let packed_len = (bitmask.len() + 7) / 8;
+    let packed_len = bitmask.len().div_ceil(8);
     let mut packed = vec![0u8; packed_len];
     for (i, &bit) in bitmask.iter().enumerate() {
         if bit != 0 {

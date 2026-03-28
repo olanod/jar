@@ -61,6 +61,7 @@ const SCRATCH: Reg = Reg::RDX;
 const CTX: Reg = Reg::R15;
 
 /// Caller-saved PVM registers that need saving around helper calls.
+#[allow(dead_code)]
 const CALLER_SAVED: [Reg; 8] = [
     Reg::RSI,
     Reg::RDI,
@@ -170,6 +171,7 @@ pub struct Compiler {
     /// Label for panic exit.
     panic_label: Label,
     /// Label for shared page fault exit (sets PAGE_FAULT + jumps to exit).
+    #[allow(dead_code)]
     fault_exit_label: Label,
     /// Label for OOG handler that reads PC from SCRATCH: stores PC, then falls through to oog_label.
     oog_pc_label: Label,
@@ -180,7 +182,9 @@ pub struct Compiler {
     /// Helper function addresses.
     helpers: HelperFns,
     /// Jump table (borrowed, read-only during compilation).
+    #[allow(dead_code)]
     jump_table_ptr: *const u32,
+    #[allow(dead_code)]
     jump_table_len: usize,
     /// Bitmask reference (1 = instruction start). Stored as raw pointer for self-referential use.
     bitmask_ptr: *const u8,
@@ -337,7 +341,7 @@ impl Compiler {
             let (opcode, category) = match crate::instruction::decode_opcode_fast(raw_byte) {
                 Some(oc) => oc,
                 None => {
-                    self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+                    self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
                     self.emit_exit(EXIT_PANIC, 0);
                     pc += 1;
                     continue;
@@ -663,6 +667,7 @@ impl Compiler {
     }
 
     /// Save caller-saved registers (PVM registers in caller-saved x86-64 regs).
+    #[allow(dead_code)]
     fn save_caller_saved(&mut self) {
         for &reg in &CALLER_SAVED {
             self.asm.push(reg);
@@ -670,6 +675,7 @@ impl Compiler {
     }
 
     /// Restore caller-saved registers (reverse order).
+    #[allow(dead_code)]
     fn restore_caller_saved(&mut self) {
         for &reg in CALLER_SAVED.iter().rev() {
             self.asm.pop(reg);
@@ -677,6 +683,7 @@ impl Compiler {
     }
 
     /// Load the JitContext pointer (R15 - CTX_OFFSET) into a register.
+    #[allow(dead_code)]
     fn emit_ctx_ptr(&mut self, dst: Reg) {
         self.asm.lea(dst, CTX, -CTX_OFFSET);
     }
@@ -768,7 +775,7 @@ impl Compiler {
         let args4 = args::decode_args(code, pc4, skip4, op4.category());
 
         // Feed instructions 2-4 to gas sim (using decoded args, no redundant decode)
-        for &(opc, ref a, p) in &[(op2, &args2, pc2), (op3, &args3, pc3), (op4, &args4, pc4)] {
+        for &(opc, a, p) in &[(op2, &args2, pc2), (op3, &args3, pc3), (op4, &args4, pc4)] {
             let fc = crate::gas_cost::fast_cost_from_decoded(opc as u8, a, p as u32, code, bitmask);
             gas_sim.feed(&fc);
         }
@@ -1050,7 +1057,6 @@ impl Compiler {
                 }
                 _ => unreachable!(),
             }
-            return;
         }
 
         #[cfg(not(feature = "signals"))]
@@ -1092,12 +1098,12 @@ impl Compiler {
             return;
         }
         // Peephole: use SIB addressing for scaled-index patterns
-        if imm == 0 {
-            if let RegDef::ScaledAdd { base, idx, shift } = self.reg_defs[rb] {
-                self.asm
-                    .lea_sib_scaled_32(SCRATCH, REG_MAP[base], REG_MAP[idx], shift);
-                return;
-            }
+        if imm == 0
+            && let RegDef::ScaledAdd { base, idx, shift } = self.reg_defs[rb]
+        {
+            self.asm
+                .lea_sib_scaled_32(SCRATCH, REG_MAP[base], REG_MAP[idx], shift);
+            return;
         }
         let rb_reg = REG_MAP[rb];
         if imm != 0 {
@@ -1212,7 +1218,7 @@ impl Compiler {
             Opcode::ShloLImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let shift = (*imm as u32 % 64) as u8;
-                    if shift >= 1 && shift <= 3 {
+                    if (1..=3).contains(&shift) {
                         self.reg_defs[*ra] = RegDef::Shifted { src: *rb, shift };
                         self.reg_defs_active |= 1u16 << *ra;
                     } else {
@@ -1223,17 +1229,17 @@ impl Compiler {
                 }
             }
             Opcode::MoveReg => {
-                if let Args::TwoReg { rd, ra } = args {
-                    if *rd != *ra {
-                        // Propagate the source's definition to the destination.
-                        self.reg_defs[*rd] = self.reg_defs[*ra];
-                        if matches!(self.reg_defs[*rd], RegDef::Unknown) {
-                            self.reg_defs_active &= !(1u16 << *rd);
-                        } else {
-                            self.reg_defs_active |= 1u16 << *rd;
-                        }
-                        self.invalidate_dependents(*rd);
+                if let Args::TwoReg { rd, ra } = args
+                    && *rd != *ra
+                {
+                    // Propagate the source's definition to the destination.
+                    self.reg_defs[*rd] = self.reg_defs[*ra];
+                    if matches!(self.reg_defs[*rd], RegDef::Unknown) {
+                        self.reg_defs_active &= !(1u16 << *rd);
+                    } else {
+                        self.reg_defs_active |= 1u16 << *rd;
                     }
+                    self.invalidate_dependents(*rd);
                 }
             }
             _ => {
@@ -1258,7 +1264,7 @@ impl Compiler {
         match opcode {
             // === A.5.1: No arguments ===
             Opcode::Trap => {
-                self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+                self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
                 self.emit_exit(EXIT_PANIC, 0);
             }
             Opcode::Fallthrough | Opcode::Unlikely => {
@@ -1270,7 +1276,7 @@ impl Compiler {
             Opcode::Ecalli => {
                 if let Args::Imm { imm } = args {
                     // Save next_pc for resumption after host call
-                    self.asm.mov_store32_imm(CTX, CTX_PC as i32, next_pc as i32);
+                    self.asm.mov_store32_imm(CTX, CTX_PC, next_pc as i32);
                     self.emit_exit(EXIT_HOST_CALL, *imm as u32);
                 }
             }
@@ -1488,7 +1494,7 @@ impl Compiler {
             }
             Opcode::Sbrk => {
                 // JAR v0.8.0: sbrk removed from ISA, replaced by grow_heap hostcall
-                self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+                self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
                 self.emit_exit(EXIT_PANIC, 0);
             }
             Opcode::CountSetBits64 => {
@@ -2430,7 +2436,7 @@ impl Compiler {
             return;
         }
         if !self.is_basic_block_start(target) {
-            self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+            self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
             self.emit_exit(EXIT_PANIC, 0);
             return;
         }
@@ -2441,7 +2447,7 @@ impl Compiler {
     /// Emit a dynamic jump (through jump table).
     fn emit_dynamic_jump(&mut self, ra: usize, imm: u64, pc: u32) {
         // Store PC for any exit path in the dynamic jump sequence
-        self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+        self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
         // addr = (φ[ra] + imm) % 2^32
         self.asm.mov_rr(SCRATCH, REG_MAP[ra]);
         if imm as i32 != 0 {
@@ -2501,7 +2507,7 @@ impl Compiler {
         self.asm.movsxd_load_sib4(Reg::RAX, Reg::RAX, SCRATCH);
         self.asm.add_r64_mem(Reg::RAX, CTX, CTX_CODE_BASE);
         // Store target PC for gas block tracking
-        self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
+        self.asm.mov_store32(CTX, CTX_PC, SCRATCH);
         // RAX = native addr, [rsp] = saved φ[11].
         // Use SCRATCH (which we no longer need) to swap.
         self.asm.mov_rr(SCRATCH, Reg::RAX); // SCRATCH = native addr
@@ -2567,7 +2573,7 @@ impl Compiler {
     ) {
         if !self.is_basic_block_start(target) {
             // Target not valid → store PC and panic if condition true (cold path)
-            self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+            self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
             self.asm.mov_ri64(SCRATCH, imm);
             self.asm.cmp_rr(reg, SCRATCH);
             self.asm.jcc_label(cc, self.panic_label);
@@ -2581,7 +2587,7 @@ impl Compiler {
     /// Emit a branch comparing two registers.
     fn emit_branch_reg(&mut self, a: Reg, b: Reg, cc: Cc, target: u32, _fallthrough: u32, pc: u32) {
         if !self.is_basic_block_start(target) {
-            self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
+            self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
             self.asm.cmp_rr(a, b);
             self.asm.jcc_label(cc, self.panic_label);
             return;
@@ -2639,6 +2645,7 @@ impl Compiler {
     }
 
     /// Three-register 64-bit ALU: rd = ra OP rb
+    #[allow(dead_code)]
     fn emit_alu3_64(&mut self, args: &Args, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
         self.emit_alu3_64_comm(args, false, op);
     }
@@ -2959,9 +2966,8 @@ impl Compiler {
     /// Emit an exit sequence that sets exit_reason and exit_arg.
     fn emit_exit(&mut self, reason: u32, arg: u32) {
         self.asm
-            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, reason as i32);
-        self.asm
-            .mov_store32_imm(CTX, CTX_EXIT_ARG as i32, arg as i32);
+            .mov_store32_imm(CTX, CTX_EXIT_REASON, reason as i32);
+        self.asm.mov_store32_imm(CTX, CTX_EXIT_ARG, arg as i32);
         self.asm.jmp_label(self.exit_label);
     }
 
@@ -2987,7 +2993,7 @@ impl Compiler {
         self.asm.lea(CTX, Reg::RDI, CTX_OFFSET);
 
         // Clear exit reason
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, 0);
+        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, 0);
 
         // --- O(1) dispatch via table lookup (before loading PVM regs) ---
         self.asm.mov_load32(SCRATCH, CTX, CTX_ENTRY_PC);
@@ -2998,9 +3004,8 @@ impl Compiler {
         self.asm.push(Reg::RAX);
 
         // Load all 13 PVM registers from context
-        for i in 0..13 {
-            self.asm
-                .mov_load64(REG_MAP[i], CTX, CTX_REGS + (i as i32) * 8);
+        for (i, &reg) in REG_MAP.iter().enumerate() {
+            self.asm.mov_load64(reg, CTX, CTX_REGS + (i as i32) * 8);
         }
 
         // Jump to the dispatch target (pop into SCRATCH, then indirect jump)
@@ -3017,11 +3022,11 @@ impl Compiler {
         // Shared OOG handler that reads PC from SCRATCH — emitted BEFORE OOG
         // stubs so backward jumps from stubs can use jmp rel8 (2 bytes).
         self.asm.bind_label(self.oog_pc_label);
-        self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
+        self.asm.mov_store32(CTX, CTX_PC, SCRATCH);
         // fall through to oog_label:
         self.asm.bind_label(self.oog_label);
         self.asm
-            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_OOG as i32);
+            .mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_OOG as i32);
         self.asm.jmp_label(self.exit_label);
 
         // Per-gas-block OOG stubs: compact format — load PC into SCRATCH,
@@ -3041,9 +3046,9 @@ impl Compiler {
         // Handler: save fault addr, pop PC, save PC, set exit reason, exit.
         let fault_pc_label = self.asm.new_label();
         self.asm.bind_label(fault_pc_label);
-        self.asm.mov_store32(CTX, CTX_EXIT_ARG as i32, SCRATCH);
+        self.asm.mov_store32(CTX, CTX_EXIT_ARG, SCRATCH);
         self.asm.pop(SCRATCH);
-        self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
+        self.asm.mov_store32(CTX, CTX_PC, SCRATCH);
         self.asm
             .mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
         self.asm.jmp_label(self.exit_label);
@@ -3060,14 +3065,13 @@ impl Compiler {
         // Panic exit
         self.asm.bind_label(self.panic_label);
         self.asm
-            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_PANIC as i32);
+            .mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PANIC as i32);
         // fall through to exit_label
 
         // Common exit: save all 13 PVM registers to context, restore callee-saved, return
         self.asm.bind_label(self.exit_label);
-        for i in 0..13 {
-            self.asm
-                .mov_store64(CTX, CTX_REGS + (i as i32) * 8, REG_MAP[i]);
+        for (i, &reg) in REG_MAP.iter().enumerate() {
+            self.asm.mov_store64(CTX, CTX_REGS + (i as i32) * 8, reg);
         }
 
         // Restore callee-saved (+ alignment padding)

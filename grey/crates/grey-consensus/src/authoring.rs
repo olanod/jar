@@ -84,14 +84,14 @@ pub fn is_slot_author_with_keypair(
                 vrf_input.extend_from_slice(&eta2.0);
                 vrf_input.push(attempt);
 
-                if let Some(ticket_id) = kp.vrf_output_for_input(&vrf_input) {
-                    if ticket_id == ticket.id.0 {
-                        // We own this ticket — find our validator index
-                        let pk_bytes = kp.public_key_bytes();
-                        for (i, v) in state.current_validators.iter().enumerate() {
-                            if v.bandersnatch.0 == pk_bytes {
-                                return Some(i as u16);
-                            }
+                if let Some(ticket_id) = kp.vrf_output_for_input(&vrf_input)
+                    && ticket_id == ticket.id.0
+                {
+                    // We own this ticket — find our validator index
+                    let pk_bytes = kp.public_key_bytes();
+                    for (i, v) in state.current_validators.iter().enumerate() {
+                        if v.bandersnatch.0 == pk_bytes {
+                            return Some(i as u16);
                         }
                     }
                 }
@@ -131,6 +131,7 @@ pub fn author_block(
 }
 
 /// Author a new block with custom guarantee, assurance, and ticket extrinsics.
+#[allow(clippy::too_many_arguments)]
 pub fn author_block_with_extrinsics(
     state: &State,
     config: &Config,

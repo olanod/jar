@@ -17,6 +17,12 @@ pub struct GasSimulator {
     max_done: u32,
 }
 
+impl Default for GasSimulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GasSimulator {
     pub fn new() -> Self {
         Self {

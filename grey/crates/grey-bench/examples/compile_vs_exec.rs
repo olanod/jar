@@ -6,7 +6,7 @@ use std::time::Instant;
 const GAS_LIMIT: u64 = 100_000_000;
 const ITERS: usize = 20;
 
-fn median(v: &mut Vec<u128>) -> u128 {
+fn median(v: &mut [u128]) -> u128 {
     v.sort();
     v[v.len() / 2]
 }

@@ -174,7 +174,7 @@ fn compute_dependencies(report: &WorkReport) -> Vec<Hash> {
     for prereq in &report.context.prerequisites {
         deps.insert(*prereq);
     }
-    for (pkg_hash, _root) in &report.segment_root_lookup {
+    for pkg_hash in report.segment_root_lookup.keys() {
         deps.insert(*pkg_hash);
     }
     deps.into_iter().collect()
@@ -306,6 +306,7 @@ struct AccContext {
 }
 
 /// Run PVM accumulation for a single service (Δ1, eq 12.24).
+#[allow(clippy::too_many_arguments)]
 fn accumulate_single_service(
     config: &Config,
     accounts: &BTreeMap<ServiceId, AccServiceAccount>,
@@ -379,7 +380,6 @@ fn accumulate_single_service(
         .map(|t| t.amount)
         .sum();
     if let Some(acc) = initial_accounts.get_mut(&service_id) {
-        if transfer_balance > 0 {}
         acc.balance = acc.balance.saturating_add(transfer_balance);
     }
 
@@ -621,6 +621,7 @@ struct FetchContext {
 }
 
 /// Run PVM accumulation with host-call loop.
+#[allow(clippy::too_many_arguments)]
 fn run_accumulate_pvm(
     config: &Config,
     code_blob: &[u8],
@@ -661,7 +662,7 @@ fn run_accumulate_pvm(
                 if out_len == 32
                     && out_ptr
                         .checked_add(32)
-                        .map_or(false, |end| end <= (1u64 << 32))
+                        .is_some_and(|end| end <= (1u64 << 32))
                 {
                     let ptr32 = out_ptr as u32;
                     let mut bytes = [0u8; 32];
@@ -719,6 +720,7 @@ fn run_accumulate_pvm(
 
 /// Handle a host call from the PVM during accumulation.
 /// Returns true to continue, false to abort.
+#[allow(clippy::too_many_arguments)]
 fn handle_host_call(
     config: &Config,
     id: u32,
@@ -740,7 +742,8 @@ fn handle_host_call(
     pvm.set_gas(pvm.gas() - host_gas_cost);
 
     // JAR v0.8.0 ID mapping: 0→gas, 1→grow_heap, 2..=27→old 1..=26, 100→log
-    let result = match id {
+
+    match id {
         0 => host_gas(pvm, regular),
         1 => host_grow_heap(pvm),
         2 => host_fetch(pvm, fetch_ctx),
@@ -769,9 +772,7 @@ fn handle_host_call(
             pvm.set_reg(7, HOST_WHAT);
             true
         }
-    };
-
-    result
+    }
 }
 
 /// gas (id=0): Return remaining gas in φ[7].
@@ -787,7 +788,7 @@ fn host_gas(pvm: &mut PvmInstance, _ctx: &mut AccContext) -> bool {
 fn host_grow_heap(pvm: &mut PvmInstance) -> bool {
     let desired = pvm.reg(7);
     let ps = javm::PVM_PAGE_SIZE;
-    let current_pages = (pvm.heap_top() as u64 + ps as u64 - 1) / ps as u64;
+    let current_pages = (pvm.heap_top() as u64).div_ceil(ps as u64);
     if desired <= current_pages || desired > (1u64 << 32) / ps as u64 {
         // No-op: already at or beyond desired, or exceeds address space
         pvm.set_reg(7, current_pages);
@@ -855,11 +856,11 @@ fn host_fetch(pvm: &mut PvmInstance, fetch_ctx: &FetchContext) -> bool {
     let l = max_len.min(data_len - f);
 
     // Dump hex for debugging
+    #[allow(clippy::if_same_then_else)]
     if mode == 0 {
     } else if mode == 1 {
     } else if mode == 14 && data.len() <= 512 {
-    } else if mode == 15 && data.len() <= 512 {
-        if data.len() > 134 {}
+    } else if mode == 15 && data.len() <= 512 && data.len() > 134 {
     }
 
     // Write data[f..f+l] to memory at buf_ptr
@@ -927,10 +928,8 @@ fn host_read(pvm: &mut PvmInstance, ctx: &mut AccContext) -> bool {
             let v_len = value.len() as u64;
             let f = offset.min(v_len) as usize;
             let l = max_len.min(v_len - f as u64) as usize;
-            if l > 0 {
-                if pvm.try_write_bytes(out_ptr, &value[f..f + l]).is_none() {
-                    return false; // page fault → PANIC
-                }
+            if l > 0 && pvm.try_write_bytes(out_ptr, &value[f..f + l]).is_none() {
+                return false; // page fault → PANIC
             }
             pvm.set_reg(7, v_len);
         } else {
@@ -1088,13 +1087,12 @@ fn host_info(pvm: &mut PvmInstance, ctx: &mut AccContext) -> bool {
         let f = offset.min(v_len);
         let l = max_len.min(v_len - f);
 
-        if l > 0 {
-            if pvm
+        if l > 0
+            && pvm
                 .try_write_bytes(out_ptr, &buf[f as usize..(f + l) as usize])
                 .is_none()
-            {
-                return false; // page fault → PANIC
-            }
+        {
+            return false; // page fault → PANIC
         }
         pvm.set_reg(7, v_len); // return |v|
     } else {
@@ -1137,18 +1135,18 @@ fn host_transfer(pvm: &mut PvmInstance, ctx: &mut AccContext) -> bool {
         return true;
     }
 
-    if let Some(dest_acc) = ctx.accounts.get(&dest) {
-        if gas_limit < dest_acc.min_memo_gas {
-            pvm.set_reg(7, HOST_LOW);
-            return true;
-        }
+    if let Some(dest_acc) = ctx.accounts.get(&dest)
+        && gas_limit < dest_acc.min_memo_gas
+    {
+        pvm.set_reg(7, HOST_LOW);
+        return true;
     }
 
-    if let Some(account) = ctx.accounts.get(&ctx.service_id) {
-        if account.balance < amount {
-            pvm.set_reg(7, HOST_CASH);
-            return true;
-        }
+    if let Some(account) = ctx.accounts.get(&ctx.service_id)
+        && account.balance < amount
+    {
+        pvm.set_reg(7, HOST_CASH);
+        return true;
     }
 
     if pvm.gas() < gas_limit {
@@ -1232,11 +1230,11 @@ fn host_eject(
     // Promote preimage_info from opaque if needed
     if !ejected.preimage_info.contains_key(&info_key) {
         let state_key = grey_merkle::state_serial::compute_preimage_info_state_key(d, &h, l as u32);
-        if let Some(account) = ctx.accounts.get_mut(&d) {
-            if let Some(v) = account.opaque_data.remove(&state_key) {
-                let timeslots = decode_preimage_info_timeslots(&v);
-                account.preimage_info.insert(info_key, timeslots);
-            }
+        if let Some(account) = ctx.accounts.get_mut(&d)
+            && let Some(v) = account.opaque_data.remove(&state_key)
+        {
+            let timeslots = decode_preimage_info_timeslots(&v);
+            account.preimage_info.insert(info_key, timeslots);
         }
     }
 
@@ -1339,10 +1337,8 @@ fn host_lookup(pvm: &mut PvmInstance, ctx: &mut AccContext) -> bool {
             let v_len = value.len() as u64;
             let f = offset.min(v_len) as usize;
             let l = max_len.min(v_len - f as u64) as usize;
-            if l > 0 {
-                if pvm.try_write_bytes(out_ptr, &value[f..f + l]).is_none() {
-                    return false; // page fault → PANIC
-                }
+            if l > 0 && pvm.try_write_bytes(out_ptr, &value[f..f + l]).is_none() {
+                return false; // page fault → PANIC
             }
             pvm.set_reg(7, v_len);
         } else {
@@ -1869,7 +1865,7 @@ fn host_forget(
         if let Some(ts) = account.preimage_info.get(&key).cloned() {
             match ts.len() {
                 0 | 2
-                    if ts.len() == 0
+                    if ts.is_empty()
                         || (ts.len() == 2 && ts[1] < timeslot.saturating_sub(d_const)) =>
                 {
                     // Remove preimage_info entry and preimage_lookup
@@ -2017,6 +2013,7 @@ fn find_free_service_id(
 /// Batch accumulation Δ* (eq 12.19).
 /// All reports in the batch are processed together — each involved service
 /// receives ALL items from ALL reports in a single PVM invocation.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn accumulate_batch(
     config: &Config,
     accounts: &BTreeMap<ServiceId, AccServiceAccount>,
@@ -2175,6 +2172,7 @@ fn accumulate_batch(
 /// n = |t| + i + |f|  — if n = 0, return (base case)
 /// g* = g + Σ(t_g for t in t) — gas augmented by transfer gas
 /// Recursive call uses f = {} (always_acc only in first batch)
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn accumulate_all(
     config: &Config,
     gas_budget: Gas,
@@ -2588,7 +2586,7 @@ fn keccak_merkle_node(leaves: &[Vec<u8>]) -> Vec<u8> {
         0 => vec![0u8; 32],
         1 => leaves[0].clone(),
         n => {
-            let mid = (n + 1) / 2; // ceil(n/2)
+            let mid = n.div_ceil(2); // ceil(n/2)
             let left = keccak_merkle_node(&leaves[..mid]);
             let right = keccak_merkle_node(&leaves[mid..]);
             let mut input = Vec::with_capacity(4 + left.len() + right.len());
@@ -2762,6 +2760,7 @@ fn ready_to_state_queue(ready: &[Vec<ReadyRecord>]) -> Vec<Vec<(WorkReport, Vec<
 /// - accumulation_stats is the S mapping: service_id → (total_gas, work_item_count) per GP eq 1892
 /// - remaining_opaque_data is the opaque service data entries after consuming entries accessed
 ///   by host calls during accumulation
+#[allow(clippy::type_complexity)]
 pub fn run_accumulation(
     config: &Config,
     state: &mut State,
@@ -2809,7 +2808,7 @@ pub fn run_accumulation(
     // Ejected services are removed from acc_state.accounts, so their opaque data
     // is correctly excluded.
     let mut remaining_opaque: Vec<([u8; 31], Vec<u8>)> = Vec::new();
-    for (_, acc) in &acc_state.accounts {
+    for acc in acc_state.accounts.values() {
         for (k, v) in &acc.opaque_data {
             remaining_opaque.push((*k, v.clone()));
         }
@@ -2829,7 +2828,7 @@ pub fn run_accumulation(
         .collect();
 
     // Log new service IDs being written back
-    for (&sid, _) in &new_services {
+    for &sid in new_services.keys() {
         if !state.services.contains_key(&sid) {}
     }
     state.services = new_services;

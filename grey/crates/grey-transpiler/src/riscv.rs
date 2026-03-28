@@ -46,9 +46,9 @@ fn map_register(rv_reg: u8) -> Result<Option<u8>, TranspileError> {
 fn encode_var_imm(imm: i32) -> (u8, Vec<u8>) {
     if imm == 0 {
         (0, vec![])
-    } else if imm >= -128 && imm <= 127 {
+    } else if (-128..=127).contains(&imm) {
         (1, vec![imm as i8 as u8])
-    } else if imm >= -32768 && imm <= 32767 {
+    } else if (-32768..=32767).contains(&imm) {
         (2, (imm as i16).to_le_bytes().to_vec())
     } else {
         (4, imm.to_le_bytes().to_vec())
@@ -148,17 +148,17 @@ impl TranslationContext {
         let funct7 = (inst >> 25) & 0x7F;
 
         // Flush pending auipc if this isn't a JALR that consumes it.
-        if opcode != 0x67 {
-            if let Some((auipc_rd, auipc_val)) = self.pending_auipc.take() {
-                self.emit_load_imm(auipc_rd, auipc_val as i64)?;
-            }
+        if opcode != 0x67
+            && let Some((auipc_rd, auipc_val)) = self.pending_auipc.take()
+        {
+            self.emit_load_imm(auipc_rd, auipc_val as i64)?;
         }
 
         // Flush pending LUI if this isn't an OP-IMM (ADDI) that consumes it.
-        if opcode != 0x13 {
-            if let Some((lui_rd, lui_val)) = self.pending_lui.take() {
-                self.emit_load_imm(lui_rd, lui_val)?;
-            }
+        if opcode != 0x13
+            && let Some((lui_rd, lui_val)) = self.pending_lui.take()
+        {
+            self.emit_load_imm(lui_rd, lui_val)?;
         }
 
         // Clear pending_load_imm if this isn't an instruction that can consume it.
@@ -203,7 +203,7 @@ impl TranslationContext {
                 // JALR
                 match funct3 {
                     0 => {
-                        let imm = ((inst as i32) >> 20) as i32;
+                        let imm = (inst as i32) >> 20;
                         self.translate_jalr(rd, rs1, imm, _addr)?;
                     }
                     _ => {
@@ -222,7 +222,7 @@ impl TranslationContext {
             }
             0x03 => {
                 // Load
-                let imm = ((inst as i32) >> 20) as i32;
+                let imm = (inst as i32) >> 20;
                 self.translate_load(funct3, rd, rs1, imm)?;
             }
             0x23 => {
@@ -232,7 +232,7 @@ impl TranslationContext {
             }
             0x13 => {
                 // OP-IMM (add_i, xor_i, etc.)
-                let imm = ((inst as i32) >> 20) as i32;
+                let imm = (inst as i32) >> 20;
                 self.translate_op_imm(funct3, funct7, rd, rs1, imm)?;
             }
             0x33 => {
@@ -241,7 +241,7 @@ impl TranslationContext {
             }
             0x1B => {
                 // OP-IMM-32 (addiw, slliw, etc.) — RV64 only
-                let imm = ((inst as i32) >> 20) as i32;
+                let imm = (inst as i32) >> 20;
                 self.translate_op_imm_32(funct3, funct7, rd, rs1, imm)?;
             }
             0x3B => {
@@ -399,48 +399,49 @@ impl TranslationContext {
         // Fuse load_imm + branch: if one operand was just loaded via load_imm,
         // use the immediate branch form instead of a two-register branch.
         // Saves one PVM instruction (the load_imm) per fused branch.
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
-            if load_val >= i32::MIN as i64 && load_val <= i32::MAX as i64 {
-                let imm = load_val as i32;
-                // Check if rs2 is the loaded register: branch_*_imm rs1, imm, target
-                if rs2 == load_rd && rs1 != load_rd {
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    let pvm_opcode = match funct3 {
-                        0 => Some(81), // BEQ → branch_eq_imm
-                        1 => Some(82), // BNE → branch_ne_imm
-                        4 => Some(87), // BLT → branch_lt_s_imm
-                        5 => Some(89), // BGE → branch_ge_s_imm
-                        6 => Some(83), // BLTU → branch_lt_u_imm
-                        7 => Some(85), // BGEU → branch_ge_u_imm
-                        _ => None,
-                    };
-                    if let Some(opc) = pvm_opcode {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        self.emit_branch_imm(opc, pvm_rs1, imm, target);
-                        return Ok(());
-                    }
-                }
-                // Check if rs1 is the loaded register: flip the comparison
-                // BEQ/BNE are symmetric. BLT(rs1,rs2) with rs1=imm → BGE(rs2,imm+1) etc.
-                // Only handle symmetric cases (EQ, NE) to avoid off-by-one complexity.
-                if rs1 == load_rd && rs2 != load_rd {
-                    let pvm_rs2 = self.require_reg(rs2)?;
-                    let pvm_opcode = match funct3 {
-                        0 => Some(81), // BEQ is symmetric → branch_eq_imm rs2, imm
-                        1 => Some(82), // BNE is symmetric → branch_ne_imm rs2, imm
-                        _ => None,     // Inequalities need careful flipping, skip for now
-                    };
-                    if let Some(opc) = pvm_opcode {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        self.emit_branch_imm(opc, pvm_rs2, imm, target);
-                        return Ok(());
-                    }
+        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
+            && load_val >= i32::MIN as i64
+            && load_val <= i32::MAX as i64
+        {
+            let imm = load_val as i32;
+            // Check if rs2 is the loaded register: branch_*_imm rs1, imm, target
+            if rs2 == load_rd && rs1 != load_rd {
+                let pvm_rs1 = self.require_reg(rs1)?;
+                let pvm_opcode = match funct3 {
+                    0 => Some(81), // BEQ → branch_eq_imm
+                    1 => Some(82), // BNE → branch_ne_imm
+                    4 => Some(87), // BLT → branch_lt_s_imm
+                    5 => Some(89), // BGE → branch_ge_s_imm
+                    6 => Some(83), // BLTU → branch_lt_u_imm
+                    7 => Some(85), // BGEU → branch_ge_u_imm
+                    _ => None,
+                };
+                if let Some(opc) = pvm_opcode {
+                    self.code.truncate(undo_pos);
+                    self.bitmask.truncate(undo_pos);
+                    self.emit_branch_imm(opc, pvm_rs1, imm, target);
+                    return Ok(());
                 }
             }
-            // Couldn't fuse — load_imm was already emitted, just clear tracking
+            // Check if rs1 is the loaded register: flip the comparison
+            // BEQ/BNE are symmetric. BLT(rs1,rs2) with rs1=imm → BGE(rs2,imm+1) etc.
+            // Only handle symmetric cases (EQ, NE) to avoid off-by-one complexity.
+            if rs1 == load_rd && rs2 != load_rd {
+                let pvm_rs2 = self.require_reg(rs2)?;
+                let pvm_opcode = match funct3 {
+                    0 => Some(81), // BEQ is symmetric → branch_eq_imm rs2, imm
+                    1 => Some(82), // BNE is symmetric → branch_ne_imm rs2, imm
+                    _ => None,     // Inequalities need careful flipping, skip for now
+                };
+                if let Some(opc) = pvm_opcode {
+                    self.code.truncate(undo_pos);
+                    self.bitmask.truncate(undo_pos);
+                    self.emit_branch_imm(opc, pvm_rs2, imm, target);
+                    return Ok(());
+                }
+            }
         }
+        // Couldn't fuse — load_imm was already emitted, just clear tracking
 
         // When one operand is x0 (zero register), use immediate branch variants
         // since PVM register 0 = RA, not zero.
@@ -529,33 +530,33 @@ impl TranslationContext {
         // Fuse load_imm + load_ind: if the base register was just loaded with
         // a constant address, use the direct load form (OneRegOneImm) instead.
         // Saves one PVM instruction per fused load.
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
-            if rs1 == load_rd {
-                let combined = load_val.wrapping_add(imm as i64);
-                if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
-                    let direct_opcode = match funct3 {
-                        0 => Some(53), // LB → load_i8
-                        1 => Some(55), // LH → load_i16
-                        2 => Some(57), // LW → load_i32
-                        3 => Some(58), // LD → load_u64
-                        4 => Some(52), // LBU → load_u8
-                        5 => Some(54), // LHU → load_u16
-                        6 => Some(56), // LWU → load_u32
-                        _ => None,
-                    };
-                    if let Some(opc) = direct_opcode {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        let pvm_rd = self.require_reg(rd)?;
-                        self.emit_inst(opc);
-                        self.emit_data(pvm_rd);
-                        self.emit_var_imm(combined as i32);
-                        return Ok(());
-                    }
+        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
+            && rs1 == load_rd
+        {
+            let combined = load_val.wrapping_add(imm as i64);
+            if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
+                let direct_opcode = match funct3 {
+                    0 => Some(53), // LB → load_i8
+                    1 => Some(55), // LH → load_i16
+                    2 => Some(57), // LW → load_i32
+                    3 => Some(58), // LD → load_u64
+                    4 => Some(52), // LBU → load_u8
+                    5 => Some(54), // LHU → load_u16
+                    6 => Some(56), // LWU → load_u32
+                    _ => None,
+                };
+                if let Some(opc) = direct_opcode {
+                    self.code.truncate(undo_pos);
+                    self.bitmask.truncate(undo_pos);
+                    let pvm_rd = self.require_reg(rd)?;
+                    self.emit_inst(opc);
+                    self.emit_data(pvm_rd);
+                    self.emit_var_imm(combined as i32);
+                    return Ok(());
                 }
             }
-            // Couldn't fuse — load_imm already emitted, just proceed
         }
+        // Couldn't fuse — load_imm already emitted, just proceed
 
         let pvm_rd = self.require_reg(rd)?;
         let pvm_rs1 = self.require_reg(rs1)?;
@@ -592,62 +593,63 @@ impl TranslationContext {
         imm: i32,
     ) -> Result<(), TranspileError> {
         // Fuse load_imm + store: check if the base address or stored value was constant.
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
-            if load_val >= i32::MIN as i64 && load_val <= i32::MAX as i64 {
-                // Case 1: Base register was loaded with constant address → direct store.
-                // store_ind_* data, base, offset  where base = constant addr
-                //   → store_* data, (addr + offset)
-                if rs1 == load_rd && rs2 != load_rd && rs2 != 0 {
-                    let combined = load_val.wrapping_add(imm as i64);
-                    if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
-                        let direct_opcode = match funct3 {
-                            0 => Some(59), // SB → store_u8
-                            1 => Some(60), // SH → store_u16
-                            2 => Some(61), // SW → store_u32
-                            3 => Some(62), // SD → store_u64
-                            _ => None,
-                        };
-                        if let Some(opc) = direct_opcode {
-                            self.code.truncate(undo_pos);
-                            self.bitmask.truncate(undo_pos);
-                            let pvm_rs2 = self.require_reg(rs2)?;
-                            self.emit_inst(opc);
-                            self.emit_data(pvm_rs2);
-                            self.emit_var_imm(combined as i32);
-                            return Ok(());
-                        }
-                    }
-                }
-                // Case 2: Value register was loaded with constant → store_imm_ind (existing).
-                if rs2 == load_rd && rs1 != load_rd {
-                    let store_val = load_val as i32;
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    let pvm_opcode = match funct3 {
-                        0 => 70, // store_imm_ind_u8
-                        1 => 71, // store_imm_ind_u16
-                        2 => 72, // store_imm_ind_u32
-                        3 => 73, // store_imm_ind_u64
-                        _ => 0,  // can't fuse
+        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
+            && load_val >= i32::MIN as i64
+            && load_val <= i32::MAX as i64
+        {
+            // Case 1: Base register was loaded with constant address → direct store.
+            // store_ind_* data, base, offset  where base = constant addr
+            //   → store_* data, (addr + offset)
+            if rs1 == load_rd && rs2 != load_rd && rs2 != 0 {
+                let combined = load_val.wrapping_add(imm as i64);
+                if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
+                    let direct_opcode = match funct3 {
+                        0 => Some(59), // SB → store_u8
+                        1 => Some(60), // SH → store_u16
+                        2 => Some(61), // SW → store_u32
+                        3 => Some(62), // SD → store_u64
+                        _ => None,
                     };
-                    if pvm_opcode != 0 {
+                    if let Some(opc) = direct_opcode {
                         self.code.truncate(undo_pos);
                         self.bitmask.truncate(undo_pos);
-                        let (lx, offset_bytes) = encode_var_imm(imm);
-                        let (ly, value_bytes) = encode_var_imm(store_val);
-                        self.emit_inst(pvm_opcode);
-                        self.emit_data(pvm_rs1 | (lx << 4));
-                        for b in &offset_bytes {
-                            self.emit_data(*b);
-                        }
-                        for b in &value_bytes {
-                            self.emit_data(*b);
-                        }
+                        let pvm_rs2 = self.require_reg(rs2)?;
+                        self.emit_inst(opc);
+                        self.emit_data(pvm_rs2);
+                        self.emit_var_imm(combined as i32);
                         return Ok(());
                     }
                 }
             }
-            // Couldn't fuse — load_imm was already emitted, just clear tracking
+            // Case 2: Value register was loaded with constant → store_imm_ind (existing).
+            if rs2 == load_rd && rs1 != load_rd {
+                let store_val = load_val as i32;
+                let pvm_rs1 = self.require_reg(rs1)?;
+                let pvm_opcode = match funct3 {
+                    0 => 70, // store_imm_ind_u8
+                    1 => 71, // store_imm_ind_u16
+                    2 => 72, // store_imm_ind_u32
+                    3 => 73, // store_imm_ind_u64
+                    _ => 0,  // can't fuse
+                };
+                if pvm_opcode != 0 {
+                    self.code.truncate(undo_pos);
+                    self.bitmask.truncate(undo_pos);
+                    let (lx, offset_bytes) = encode_var_imm(imm);
+                    let (_ly, value_bytes) = encode_var_imm(store_val);
+                    self.emit_inst(pvm_opcode);
+                    self.emit_data(pvm_rs1 | (lx << 4));
+                    for b in &offset_bytes {
+                        self.emit_data(*b);
+                    }
+                    for b in &value_bytes {
+                        self.emit_data(*b);
+                    }
+                    return Ok(());
+                }
+            }
         }
+        // Couldn't fuse — load_imm was already emitted, just clear tracking
 
         // x0 (zero register) has no PVM equivalent — PVM reg 0 is RA, not zero.
         // Use store_imm_ind_* to store a literal zero instead.
@@ -890,105 +892,106 @@ impl TranslationContext {
         // Fuse load_imm + ALU op: if one operand was just loaded via load_imm
         // and the value fits in i32, undo the load_imm and emit the immediate
         // form instead (saves one instruction).
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
-            if load_val >= i32::MIN as i64 && load_val <= i32::MAX as i64 {
-                let imm = load_val as i32;
-                // Check if rs2 is the loaded register (ADD/AND/OR/XOR rd, rs1, load_rd)
-                let (fuse_base, commutative) = if rs2 == load_rd && rs1 != load_rd {
-                    (Some(rs1), true)
-                } else if rs1 == load_rd && rs2 != load_rd && (funct7, funct3) != (0x20, 0) {
-                    // rs1 is the loaded register — only for commutative ops (not SUB)
-                    (Some(rs2), true)
-                } else {
-                    (None, false)
+        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
+            && load_val >= i32::MIN as i64
+            && load_val <= i32::MAX as i64
+        {
+            let imm = load_val as i32;
+            // Check if rs2 is the loaded register (ADD/AND/OR/XOR rd, rs1, load_rd)
+            let (fuse_base, _commutative) = if rs2 == load_rd && rs1 != load_rd {
+                (Some(rs1), true)
+            } else if rs1 == load_rd && rs2 != load_rd && (funct7, funct3) != (0x20, 0) {
+                // rs1 is the loaded register — only for commutative ops (not SUB)
+                (Some(rs2), true)
+            } else {
+                (None, false)
+            };
+
+            if let Some(base) = fuse_base {
+                let pvm_imm_opcode = match (funct7, funct3) {
+                    (0, 0) => Some(if self.is_64bit { 149 } else { 131 }), // ADD → add_imm
+                    (0, 7) => Some(132),                                   // AND → and_imm
+                    (0, 6) => Some(134),                                   // OR → or_imm
+                    (0, 4) => Some(133),                                   // XOR → xor_imm
+                    (1, 0) => Some(if self.is_64bit { 150 } else { 135 }), // MUL → mul_imm
+                    (0, 2) => Some(137),                                   // SLT → set_lt_s_imm
+                    (0, 3) => Some(136),                                   // SLTU → set_lt_u_imm
+                    _ => None,
                 };
 
-                if let Some(base) = fuse_base {
-                    let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 0) => Some(if self.is_64bit { 149 } else { 131 }), // ADD → add_imm
-                        (0, 7) => Some(132),                                   // AND → and_imm
-                        (0, 6) => Some(134),                                   // OR → or_imm
-                        (0, 4) => Some(133),                                   // XOR → xor_imm
-                        (1, 0) => Some(if self.is_64bit { 150 } else { 135 }), // MUL → mul_imm
-                        (0, 2) => Some(137),                                   // SLT → set_lt_s_imm
-                        (0, 3) => Some(136), // SLTU → set_lt_u_imm
-                        _ => None,
-                    };
-
-                    if let Some(pvm_opcode) = pvm_imm_opcode {
-                        // Undo the load_imm and emit immediate form instead.
-                        // Must update address_map for this RISC-V instruction since
-                        // its PVM offset shifted when the previous load_imm was removed.
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        self.address_map.insert(addr, undo_pos as u32);
-                        let pvm_rd = self.require_reg(rd)?;
-                        let pvm_base = self.require_reg(base)?;
-                        self.emit_inst(pvm_opcode);
-                        self.emit_data(pvm_rd | (pvm_base << 4));
-                        self.emit_var_imm(imm);
-                        return Ok(());
-                    }
-                }
-
-                // Special case: shifts with loaded shift count → shift immediate forms.
-                // SLL/SRL/SRA rd, rs1, load_rd → shlo_l/shlo_r/shar_r_imm rd, rs1, imm
-                if rs2 == load_rd && matches!((funct7, funct3), (0, 1) | (0, 5) | (0x20, 5)) {
-                    let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 1) => {
-                            if self.is_64bit {
-                                151
-                            } else {
-                                138
-                            }
-                        } // SLL → shlo_l_imm
-                        (0, 5) => {
-                            if self.is_64bit {
-                                152
-                            } else {
-                                139
-                            }
-                        } // SRL → shlo_r_imm
-                        (0x20, 5) => {
-                            if self.is_64bit {
-                                153
-                            } else {
-                                140
-                            }
-                        } // SRA → shar_r_imm
-                        _ => unreachable!(),
-                    };
+                if let Some(pvm_opcode) = pvm_imm_opcode {
+                    // Undo the load_imm and emit immediate form instead.
+                    // Must update address_map for this RISC-V instruction since
+                    // its PVM offset shifted when the previous load_imm was removed.
                     self.code.truncate(undo_pos);
                     self.bitmask.truncate(undo_pos);
                     self.address_map.insert(addr, undo_pos as u32);
                     let pvm_rd = self.require_reg(rd)?;
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    self.emit_inst(pvm_imm_opcode);
-                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    let pvm_base = self.require_reg(base)?;
+                    self.emit_inst(pvm_opcode);
+                    self.emit_data(pvm_rd | (pvm_base << 4));
                     self.emit_var_imm(imm);
                     return Ok(());
                 }
-
-                // Special case: SUB rd, rs1, load_rd → neg_add_imm rd, rs1, -imm
-                // SUB is not commutative, but if rs2 is the loaded register:
-                // rd = rs1 - imm = rs1 + (-imm)
-                if (funct7, funct3) == (0x20, 0) && rs2 == load_rd && rs1 != load_rd {
-                    let neg_imm = (-(load_val as i32) as i64) as i32;
-                    // Use add_imm with negated immediate (avoids neg_add_imm)
-                    let pvm_opcode = if self.is_64bit { 149 } else { 131 }; // add_imm
-                    self.code.truncate(undo_pos);
-                    self.bitmask.truncate(undo_pos);
-                    self.address_map.insert(addr, undo_pos as u32);
-                    let pvm_rd = self.require_reg(rd)?;
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    self.emit_inst(pvm_opcode);
-                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
-                    self.emit_var_imm(neg_imm);
-                    return Ok(());
-                }
             }
-            // Couldn't fuse — load_imm is already emitted, just proceed normally
+
+            // Special case: shifts with loaded shift count → shift immediate forms.
+            // SLL/SRL/SRA rd, rs1, load_rd → shlo_l/shlo_r/shar_r_imm rd, rs1, imm
+            if rs2 == load_rd && matches!((funct7, funct3), (0, 1) | (0, 5) | (0x20, 5)) {
+                let pvm_imm_opcode = match (funct7, funct3) {
+                    (0, 1) => {
+                        if self.is_64bit {
+                            151
+                        } else {
+                            138
+                        }
+                    } // SLL → shlo_l_imm
+                    (0, 5) => {
+                        if self.is_64bit {
+                            152
+                        } else {
+                            139
+                        }
+                    } // SRL → shlo_r_imm
+                    (0x20, 5) => {
+                        if self.is_64bit {
+                            153
+                        } else {
+                            140
+                        }
+                    } // SRA → shar_r_imm
+                    _ => unreachable!(),
+                };
+                self.code.truncate(undo_pos);
+                self.bitmask.truncate(undo_pos);
+                self.address_map.insert(addr, undo_pos as u32);
+                let pvm_rd = self.require_reg(rd)?;
+                let pvm_rs1 = self.require_reg(rs1)?;
+                self.emit_inst(pvm_imm_opcode);
+                self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                self.emit_var_imm(imm);
+                return Ok(());
+            }
+
+            // Special case: SUB rd, rs1, load_rd → neg_add_imm rd, rs1, -imm
+            // SUB is not commutative, but if rs2 is the loaded register:
+            // rd = rs1 - imm = rs1 + (-imm)
+            if (funct7, funct3) == (0x20, 0) && rs2 == load_rd && rs1 != load_rd {
+                let neg_imm = (-(load_val as i32) as i64) as i32;
+                // Use add_imm with negated immediate (avoids neg_add_imm)
+                let pvm_opcode = if self.is_64bit { 149 } else { 131 }; // add_imm
+                self.code.truncate(undo_pos);
+                self.bitmask.truncate(undo_pos);
+                self.address_map.insert(addr, undo_pos as u32);
+                let pvm_rd = self.require_reg(rd)?;
+                let pvm_rs1 = self.require_reg(rs1)?;
+                self.emit_inst(pvm_opcode);
+                self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                self.emit_var_imm(neg_imm);
+                return Ok(());
+            }
         }
+        // Couldn't fuse — load_imm is already emitted, just proceed normally
 
         // Handle x0 as source: PVM reg 0 = RA, not zero.
         if rs1 == 0 && funct7 == 0 && funct3 == 0 {
@@ -1386,68 +1389,69 @@ impl TranslationContext {
         }
 
         // Fuse load_imm + 32-bit ALU op: ADDW, MULW, SUB as negated ADD.
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
-            if load_val >= i32::MIN as i64 && load_val <= i32::MAX as i64 {
-                let imm = load_val as i32;
-                let (fuse_base, _comm) = if rs2 == load_rd && rs1 != load_rd {
-                    (Some(rs1), true)
-                } else if rs1 == load_rd && rs2 != load_rd && (funct7, funct3) != (0x20, 0) {
-                    (Some(rs2), true)
-                } else {
-                    (None, false)
-                };
+        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
+            && load_val >= i32::MIN as i64
+            && load_val <= i32::MAX as i64
+        {
+            let imm = load_val as i32;
+            let (fuse_base, _comm) = if rs2 == load_rd && rs1 != load_rd {
+                (Some(rs1), true)
+            } else if rs1 == load_rd && rs2 != load_rd && (funct7, funct3) != (0x20, 0) {
+                (Some(rs2), true)
+            } else {
+                (None, false)
+            };
 
-                if let Some(base) = fuse_base {
-                    let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 0) => Some(131), // ADDW → add_imm_32
-                        (1, 0) => Some(135), // MULW → mul_imm_32
-                        _ => None,
-                    };
-                    if let Some(pvm_opcode) = pvm_imm_opcode {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        let pvm_rd = self.require_reg(rd)?;
-                        let pvm_base = self.require_reg(base)?;
-                        self.emit_inst(pvm_opcode);
-                        self.emit_data(pvm_rd | (pvm_base << 4));
-                        self.emit_var_imm(imm);
-                        return Ok(());
-                    }
-                }
-                // 32-bit shifts with loaded shift count → shift immediate forms.
-                // SLLW/SRLW/SRAW rd, rs1, load_rd → shlo_l/shlo_r/shar_r_imm_32
-                if rs2 == load_rd && matches!((funct7, funct3), (0, 1) | (0, 5) | (0x20, 5)) {
-                    let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 1) => 138,    // SLLW → shlo_l_imm_32
-                        (0, 5) => 139,    // SRLW → shlo_r_imm_32
-                        (0x20, 5) => 140, // SRAW → shar_r_imm_32
-                        _ => unreachable!(),
-                    };
+            if let Some(base) = fuse_base {
+                let pvm_imm_opcode = match (funct7, funct3) {
+                    (0, 0) => Some(131), // ADDW → add_imm_32
+                    (1, 0) => Some(135), // MULW → mul_imm_32
+                    _ => None,
+                };
+                if let Some(pvm_opcode) = pvm_imm_opcode {
                     self.code.truncate(undo_pos);
                     self.bitmask.truncate(undo_pos);
                     let pvm_rd = self.require_reg(rd)?;
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    self.emit_inst(pvm_imm_opcode);
-                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    let pvm_base = self.require_reg(base)?;
+                    self.emit_inst(pvm_opcode);
+                    self.emit_data(pvm_rd | (pvm_base << 4));
                     self.emit_var_imm(imm);
                     return Ok(());
                 }
-
-                // SUB with loaded rs2: SUBW rd, rs1, load_rd → add_imm_32 rd, rs1, -imm
-                if (funct7, funct3) == (0x20, 0) && rs2 == load_rd && rs1 != load_rd {
-                    let neg_imm = (-(load_val as i32) as i64) as i32;
-                    self.code.truncate(undo_pos);
-                    self.bitmask.truncate(undo_pos);
-                    let pvm_rd = self.require_reg(rd)?;
-                    let pvm_rs1 = self.require_reg(rs1)?;
-                    self.emit_inst(131); // add_imm_32
-                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
-                    self.emit_var_imm(neg_imm);
-                    return Ok(());
-                }
             }
-            // Couldn't fuse
+            // 32-bit shifts with loaded shift count → shift immediate forms.
+            // SLLW/SRLW/SRAW rd, rs1, load_rd → shlo_l/shlo_r/shar_r_imm_32
+            if rs2 == load_rd && matches!((funct7, funct3), (0, 1) | (0, 5) | (0x20, 5)) {
+                let pvm_imm_opcode = match (funct7, funct3) {
+                    (0, 1) => 138,    // SLLW → shlo_l_imm_32
+                    (0, 5) => 139,    // SRLW → shlo_r_imm_32
+                    (0x20, 5) => 140, // SRAW → shar_r_imm_32
+                    _ => unreachable!(),
+                };
+                self.code.truncate(undo_pos);
+                self.bitmask.truncate(undo_pos);
+                let pvm_rd = self.require_reg(rd)?;
+                let pvm_rs1 = self.require_reg(rs1)?;
+                self.emit_inst(pvm_imm_opcode);
+                self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                self.emit_var_imm(imm);
+                return Ok(());
+            }
+
+            // SUB with loaded rs2: SUBW rd, rs1, load_rd → add_imm_32 rd, rs1, -imm
+            if (funct7, funct3) == (0x20, 0) && rs2 == load_rd && rs1 != load_rd {
+                let neg_imm = (-(load_val as i32) as i64) as i32;
+                self.code.truncate(undo_pos);
+                self.bitmask.truncate(undo_pos);
+                let pvm_rd = self.require_reg(rd)?;
+                let pvm_rs1 = self.require_reg(rs1)?;
+                self.emit_inst(131); // add_imm_32
+                self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                self.emit_var_imm(neg_imm);
+                return Ok(());
+            }
         }
+        // Couldn't fuse
 
         // Handle x0 as source: PVM reg 0 = RA, not zero.
         if rs1 == 0 {
@@ -1614,9 +1618,9 @@ impl TranslationContext {
     fn var_imm_byte_count(imm: i32) -> usize {
         if imm == 0 {
             0
-        } else if imm >= -128 && imm <= 127 {
+        } else if (-128..=127).contains(&imm) {
             1
-        } else if imm >= -32768 && imm <= 32767 {
+        } else if (-32768..=32767).contains(&imm) {
             2
         } else {
             4
@@ -1626,9 +1630,9 @@ impl TranslationContext {
     pub(crate) fn emit_var_imm(&mut self, imm: i32) {
         if imm == 0 {
             // Zero bytes — decoder gets lx=0, sign_extend(0, 0) = 0
-        } else if imm >= -128 && imm <= 127 {
+        } else if (-128..=127).contains(&imm) {
             self.emit_data(imm as i8 as u8);
-        } else if imm >= -32768 && imm <= 32767 {
+        } else if (-32768..=32767).contains(&imm) {
             let bytes = (imm as i16).to_le_bytes();
             for b in &bytes {
                 self.emit_data(*b);
@@ -1807,9 +1811,8 @@ impl TranslationContext {
                     .unwrap_or(pvm_offset as u32 - 1);
                 let relative = (pvm_target as i64 - inst_pc as i64) as i32;
                 let bytes = relative.to_le_bytes();
-                for i in 0..size as usize {
-                    self.code[pvm_offset + i] = bytes[i];
-                }
+                self.code[pvm_offset..pvm_offset + size as usize]
+                    .copy_from_slice(&bytes[..size as usize]);
             } else {
                 tracing::warn!(
                     "unresolved fixup: rv_target={:#x}, pvm_offset={}",

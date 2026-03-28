@@ -252,7 +252,7 @@ fn run_reports_test(dir: &str, stem: &str) {
         });
 
         // jar080 output may be minimal (empty ok: {}) — skip detailed comparisons
-        if ok_output.as_object().map_or(true, |o| o.is_empty()) {
+        if ok_output.as_object().is_none_or(|o| o.is_empty()) {
             return;
         }
 

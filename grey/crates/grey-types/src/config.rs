@@ -89,7 +89,7 @@ impl Config {
 
     /// Availability bitfield bytes: ceil(C / 8).
     pub fn avail_bitfield_bytes(&self) -> usize {
-        ((self.core_count as usize) + 7) / 8
+        (self.core_count as usize).div_ceil(8)
     }
 
     /// R: Rotation period in timeslots (from chainspec).

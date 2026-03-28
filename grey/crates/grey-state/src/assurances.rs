@@ -44,7 +44,7 @@ pub struct AssuranceOutput {
 /// Returns the list of newly available work reports, or an error.
 pub fn process_assurances(
     config: &Config,
-    pending_reports: &mut Vec<Option<PendingReport>>,
+    pending_reports: &mut [Option<PendingReport>],
     assurances: &[Assurance],
     current_timeslot: u32,
     parent_hash: Hash,
@@ -100,10 +100,11 @@ pub fn process_assurances(
         for core in 0..num_cores {
             let byte_idx = core / 8;
             let bit_idx = core % 8;
-            if byte_idx < a.bitfield.len() && (a.bitfield[byte_idx] & (1 << bit_idx)) != 0 {
-                if core >= pending_reports.len() || pending_reports[core].is_none() {
-                    return Err(AssuranceError::CoreNotEngaged);
-                }
+            if byte_idx < a.bitfield.len()
+                && (a.bitfield[byte_idx] & (1 << bit_idx)) != 0
+                && (core >= pending_reports.len() || pending_reports[core].is_none())
+            {
+                return Err(AssuranceError::CoreNotEngaged);
             }
         }
     }
@@ -111,34 +112,34 @@ pub fn process_assurances(
     // eq 11.16: Count assurances per core, determine available reports
     let mut assurance_counts = vec![0u32; num_cores];
     for a in assurances {
-        for core in 0..num_cores {
+        for (core, count) in assurance_counts.iter_mut().enumerate() {
             let byte_idx = core / 8;
             let bit_idx = core % 8;
             if byte_idx < a.bitfield.len() && (a.bitfield[byte_idx] & (1 << bit_idx)) != 0 {
-                assurance_counts[core] += 1;
+                *count += 1;
             }
         }
     }
 
     let mut available: Vec<WorkReport> = Vec::new();
     for core in 0..num_cores.min(pending_reports.len()) {
-        if assurance_counts[core] >= super_majority as u32 {
-            if let Some(pending) = &pending_reports[core] {
-                available.push(pending.report.clone());
-            }
+        if assurance_counts[core] >= super_majority as u32
+            && let Some(pending) = &pending_reports[core]
+        {
+            available.push(pending.report.clone());
         }
     }
 
     // eq 11.17: Clear available and timed-out reports
     let timeout = config.availability_timeout;
-    for core in 0..pending_reports.len() {
-        if let Some(pending) = &pending_reports[core] {
+    for (core, pending_report) in pending_reports.iter_mut().enumerate() {
+        if let Some(pending) = pending_report {
             let is_available =
                 assurance_counts.get(core).copied().unwrap_or(0) >= super_majority as u32;
             let is_timed_out = current_timeslot >= pending.timeslot + timeout;
 
             if is_available || is_timed_out {
-                pending_reports[core] = None;
+                *pending_report = None;
             }
         }
     }

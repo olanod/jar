@@ -156,7 +156,7 @@ pub fn run(pr: u64, founder_override: bool) -> Result<(), Box<dyn std::error::Er
     }
 
     // --- Step 8: Wait for CI ---
-    if let Err(_) = github::pr_checks_watch(pr) {
+    if github::pr_checks_watch(pr).is_err() {
         github::pr_comment(
             pr,
             &format!("**JAR Bot:** Checks failed — cannot merge ({merge_type})."),
@@ -226,7 +226,7 @@ fn update_cache(
     spec_dir: &Path,
     cache_indices: &[serde_json::Value],
     new_index: &serde_json::Value,
-    new_commit: &serde_json::Value,
+    _new_commit: &serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Update genesis.json
     let mut updated_indices = cache_indices.to_vec();
@@ -239,11 +239,11 @@ fn update_cache(
     let merge_commits = git::log_merge_commits(&genesis_commit)?;
     let mut signed_commits = Vec::new();
     for (_, message) in &merge_commits {
-        if let Some(commit_line) = git::parse_trailer(message, "Genesis-Commit") {
-            if let Ok(mut commit) = serde_json::from_str::<serde_json::Value>(&commit_line) {
-                crate::replay::expand_review_hashes_public(&mut commit);
-                signed_commits.push(commit);
-            }
+        if let Some(commit_line) = git::parse_trailer(message, "Genesis-Commit")
+            && let Ok(mut commit) = serde_json::from_str::<serde_json::Value>(&commit_line)
+        {
+            crate::replay::expand_review_hashes_public(&mut commit);
+            signed_commits.push(commit);
         }
     }
 
@@ -328,13 +328,12 @@ fn check_no_new_commits(pr: u64) -> Result<(), Box<dyn std::error::Error>> {
     let last_review_at = comments_json["comments"].as_array().and_then(|comments| {
         comments
             .iter()
-            .filter(|c| {
+            .rfind(|c| {
                 c["body"]
                     .as_str()
                     .map(|b| b.starts_with("/review"))
                     .unwrap_or(false)
             })
-            .last()
             .and_then(|c| c["createdAt"].as_str().map(|s| s.to_string()))
     });
 
@@ -394,8 +393,7 @@ fn find_ranking_snapshot(
 ) -> Option<serde_json::Value> {
     let last = indices
         .iter()
-        .filter(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))
-        .last()?;
+        .rfind(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))?;
     let commit_hash = last["commitHash"].as_str()?;
     ranking.get(commit_hash).cloned()
 }

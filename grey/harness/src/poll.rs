@@ -91,10 +91,11 @@ pub async fn check_pixel(
         return false;
     }
     let expected = format!("{r:02x}{g:02x}{b:02x}");
-    &value[offset..offset + 6] == expected
+    value[offset..offset + 6] == expected
 }
 
 /// Submit a pixel work package and wait for it to appear in storage.
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_and_verify_pixel(
     client: &RpcClient,
     service_id: u32,

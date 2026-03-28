@@ -139,9 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Deterministic sequential testnet
     if cli.seq_testnet {
         tracing::info!("Running deterministic sequential testnet");
-        return seq_testnet::run_seq_testnet(cli.rpc_port, cli.rpc_cors)
-            .await
-            .map_err(|e| e.into());
+        return seq_testnet::run_seq_testnet(cli.rpc_port, cli.rpc_cors).await;
     }
 
     // Networked testnet mode

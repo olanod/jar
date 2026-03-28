@@ -66,12 +66,12 @@ impl GuarantorState {
         }
 
         let core_count = config.core_count as usize;
-        let bitfield_bytes = (core_count + 7) / 8;
+        let bitfield_bytes = core_count.div_ceil(8);
         let mut bitfield = vec![0u8; bitfield_bytes];
 
         // Set bits for cores with pending reports that we hold chunks for
         let mut any_set = false;
-        for (&core_idx, _report_hash) in &self.available_cores {
+        for &core_idx in self.available_cores.keys() {
             let idx = core_idx as usize;
             if idx < core_count {
                 // Only set bit if there's actually a pending report on this core
@@ -108,6 +108,7 @@ impl GuarantorState {
 }
 
 /// Process a work package: refine, erasure-code, store chunks, create guarantee.
+#[allow(clippy::too_many_arguments)]
 pub fn process_work_package(
     config: &Config,
     package: &WorkPackage,
@@ -384,7 +385,7 @@ struct StateRefineContext<'a> {
 impl<'a> RefineContext for StateRefineContext<'a> {
     fn get_code(&self, code_hash: &Hash) -> Option<Vec<u8>> {
         // Code blobs are stored in preimage_lookup keyed by code_hash
-        for (_id, account) in &self.state.services {
+        for account in self.state.services.values() {
             if let Some(blob) = account.preimage_lookup.get(code_hash) {
                 return Some(blob.clone());
             }
@@ -394,11 +395,11 @@ impl<'a> RefineContext for StateRefineContext<'a> {
 
     fn get_storage(&self, service_id: u32, key: &[u8]) -> Option<Vec<u8>> {
         let account = self.state.services.get(&service_id)?;
-        account.storage.get(&key.to_vec()).cloned()
+        account.storage.get(key).cloned()
     }
 
     fn get_preimage(&self, hash: &Hash) -> Option<Vec<u8>> {
-        for (_id, account) in &self.state.services {
+        for account in self.state.services.values() {
             if let Some(data) = account.preimage_lookup.get(hash) {
                 return Some(data.clone());
             }
@@ -473,7 +474,7 @@ fn balanced_merkle_root(leaves: &[Hash]) -> Hash {
 
     let mut level = leaves.to_vec();
     while level.len() > 1 {
-        let mut next = Vec::with_capacity((level.len() + 1) / 2);
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
         for pair in level.chunks(2) {
             if pair.len() == 2 {
                 let mut buf = [0u8; 64];

@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn test_fallback_key_sequence() {
-        let validators: Vec<ValidatorKey> = (0..10).map(|i| make_validator(i)).collect();
+        let validators: Vec<ValidatorKey> = (0..10).map(make_validator).collect();
         let entropy = Hash([42u8; 32]);
 
         let keys = fallback_key_sequence(&entropy, &validators);
@@ -455,7 +455,7 @@ mod tests {
 
     #[test]
     fn test_fallback_deterministic() {
-        let validators: Vec<ValidatorKey> = (0..10).map(|i| make_validator(i)).collect();
+        let validators: Vec<ValidatorKey> = (0..10).map(make_validator).collect();
         let entropy = Hash([42u8; 32]);
 
         let keys1 = fallback_key_sequence(&entropy, &validators);

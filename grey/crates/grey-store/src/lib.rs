@@ -146,7 +146,7 @@ impl Store {
         let kvs = decode_state_kvs(val.value())
             .ok_or_else(|| StoreError::Codec("invalid state KVs".into()))?;
         let (state, _opaque) = grey_merkle::state_serial::deserialize_state(&kvs, config)
-            .map_err(|e| StoreError::Codec(e))?;
+            .map_err(StoreError::Codec)?;
         Ok(state)
     }
 

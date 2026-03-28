@@ -202,7 +202,7 @@ impl Opcode {
     pub fn from_byte(byte: u8) -> Option<Self> {
         if OPCODE_TABLE[byte as usize] != 0 {
             // SAFETY: we verified the byte is a valid opcode via lookup table
-            Some(unsafe { core::mem::transmute(byte) })
+            Some(unsafe { core::mem::transmute::<u8, Opcode>(byte) })
         } else {
             None
         }
@@ -389,7 +389,7 @@ static OPCODE_COMBINED: [u8; 256] = {
 pub fn decode_opcode_fast(b: u8) -> Option<(Opcode, InstructionCategory)> {
     let entry = OPCODE_COMBINED[b as usize];
     if entry & 0x80 != 0 {
-        let opcode = unsafe { core::mem::transmute(b) };
+        let opcode = unsafe { core::mem::transmute::<u8, Opcode>(b) };
         let category = CATEGORY_LUT[b as usize];
         Some((opcode, category))
     } else {

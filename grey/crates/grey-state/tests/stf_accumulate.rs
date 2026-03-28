@@ -135,7 +135,7 @@ fn parse_state(v: &serde_json::Value) -> AccumulateState {
             slot.as_array()
                 .unwrap()
                 .iter()
-                .map(|rr| parse_ready_record(rr))
+                .map(parse_ready_record)
                 .collect()
         })
         .collect();
@@ -157,7 +157,7 @@ fn parse_state(v: &serde_json::Value) -> AccumulateState {
         .as_array()
         .unwrap()
         .iter()
-        .map(|a| parse_service_account(a))
+        .map(parse_service_account)
         .collect();
 
     AccumulateState {
@@ -180,7 +180,7 @@ fn parse_input(v: &serde_json::Value) -> AccumulateInput {
             .as_array()
             .unwrap()
             .iter()
-            .map(|r| parse_work_report(r))
+            .map(parse_work_report)
             .collect(),
     }
 }

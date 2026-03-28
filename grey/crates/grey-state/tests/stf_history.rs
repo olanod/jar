@@ -31,7 +31,7 @@ fn recent_blocks_from_json(json: &serde_json::Value) -> RecentBlocks {
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| block_info_from_json(v))
+        .map(block_info_from_json)
         .collect();
 
     let peaks: Vec<Option<Hash>> = json["mmr"]["peaks"]

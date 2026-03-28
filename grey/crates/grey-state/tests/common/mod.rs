@@ -143,7 +143,7 @@ pub fn parse_work_report(json: &serde_json::Value) -> WorkReport {
         auth_gas_used: json["auth_gas_used"].as_u64().unwrap_or(0),
         auth_output: json["auth_output"]
             .as_str()
-            .map(|s| decode_hex(s))
+            .map(decode_hex)
             .unwrap_or_default(),
         segment_root_lookup,
         results,

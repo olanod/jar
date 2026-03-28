@@ -17,7 +17,7 @@ fn parse_validators(arr: &serde_json::Value) -> Vec<ValidatorKey> {
     arr.as_array()
         .unwrap()
         .iter()
-        .map(|v| parse_validator(v))
+        .map(parse_validator)
         .collect()
 }
 

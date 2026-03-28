@@ -251,7 +251,7 @@ pub fn process_work_package(
     // 1. Look up the authorizer code
     let auth_code = ctx
         .get_code(&package.auth_code_hash)
-        .ok_or_else(|| RefineError::CodeNotFound(package.auth_code_hash))?;
+        .ok_or(RefineError::CodeNotFound(package.auth_code_hash))?;
 
     // 2. Run is-authorized (Ψ_I)
     // For now, use a simple encoding of the work package
@@ -273,7 +273,7 @@ pub fn process_work_package(
     for item in &package.items {
         let item_code = ctx
             .get_code(&item.code_hash)
-            .ok_or_else(|| RefineError::CodeNotFound(item.code_hash))?;
+            .ok_or(RefineError::CodeNotFound(item.code_hash))?;
 
         let refine_result = invoke_refine(config, &item_code, item, export_offset);
         export_offset += refine_result.exported_segments.len() as u16;

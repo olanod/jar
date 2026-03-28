@@ -373,10 +373,10 @@ pub fn process_reports(
             }
 
             // Check output size
-            if let WorkResult::Ok(ref data) = digest.result {
-                if data.len() > MAX_OUTPUT_PER_ITEM {
-                    return Err(ReportError::WorkReportTooBig);
-                }
+            if let WorkResult::Ok(ref data) = digest.result
+                && data.len() > MAX_OUTPUT_PER_ITEM
+            {
+                return Err(ReportError::WorkReportTooBig);
             }
 
             total_gas = total_gas.saturating_add(digest.accumulate_gas);

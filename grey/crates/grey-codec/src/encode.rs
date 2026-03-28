@@ -697,7 +697,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|r| work_digest_from_json(r))
+                .map(work_digest_from_json)
                 .collect(),
         }
     }
@@ -735,7 +735,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|i| work_item_from_json(i))
+                .map(work_item_from_json)
                 .collect(),
         };
 
@@ -1010,7 +1010,7 @@ mod tests {
                         .as_array()
                         .unwrap()
                         .iter()
-                        .map(|t| ticket_from_json(t))
+                        .map(ticket_from_json)
                         .collect(),
                 )
             },

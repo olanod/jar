@@ -43,7 +43,7 @@ fn merkle_node(leaves: &[&[u8]], hash_fn: fn(&[u8]) -> Hash) -> Vec<u8> {
         0 => vec![0u8; 32],
         1 => leaves[0].to_vec(),
         n => {
-            let mid = (n + 1) / 2; // ceil(n/2)
+            let mid = n.div_ceil(2); // ceil(n/2)
             let left = merkle_node(&leaves[..mid], hash_fn);
             let right = merkle_node(&leaves[mid..], hash_fn);
             let mut input = Vec::with_capacity(4 + left.len() + right.len());

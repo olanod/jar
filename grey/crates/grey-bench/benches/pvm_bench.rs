@@ -271,7 +271,7 @@ fn bench_ecrecover(c: &mut Criterion) {
     let pvm_blob = polkavm_ecrecover_blob();
     let ecrecover_gas: u64 = i64::MAX as u64;
 
-    let pvm_compiler = try_make_polkavm_module(&pvm_blob, BackendKind::Compiler);
+    let pvm_compiler = try_make_polkavm_module(pvm_blob, BackendKind::Compiler);
 
     let mut group = c.benchmark_group("ecrecover");
     group.sample_size(10); // ecrecover is slow — fewer samples
@@ -301,8 +301,7 @@ fn bench_ecrecover(c: &mut Criterion) {
 
     group.bench_function("grey-interpreter", |b| {
         b.iter(|| {
-            let mut pvm =
-                javm::program::initialize_program(&grey_blob, &[], ecrecover_gas).unwrap();
+            let mut pvm = javm::program::initialize_program(grey_blob, &[], ecrecover_gas).unwrap();
             loop {
                 let (exit, _) = pvm.run();
                 match exit {
@@ -318,7 +317,7 @@ fn bench_ecrecover(c: &mut Criterion) {
     group.bench_function("grey-recompiler", |b| {
         b.iter(|| {
             let mut pvm =
-                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                javm::recompiler::initialize_program_recompiled(grey_blob, &[], ecrecover_gas)
                     .unwrap();
             loop {
                 match pvm.run() {
@@ -335,7 +334,7 @@ fn bench_ecrecover(c: &mut Criterion) {
     group.bench_function("grey-recompiler-compile", |b| {
         b.iter(|| {
             std::hint::black_box(
-                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                javm::recompiler::initialize_program_recompiled(grey_blob, &[], ecrecover_gas)
                     .unwrap(),
             );
         })
@@ -346,7 +345,7 @@ fn bench_ecrecover(c: &mut Criterion) {
     group.bench_function("grey-recompiler-exec", |b| {
         b.iter_batched(
             || {
-                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                javm::recompiler::initialize_program_recompiled(grey_blob, &[], ecrecover_gas)
                     .unwrap()
             },
             |mut pvm| {
@@ -363,7 +362,7 @@ fn bench_ecrecover(c: &mut Criterion) {
         );
     });
 
-    let pvm_interp = try_make_polkavm_module(&pvm_blob, BackendKind::Interpreter);
+    let pvm_interp = try_make_polkavm_module(pvm_blob, BackendKind::Interpreter);
     if let Some((_, ref pvm_interp_mod)) = pvm_interp {
         group.bench_function("polkavm-interpreter", |b| {
             b.iter(|| {
@@ -418,14 +417,14 @@ fn bench_ecrecover(c: &mut Criterion) {
                 let engine = Engine::new(&pvm_config).unwrap();
                 let mut mc = ModuleConfig::new();
                 mc.set_gas_metering(Some(GasMeteringKind::Sync));
-                std::hint::black_box(Module::new(&engine, &mc, pvm_blob.clone().into()).unwrap());
+                std::hint::black_box(Module::new(&engine, &mc, pvm_blob.into()).unwrap());
             })
         });
         group.bench_function("polkavm-compiler-full", |b| {
             b.iter(|| {
                 let mut mc = ModuleConfig::new();
                 mc.set_gas_metering(Some(GasMeteringKind::Sync));
-                let module = Module::new(engine, &mc, pvm_blob.clone().into()).unwrap();
+                let module = Module::new(engine, &mc, pvm_blob.into()).unwrap();
                 let mut inst = module.instantiate().unwrap();
                 inst.set_gas(ecrecover_gas as i64);
                 if let Some(export) = module.exports().next() {

@@ -227,7 +227,7 @@ impl FlatMemory {
     /// Pages [0, heap_top) remain PROT_READ|PROT_WRITE.
     #[cfg(feature = "signals")]
     fn install_guard_pages(&self, heap_top: u32) {
-        let heap_top_page = (heap_top as usize + 4095) / 4096;
+        let heap_top_page = (heap_top as usize).div_ceil(4096);
         let guard_start = unsafe { self.buf.add(heap_top_page * 4096) };
         let guard_len = FLAT_BUF_SIZE - heap_top_page * 4096;
         if guard_len > 0 {
@@ -240,8 +240,8 @@ impl FlatMemory {
     /// Make pages in [old_top, new_top) accessible after heap growth.
     #[cfg(feature = "signals")]
     fn update_guard_pages(&self, old_top: u32, new_top: u32) {
-        let old_page = (old_top as usize + 4095) / 4096;
-        let new_page = (new_top as usize + 4095) / 4096;
+        let old_page = (old_top as usize).div_ceil(4096);
+        let new_page = (new_top as usize).div_ceil(4096);
         if new_page > old_page {
             let start = unsafe { self.buf.add(old_page * 4096) };
             let len = (new_page - old_page) * 4096;
@@ -449,8 +449,8 @@ extern "sysv64" fn sbrk_helper(ctx: *mut JitContext, size: u64) -> u64 {
     // With signals feature, make newly accessible pages PROT_READ|PROT_WRITE.
     #[cfg(feature = "signals")]
     if !ctx.flat_buf.is_null() {
-        let old_page = (old_top as usize + 4095) / 4096;
-        let new_page = (new_top_u32 as usize + 4095) / 4096;
+        let old_page = (old_top as usize).div_ceil(4096);
+        let new_page = (new_top_u32 as usize).div_ceil(4096);
         if new_page > old_page {
             unsafe {
                 let start = ctx.flat_buf.add(old_page * 4096);
@@ -556,7 +556,7 @@ impl RecompiledPvm {
 
         // Set up pointers
         ctx.jt_ptr = jump_table.as_ptr();
-        ctx.bb_starts = bitmask.as_ptr() as *const u8;
+        ctx.bb_starts = bitmask.as_ptr();
 
         if debug {
             tracing::debug!(
@@ -588,7 +588,7 @@ impl RecompiledPvm {
             code.len(),
             true, // use mmap-backed assembler
         );
-        let compile_result = compiler.compile(&code, &bitmask);
+        let compile_result = compiler.compile(code, &bitmask);
         let _t_compile = _t2.elapsed();
         let dispatch_table = compile_result.dispatch_table;
 

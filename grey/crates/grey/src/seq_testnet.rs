@@ -9,14 +9,14 @@
 
 use grey_codec::header_codec::compute_header_hash;
 use grey_consensus::authoring;
-use grey_consensus::genesis::{ValidatorSecrets, create_genesis};
+use grey_consensus::genesis::create_genesis;
 use grey_rpc::{self, RpcCommand};
 use grey_store::Store;
 use grey_types::config::Config;
-use grey_types::header::{Assurance, Block, Guarantee};
+use grey_types::header::{Assurance, Guarantee};
 use grey_types::state::{ServiceAccount, State};
 use grey_types::work::WorkPackage;
-use grey_types::{BandersnatchPublicKey, Hash, ServiceId, Timeslot};
+use grey_types::{BandersnatchPublicKey, Hash, Timeslot};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -28,21 +28,21 @@ include!(concat!(env!("OUT_DIR"), "/service_blobs.rs"));
 
 /// Per-node state in the sequential testnet.
 struct SeqNode {
-    index: u16,
+    _index: u16,
     state: State,
-    grandpa: GrandpaState,
+    _grandpa: GrandpaState,
     guarantor_state: GuarantorState,
-    collected_assurances: Vec<Assurance>,
+    _collected_assurances: Vec<Assurance>,
 }
 
 impl SeqNode {
     fn new(index: u16, state: State, total_validators: u16) -> Self {
         Self {
-            index,
+            _index: index,
             state,
-            grandpa: GrandpaState::new(total_validators),
+            _grandpa: GrandpaState::new(total_validators),
             guarantor_state: GuarantorState::new(),
-            collected_assurances: Vec::new(),
+            _collected_assurances: Vec::new(),
         }
     }
 }
@@ -64,7 +64,7 @@ pub async fn run_seq_testnet(
     let tmp_dir = std::env::temp_dir().join(format!("grey-seq-testnet-{}", std::process::id()));
     std::fs::create_dir_all(&tmp_dir)?;
     let db_path = tmp_dir.join("node-0.redb");
-    let store = Arc::new(Store::open(&db_path.to_str().unwrap())?);
+    let store = Arc::new(Store::open(db_path.to_str().unwrap())?);
 
     // Set up RPC
     let (rpc_state, mut rpc_rx) = grey_rpc::create_rpc_channel(store.clone(), config.clone(), 0);
@@ -150,7 +150,6 @@ pub async fn run_seq_testnet(
         let slot = current_slot;
 
         // Find author for this slot
-        let mut block_produced = false;
         for (i, secret) in secrets.iter().enumerate() {
             let pk = BandersnatchPublicKey(secret.bandersnatch.public_key_bytes());
             if let Some(author_idx) = authoring::is_slot_author_with_keypair(
@@ -216,11 +215,7 @@ pub async fn run_seq_testnet(
                         let _ = store.set_head(&header_hash, slot);
 
                         // Simple depth-based finalization
-                        let finalized_slot = if slot > finality_depth {
-                            slot - finality_depth
-                        } else {
-                            0
-                        };
+                        let finalized_slot = slot.saturating_sub(finality_depth);
 
                         // Update RPC status (use try_write to avoid blocking)
                         if let Ok(mut status) = rpc_state.status.try_write() {
@@ -232,24 +227,24 @@ pub async fn run_seq_testnet(
                         }
 
                         // Apply to all other nodes too
+                        #[allow(clippy::needless_range_loop)]
                         for j in 0..nodes.len() {
-                            if j != i {
-                                if let Ok((ns, _)) = grey_state::transition::apply_with_config(
+                            if j != i
+                                && let Ok((ns, _)) = grey_state::transition::apply_with_config(
                                     &nodes[j].state,
                                     &block,
                                     &config,
                                     &[],
-                                ) {
-                                    nodes[j].state = ns;
-                                }
+                                )
+                            {
+                                nodes[j].state = ns;
                             }
                         }
 
                         nodes[i].state = new_state;
                         blocks_produced += 1;
-                        block_produced = true;
 
-                        if blocks_produced % 10 == 0 || blocks_produced <= 5 {
+                        if blocks_produced.is_multiple_of(10) || blocks_produced <= 5 {
                             tracing::info!(
                                 "Slot {slot}: block #{blocks_produced} by v{author_idx}, hash=0x{}",
                                 hex::encode(&header_hash.0[..8])
@@ -267,7 +262,7 @@ pub async fn run_seq_testnet(
         // Yield to tokio periodically so the RPC server can process requests.
         // Without this, the slot loop monopolizes the runtime and RPC calls
         // never get a chance to execute.
-        if slot % 2 == 0 {
+        if slot.is_multiple_of(2) {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
     }

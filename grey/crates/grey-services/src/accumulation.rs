@@ -224,7 +224,7 @@ pub fn accumulate_batch(
             involved.insert(digest.service_id);
         }
     }
-    for (service_id, _) in always_accumulate {
+    for service_id in always_accumulate.keys() {
         involved.insert(*service_id);
     }
     for transfer in transfers {
@@ -366,20 +366,20 @@ pub fn integrate_preimages(
     timeslot: Timeslot,
 ) {
     for (service_id, data) in preimages {
-        if let Some(account) = services.get_mut(service_id) {
-            if is_preimage_solicited(account, data) {
-                let hash = grey_crypto::blake2b_256(data);
-                let len = data.len() as u32;
+        if let Some(account) = services.get_mut(service_id)
+            && is_preimage_solicited(account, data)
+        {
+            let hash = grey_crypto::blake2b_256(data);
+            let len = data.len() as u32;
 
-                // Store the actual data
-                account.preimage_lookup.insert(hash, data.clone());
+            // Store the actual data
+            account.preimage_lookup.insert(hash, data.clone());
 
-                // Update preimage info with provision timeslot
-                if let Some(info) = account.preimage_info.get_mut(&(hash, len)) {
-                    if info.len() < 3 {
-                        info.push(timeslot);
-                    }
-                }
+            // Update preimage info with provision timeslot
+            if let Some(info) = account.preimage_info.get_mut(&(hash, len))
+                && info.len() < 3
+            {
+                info.push(timeslot);
             }
         }
     }

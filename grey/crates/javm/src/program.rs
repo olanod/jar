@@ -53,7 +53,7 @@ pub fn deblob(blob: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u32>)> {
     offset += code_len;
 
     // Read bitmask: packed bitfield, ceil(code_len/8) bytes (eq C.9)
-    let bitmask_bytes = (code_len + 7) / 8;
+    let bitmask_bytes = code_len.div_ceil(8);
     if offset + bitmask_bytes > blob.len() {
         return None;
     }
@@ -126,11 +126,11 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
     let (code, bitmask, jump_table) = deblob(program_data)?;
 
     // JAR v0.8.0: basic block prevalidation
-    if !validate_basic_blocks(&code, &bitmask, &jump_table) {
+    if !validate_basic_blocks(code, &bitmask, &jump_table) {
         return None;
     }
 
-    let page_round = |x: u32| -> u32 { ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
+    let page_round = |x: u32| -> u32 { x.div_ceil(PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
 
     // Linear layout: stack | args | roData | rwData | heap
     let s = page_round(stack_size); // stack: [0, s)
@@ -250,11 +250,11 @@ pub fn parse_program_blob<'a>(
     let program_data = &blob[offset..offset + code_len];
     let (code, bitmask, jump_table) = deblob(program_data)?;
 
-    if !validate_basic_blocks(&code, &bitmask, &jump_table) {
+    if !validate_basic_blocks(code, &bitmask, &jump_table) {
         return None;
     }
 
-    let page_round = |x: u32| -> u32 { ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
+    let page_round = |x: u32| -> u32 { x.div_ceil(PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
 
     let s = page_round(stack_size);
     let arg_start = s;
