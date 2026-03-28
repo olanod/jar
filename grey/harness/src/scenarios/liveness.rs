@@ -134,7 +134,7 @@ async fn run_inner(client: &RpcClient) -> Result<(), String> {
         }
 
         // Log progress every 10 blocks
-        if blocks_observed > 0 && blocks_observed % 10 == 0 {
+        if blocks_observed > 0 && blocks_observed.is_multiple_of(10) {
             info!(
                 "{blocks_observed}/{TARGET_BLOCKS} blocks: head={} finalized={} lag={lag}",
                 status.head_slot, status.finalized_slot

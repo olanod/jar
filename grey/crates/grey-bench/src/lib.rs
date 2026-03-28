@@ -547,7 +547,7 @@ mod tests_sort {
                 other => {
                     eprintln!("Exit: {:?} at PC={}", other, pvm.pc);
                     let len = pvm.pc_trace.len();
-                    let start = if len > 30 { len - 30 } else { 0 };
+                    let start = len.saturating_sub(30);
                     for (pc, opcode) in &pvm.pc_trace[start..] {
                         eprintln!("  PC={} opcode={}", pc, opcode);
                     }
@@ -561,7 +561,7 @@ mod tests_sort {
     #[test]
     fn test_ecrecover_code_size() {
         let grey_blob = grey_ecrecover_blob();
-        let grey_pvm = javm::program::initialize_program(&grey_blob, &[], 1000).unwrap();
+        let grey_pvm = javm::program::initialize_program(grey_blob, &[], 1000).unwrap();
         let grey_inst_count: usize = grey_pvm.bitmask.iter().filter(|&&b| b == 1).count();
         eprintln!(
             "Grey PVM:  code={} bytes, {} instructions",
@@ -576,7 +576,7 @@ mod tests_sort {
     #[test]
     fn test_grey_ecrecover() {
         let blob = grey_ecrecover_blob();
-        let mut pvm = javm::program::initialize_program(&blob, &[], 100_000_000_000).unwrap();
+        let mut pvm = javm::program::initialize_program(blob, &[], 100_000_000_000).unwrap();
         loop {
             let (exit, _) = pvm.run();
             match exit {
@@ -608,7 +608,7 @@ mod tests_sort {
         let gas = 100_000_000_000u64;
 
         // Run interpreter
-        let mut interp = javm::program::initialize_program(&blob, &[], gas).unwrap();
+        let mut interp = javm::program::initialize_program(blob, &[], gas).unwrap();
         loop {
             match interp.run().0 {
                 javm::ExitReason::Halt => break,
@@ -621,7 +621,7 @@ mod tests_sort {
         let interp_a0 = interp.registers[7];
 
         // Run recompiler
-        let mut recomp = javm::recompiler::initialize_program_recompiled(&blob, &[], gas).unwrap();
+        let mut recomp = javm::recompiler::initialize_program_recompiled(blob, &[], gas).unwrap();
         loop {
             match recomp.run() {
                 javm::ExitReason::Halt => break,

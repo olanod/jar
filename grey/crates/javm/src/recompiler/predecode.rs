@@ -114,10 +114,11 @@ pub fn predecode(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<PreDeco
             Args::TwoRegOffset { offset, .. } => Some(offset as usize),
             _ => None,
         };
-        if let Some(t) = target_pc {
-            if t < pc_to_idx.len() && pc_to_idx[t] != u32::MAX {
-                is_gas_start[pc_to_idx[t] as usize] = true;
-            }
+        if let Some(t) = target_pc
+            && t < pc_to_idx.len()
+            && pc_to_idx[t] != u32::MAX
+        {
+            is_gas_start[pc_to_idx[t] as usize] = true;
         }
 
         // Fallthrough after terminator
@@ -200,10 +201,12 @@ pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Ve
                 }
                 _ => None,
             };
-            if let Some(t) = target_pc {
-                if t < code.len() && t < bitmask.len() && bitmask[t] == 1 {
-                    gas_starts[t] = true;
-                }
+            if let Some(t) = target_pc
+                && t < code.len()
+                && t < bitmask.len()
+                && bitmask[t] == 1
+            {
+                gas_starts[t] = true;
             }
 
             // Post-terminator fallthrough

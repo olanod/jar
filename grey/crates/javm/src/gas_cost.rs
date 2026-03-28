@@ -87,7 +87,7 @@ impl ExecUnits {
         mul: 0,
         div: 0,
     };
-    fn to_eu_byte(self) -> u8 {
+    fn _to_eu_byte(self) -> u8 {
         if self.div > 0 {
             5
         } else if self.mul > 0 {
@@ -437,7 +437,7 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
         147 | 148 => mk(2, 3, ExecUnits::ALU, r1(ra), r1(rb)),
 
         // Min/Max
-        227 | 228 | 229 | 230 => {
+        227..=230 => {
             let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
                 2
             } else {
@@ -615,24 +615,24 @@ fn gas_sim_traced(code: &[u8], bitmask: &[u8], start_pc: usize, trace: bool) -> 
         }
 
         // Priority 2: Dispatch
-        if s.dispatch_slots > 0 {
-            if let Some(idx) = find_ready_entry(&s.rob, s.exec_units) {
-                let eu = s.rob[idx].exec_units;
-                #[cfg(feature = "std")]
-                if trace {
-                    eprintln!(
-                        "  [{}] DISPATCH rob[{}] cy={} dispatch_left={}",
-                        iter,
-                        idx,
-                        s.rob[idx].cycles_left,
-                        s.dispatch_slots - 1
-                    );
-                }
-                s.rob[idx].state = RobState::Exe;
-                s.dispatch_slots -= 1;
-                s.exec_units = s.exec_units.sub(eu);
-                continue;
+        if s.dispatch_slots > 0
+            && let Some(idx) = find_ready_entry(&s.rob, s.exec_units)
+        {
+            let eu = s.rob[idx].exec_units;
+            #[cfg(feature = "std")]
+            if trace {
+                eprintln!(
+                    "  [{}] DISPATCH rob[{}] cy={} dispatch_left={}",
+                    iter,
+                    idx,
+                    s.rob[idx].cycles_left,
+                    s.dispatch_slots - 1
+                );
             }
+            s.rob[idx].state = RobState::Exe;
+            s.dispatch_slots -= 1;
+            s.exec_units = s.exec_units.sub(eu);
+            continue;
         }
 
         // Priority 3: Done
@@ -738,75 +738,77 @@ fn gas_sim_decoded(
     };
 
     for _ in 0..100_000 {
-        if let Some(idx) = s.ip {
-            if idx < instrs.len() && s.decode_slots > 0 && s.rob.len() < 32 {
-                let instr = &instrs[idx];
-                let opcode_byte = instr.opcode as u8;
+        if let Some(idx) = s.ip
+            && idx < instrs.len()
+            && s.decode_slots > 0
+            && s.rob.len() < 32
+        {
+            let instr = &instrs[idx];
+            let opcode_byte = instr.opcode as u8;
 
-                // Extract register fields from decoded args
-                let (ra, rb, rd) = match instr.args {
-                    Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8),
-                    Args::TwoReg { rd: d, ra: a } => (a as u8, 0xFF, d as u8),
-                    Args::TwoRegImm { ra, rb, .. }
-                    | Args::TwoRegOffset { ra, rb, .. }
-                    | Args::TwoRegTwoImm { ra, rb, .. } => (ra as u8, rb as u8, 0xFF),
-                    Args::RegImm { ra, .. }
-                    | Args::RegExtImm { ra, .. }
-                    | Args::RegTwoImm { ra, .. }
-                    | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
-                    _ => (0xFF, 0xFF, 0xFF),
-                };
+            // Extract register fields from decoded args
+            let (ra, rb, rd) = match instr.args {
+                Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8),
+                Args::TwoReg { rd: d, ra: a } => (a as u8, 0xFF, d as u8),
+                Args::TwoRegImm { ra, rb, .. }
+                | Args::TwoRegOffset { ra, rb, .. }
+                | Args::TwoRegTwoImm { ra, rb, .. } => (ra as u8, rb as u8, 0xFF),
+                Args::RegImm { ra, .. }
+                | Args::RegExtImm { ra, .. }
+                | Args::RegTwoImm { ra, .. }
+                | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
+                _ => (0xFF, 0xFF, 0xFF),
+            };
 
-                // Compute instruction cost using the same logic but with decoded regs
-                let cost = instruction_cost_fast(opcode_byte, ra, rb, rd, instr, code, bitmask);
+            // Compute instruction cost using the same logic but with decoded regs
+            let cost = instruction_cost_fast(opcode_byte, ra, rb, rd, instr, code, bitmask);
 
-                let mut deps = [0xFF_u8; 4];
-                let mut dep_count = 0u8;
-                for (i, e) in s.rob.iter().enumerate() {
-                    if e.state != RobState::Fin
-                        && e.dest_regs.iter().any(|dr| cost.src_regs.contains(*dr))
-                        && dep_count < 4
-                    {
-                        deps[dep_count as usize] = i as u8;
-                        dep_count += 1;
-                    }
+            let mut deps = [0xFF_u8; 4];
+            let mut dep_count = 0u8;
+            for (i, e) in s.rob.iter().enumerate() {
+                if e.state != RobState::Fin
+                    && e.dest_regs.iter().any(|dr| cost.src_regs.contains(*dr))
+                    && dep_count < 4
+                {
+                    deps[dep_count as usize] = i as u8;
+                    dep_count += 1;
                 }
-
-                s.decode_slots = s.decode_slots.saturating_sub(cost.decode_slots);
-                let next_ip = if cost.is_terminator {
-                    None
-                } else {
-                    Some(idx + 1)
-                };
-
-                if cost.is_move_reg {
-                    s.ip = next_ip;
-                } else {
-                    s.rob.push(RobEntry {
-                        state: RobState::Wait,
-                        cycles_left: cost.cycles,
-                        deps,
-                        dep_count,
-                        dest_regs: cost.dest_regs,
-                        exec_units: cost.exec_units,
-                    });
-                    s.ip = next_ip;
-                }
-                continue;
             }
+
+            s.decode_slots = s.decode_slots.saturating_sub(cost.decode_slots);
+            let next_ip = if cost.is_terminator {
+                None
+            } else {
+                Some(idx + 1)
+            };
+
+            if cost.is_move_reg {
+                s.ip = next_ip;
+            } else {
+                s.rob.push(RobEntry {
+                    state: RobState::Wait,
+                    cycles_left: cost.cycles,
+                    deps,
+                    dep_count,
+                    dest_regs: cost.dest_regs,
+                    exec_units: cost.exec_units,
+                });
+                s.ip = next_ip;
+            }
+            continue;
         }
 
-        if s.dispatch_slots > 0 {
-            if let Some(idx) = find_ready_entry(&s.rob, s.exec_units) {
-                let eu = s.rob[idx].exec_units;
-                s.rob[idx].state = RobState::Exe;
-                s.dispatch_slots -= 1;
-                s.exec_units = s.exec_units.sub(eu);
-                continue;
-            }
+        if s.dispatch_slots > 0
+            && let Some(idx) = find_ready_entry(&s.rob, s.exec_units)
+        {
+            let eu = s.rob[idx].exec_units;
+            s.rob[idx].state = RobState::Exe;
+            s.dispatch_slots -= 1;
+            s.exec_units = s.exec_units.sub(eu);
+            continue;
         }
 
-        if s.ip.map_or(true, |i| i >= instrs.len()) && rob_all_finished(&s.rob) {
+        if s.ip.is_none_or(|i| i >= instrs.len()) && rob_all_finished(&s.rob) {
             break;
         }
 
@@ -952,7 +954,7 @@ fn instruction_cost_fast(
         136 | 137 | 142 | 143 => mk(3, 3, ExecUnits::ALU, r1(ra), r1(rb)),
         218 | 219 => mk(2, 2, ExecUnits::ALU, r1(ra), r2(rb, rd)),
         147 | 148 => mk(2, 3, ExecUnits::ALU, r1(ra), r1(rb)),
-        227 | 228 | 229 | 230 => {
+        227..=230 => {
             let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
                 2
             } else {
@@ -1463,7 +1465,7 @@ pub fn fast_cost_from_raw(
         },
 
         // Min/Max
-        227 | 228 | 229 | 230 => {
+        227..=230 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
             FastCost {
@@ -2035,7 +2037,7 @@ pub fn fast_cost_from_decoded(
         },
 
         // Min/Max
-        227 | 228 | 229 | 230 => {
+        227..=230 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
             FastCost {
@@ -2490,6 +2492,7 @@ pub fn fast_cost_lut(
 /// Inner implementation — separated to allow the compiler to inline the
 /// caller-side register extraction and keep the complex logic out-of-line.
 #[inline(always)]
+#[allow(clippy::too_many_arguments)]
 fn fast_cost_lut_inner(
     opcode_byte: u8,
     args: &crate::args::Args,

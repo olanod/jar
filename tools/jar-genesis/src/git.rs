@@ -109,12 +109,11 @@ pub fn read_genesis_commit_hash(spec_dir: &Path) -> Result<String, GitError> {
     })?;
     for line in content.lines() {
         // Match: def genesisCommit := "..."
-        if let Some(rest) = line.strip_prefix("def genesisCommit") {
-            if let Some(start) = rest.find('"') {
-                if let Some(end) = rest[start + 1..].find('"') {
-                    return Ok(rest[start + 1..start + 1 + end].to_string());
-                }
-            }
+        if let Some(rest) = line.strip_prefix("def genesisCommit")
+            && let Some(start) = rest.find('"')
+            && let Some(end) = rest[start + 1..].find('"')
+        {
+            return Ok(rest[start + 1..start + 1 + end].to_string());
         }
     }
     Err(GitError::CommandFailed(

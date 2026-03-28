@@ -23,7 +23,7 @@ pub struct AuthorizationInput {
 ///   α'[c] = ←O (F(c) ⌢ ϕ[c][slot mod Q])
 pub fn update_authorizations(
     config: &Config,
-    auth_pools: &mut Vec<Vec<Hash>>,
+    auth_pools: &mut [Vec<Hash>],
     auth_queues: &[Vec<Hash>],
     input: &AuthorizationInput,
 ) {
@@ -32,10 +32,10 @@ pub fn update_authorizations(
 
     for core in 0..auth_pools.len() {
         // Step 1: Remove used authorizer if this core had a guarantee
-        if let Some((_, auth_hash)) = input.auths.iter().find(|(c, _)| *c as usize == core) {
-            if let Some(pos) = auth_pools[core].iter().position(|h| h == auth_hash) {
-                auth_pools[core].remove(pos);
-            }
+        if let Some((_, auth_hash)) = input.auths.iter().find(|(c, _)| *c as usize == core)
+            && let Some(pos) = auth_pools[core].iter().position(|h| h == auth_hash)
+        {
+            auth_pools[core].remove(pos);
         }
 
         // Step 2: Append new authorizer from queue

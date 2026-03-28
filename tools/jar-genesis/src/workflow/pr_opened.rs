@@ -92,8 +92,7 @@ fn find_ranking_snapshot(
 ) -> Option<serde_json::Value> {
     let last = indices
         .iter()
-        .filter(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))
-        .last()?;
+        .rfind(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))?;
     let commit_hash = last["commitHash"].as_str()?;
     ranking.get(commit_hash).cloned()
 }

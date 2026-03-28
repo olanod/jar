@@ -112,13 +112,10 @@ pub fn compute_preimage_info_state_key(
 
 /// Serialize the full state T(σ) into a sorted vector of (key, value) pairs.
 pub fn serialize_state(state: &State, config: &Config) -> Vec<([u8; 31], Vec<u8>)> {
-    let mut kvs = Vec::new();
-
-    // C(1) → α auth_pool
-    kvs.push((
+    let mut kvs = vec![(
         key_from_index(1),
         serialize_auth_pool(&state.auth_pool, config),
-    ));
+    )];
 
     // C(2) → ϕ auth_queue
     kvs.push((
@@ -648,6 +645,7 @@ fn serialize_service_account_with_id(account: &ServiceAccount, sid: u32) -> Vec<
 /// be fully deserialized (because the blake2b hash in the key is irreversible).
 /// These opaque entries should be passed to `serialize_state_with_opaque` to
 /// include them in re-serialization.
+#[allow(clippy::type_complexity)]
 pub fn deserialize_state(
     kvs: &[([u8; 31], Vec<u8>)],
     config: &Config,
@@ -863,9 +861,9 @@ fn deserialize_auth_queue(
         if slot_idx >= queue.len() {
             queue.push(vec![Hash::ZERO; c]);
         }
-        for core_idx in 0..c {
+        for entry in queue[slot_idx].iter_mut().take(c) {
             let hash = read_hash(data, &mut pos)?;
-            queue[slot_idx][core_idx] = hash;
+            *entry = hash;
         }
     }
     Ok(())
@@ -1056,7 +1054,7 @@ fn deserialize_entropy(data: &[u8]) -> Result<[Hash; 4], String> {
 }
 
 fn deserialize_validators(data: &[u8]) -> Result<Vec<grey_types::validator::ValidatorKey>, String> {
-    if data.len() % 336 != 0 {
+    if !data.len().is_multiple_of(336) {
         return Err(format!(
             "validator data length {} not a multiple of 336",
             data.len()
@@ -1248,6 +1246,7 @@ fn deserialize_validator_records_e4(
     Ok(records)
 }
 
+#[allow(clippy::type_complexity)]
 fn deserialize_accumulation_queue(
     data: &[u8],
     config: &Config,

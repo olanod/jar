@@ -138,13 +138,13 @@ fn run_statistics_test(dir: &str, stem: &str) {
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| validator_record_from_json(v))
+        .map(validator_record_from_json)
         .collect();
     let pre_last: Vec<ValidatorRecord> = pre["vals_last_stats"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| validator_record_from_json(v))
+        .map(validator_record_from_json)
         .collect();
 
     let mut stats = ValidatorStatistics {
@@ -175,13 +175,13 @@ fn run_statistics_test(dir: &str, stem: &str) {
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| validator_record_from_json(v))
+        .map(validator_record_from_json)
         .collect();
     let expected_last: Vec<ValidatorRecord> = post["vals_last_stats"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|v| validator_record_from_json(v))
+        .map(validator_record_from_json)
         .collect();
 
     // Compare

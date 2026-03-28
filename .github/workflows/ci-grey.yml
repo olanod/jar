@@ -12,18 +12,25 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  fmt:
-    name: Formatting
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          SKIP_GUEST_BUILD: 1
 
   test:
     name: Tests

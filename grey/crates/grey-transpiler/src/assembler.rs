@@ -39,6 +39,12 @@ pub struct Assembler {
     _fixups: Vec<(usize, String, u8)>,
 }
 
+impl Default for Assembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Assembler {
     pub fn new() -> Self {
         Self {
@@ -354,8 +360,8 @@ impl Assembler {
 
     fn emit_imm(&mut self, value: i64, size: u8) {
         let bytes = value.to_le_bytes();
-        for i in 0..size as usize {
-            self.emit_byte(bytes[i], false);
+        for byte in bytes.iter().take(size as usize) {
+            self.emit_byte(*byte, false);
         }
     }
 }

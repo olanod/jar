@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 /// On epoch boundaries, rotates current stats to last and resets current.
 /// Computes per-core statistics (π_C) from incoming and available work reports.
 /// Computes per-service statistics (π_S) from incoming reports and preimage data.
+#[allow(clippy::too_many_arguments)]
 pub fn update_statistics(
     config: &Config,
     stats: &mut ValidatorStatistics,
@@ -147,13 +148,13 @@ fn compute_core_statistics(
 
     // p: popularity = count of assurance bitfield bits set per core
     for assurance in assurances {
-        for core in 0..num_cores {
+        for (core, stat) in core_stats.iter_mut().enumerate() {
             let byte_idx = core / 8;
             let bit_idx = core % 8;
             if byte_idx < assurance.bitfield.len()
                 && (assurance.bitfield[byte_idx] & (1 << bit_idx)) != 0
             {
-                core_stats[core].popularity += 1;
+                stat.popularity += 1;
             }
         }
     }

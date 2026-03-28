@@ -369,7 +369,7 @@ mod tests {
             commitment,
             expected_arr,
             "Ring commitment mismatch.\nGot:      {}\nExpected: {}",
-            hex::encode(&commitment),
+            hex::encode(commitment),
             hex::encode(expected_arr)
         );
     }

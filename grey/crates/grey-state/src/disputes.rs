@@ -305,7 +305,7 @@ pub fn process_disputes(
         let non_good: std::collections::BTreeSet<Hash> = verdict_summary
             .iter()
             .filter(|&&(_, positive)| positive < super_majority)
-            .map(|&(ref h, _)| *h)
+            .map(|(h, _)| *h)
             .collect();
 
         if !non_good.is_empty() {

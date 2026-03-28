@@ -956,11 +956,7 @@ mod tests {
             let (header, consumed) = Header::decode_with_config(bin, &config).unwrap();
             assert_eq!(consumed, bin.len(), "{name}: consumed mismatch");
             let re_encoded = header.encode();
-            assert_eq!(
-                &re_encoded[..],
-                &bin[..],
-                "{name}: re-encoded bytes mismatch"
-            );
+            assert_eq!(&re_encoded[..], bin, "{name}: re-encoded bytes mismatch");
         }
     }
 

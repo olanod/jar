@@ -309,7 +309,7 @@ impl Pvm {
         if a == halt_addr {
             return (Some(ExitReason::Halt), self.pc);
         }
-        if a == 0 || a > self.jump_table.len() as u64 * ZA || a % ZA != 0 {
+        if a == 0 || a > self.jump_table.len() as u64 * ZA || !a.is_multiple_of(ZA) {
             return (Some(ExitReason::Panic), self.pc);
         }
         let idx = (a / ZA) as usize - 1;
@@ -1322,12 +1322,7 @@ impl Pvm {
                     } else if a == i32::MIN && b == -1 {
                         a as i64 as u64 // Z8^-1(Z4(a))
                     } else {
-                        let q = if (a < 0) != (b < 0) && a % b != 0 {
-                            a / b // rtz rounds toward zero, which Rust does
-                        } else {
-                            a / b
-                        };
-                        q as i64 as u64
+                        (a / b) as i64 as u64
                     };
                     self.pc = next_pc;
                 }
@@ -2621,7 +2616,7 @@ impl BitSet {
     /// Create a bitset with `n` bits, all cleared.
     pub fn new(n: usize) -> Self {
         Self {
-            words: vec![0u64; (n + 63) / 64],
+            words: vec![0u64; n.div_ceil(64)],
         }
     }
 
@@ -2754,10 +2749,8 @@ pub fn compute_gas_block_starts(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
     let mut starts = vec![false; len];
 
     // Index 0 is always a gas block start if it's a valid instruction
-    if !bitmask.is_empty() && bitmask[0] == 1 {
-        if Opcode::from_byte(code[0]).is_some() {
-            starts[0] = true;
-        }
+    if !bitmask.is_empty() && bitmask[0] == 1 && Opcode::from_byte(code[0]).is_some() {
+        starts[0] = true;
     }
 
     let mut i = 0;
@@ -2809,10 +2802,8 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
     let mut skip_table = vec![0u8; len];
 
     // Index 0 is always a basic block start if it's a valid instruction
-    if !bitmask.is_empty() && bitmask[0] == 1 {
-        if Opcode::from_byte(code[0]).is_some() {
-            starts[0] = true;
-        }
+    if !bitmask.is_empty() && bitmask[0] == 1 && Opcode::from_byte(code[0]).is_some() {
+        starts[0] = true;
     }
 
     // Iterate only over instruction starts (skip non-instruction bytes).
@@ -3038,40 +3029,41 @@ fn predecode_instructions(
 
     let mut pc = 0;
     while pc < len {
-        if pc < bitmask.len() && bitmask[pc] == 1 {
-            if let Some(opcode) = Opcode::from_byte(code[pc]) {
-                let skip = skip_at(pc);
-                let next_pc = (pc + 1 + skip) as u32;
-                let category = opcode.category();
-                let args = args::decode_args(code, pc, skip, category);
-                let bb_gas_cost = if pc < gas_block_starts.len() && gas_block_starts[pc] {
-                    block_gas_costs[pc]
-                } else {
-                    0
-                };
+        if pc < bitmask.len()
+            && bitmask[pc] == 1
+            && let Some(opcode) = Opcode::from_byte(code[pc])
+        {
+            let skip = skip_at(pc);
+            let next_pc = (pc + 1 + skip) as u32;
+            let category = opcode.category();
+            let args = args::decode_args(code, pc, skip, category);
+            let bb_gas_cost = if pc < gas_block_starts.len() && gas_block_starts[pc] {
+                block_gas_costs[pc]
+            } else {
+                0
+            };
 
-                // Extract flat operands from decoded args
-                let (ra, rb, rd, imm1, imm2) = flatten_args(&args);
+            // Extract flat operands from decoded args
+            let (ra, rb, rd, imm1, imm2) = flatten_args(&args);
 
-                let idx = insts.len() as u32;
-                pc_to_idx[pc] = idx;
-                insts.push(DecodedInst {
-                    opcode,
-                    ra,
-                    rb,
-                    rd,
-                    imm1,
-                    imm2,
-                    pc: pc as u32,
-                    next_pc,
-                    next_idx: u32::MAX,   // resolved in second pass
-                    target_idx: u32::MAX, // resolved in second pass
-                    bb_gas_cost,
-                });
+            let idx = insts.len() as u32;
+            pc_to_idx[pc] = idx;
+            insts.push(DecodedInst {
+                opcode,
+                ra,
+                rb,
+                rd,
+                imm1,
+                imm2,
+                pc: pc as u32,
+                next_pc,
+                next_idx: u32::MAX,   // resolved in second pass
+                target_idx: u32::MAX, // resolved in second pass
+                bb_gas_cost,
+            });
 
-                pc = next_pc as usize;
-                continue;
-            }
+            pc = next_pc as usize;
+            continue;
         }
         pc += 1;
     }
@@ -3095,6 +3087,7 @@ fn predecode_instructions(
     });
 
     // Second pass: resolve next_idx and target_idx for all instructions.
+    #[allow(clippy::needless_range_loop)]
     for i in 0..insts.len() {
         let inst = &insts[i];
         // Resolve next sequential instruction index

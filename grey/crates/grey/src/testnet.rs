@@ -193,7 +193,7 @@ pub async fn run_testnet(
                 tracing::info!("Received Ctrl+C, shutting down testnet...");
             }
             // If any validator task exits, abort everything
-            result = async {
+            _result = async {
                 loop {
                     for handle in &handles {
                         if handle.is_finished() {
@@ -204,7 +204,6 @@ pub async fn run_testnet(
                 }
             } => {
                 tracing::error!("A validator exited — aborting testnet");
-                let _ = result;
             }
         }
     } else {
@@ -456,15 +455,15 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                         if matches!(wp_phase, WpPhase::Done) {
                             match &wp_target {
                                 WpTarget::SampleService => {
-                                    if let Some(svc) = new_state.services.get(&service_id) {
-                                        if !svc.storage.is_empty() {
-                                            tracing::info!(
-                                                "  [WP] SAMPLE ACCUMULATED! Service {} has {} storage entries",
-                                                service_id,
-                                                svc.storage.len()
-                                            );
-                                            work_packages_accumulated += 1;
-                                        }
+                                    if let Some(svc) = new_state.services.get(&service_id)
+                                        && !svc.storage.is_empty()
+                                    {
+                                        tracing::info!(
+                                            "  [WP] SAMPLE ACCUMULATED! Service {} has {} storage entries",
+                                            service_id,
+                                            svc.storage.len()
+                                        );
+                                        work_packages_accumulated += 1;
                                     }
                                     // Advance to pixels service if installed
                                     wp_target = if pixels_installed {
@@ -607,6 +606,7 @@ pub fn build_test_guarantee(
 }
 
 /// Build a test guarantee with a specific payload/result.
+#[allow(clippy::too_many_arguments)]
 pub fn build_test_guarantee_with_payload(
     state: &grey_types::state::State,
     _config: &Config,
@@ -693,8 +693,8 @@ pub fn build_test_guarantee_with_payload(
 
     let mut credentials = Vec::new();
     // Use validators 0 and 1 as guarantors
-    for i in 0..2usize {
-        let sig = secrets[i].ed25519.sign(&report_hash.0);
+    for (i, secret) in secrets.iter().enumerate().take(2) {
+        let sig = secret.ed25519.sign(&report_hash.0);
         credentials.push((i as u16, sig));
     }
 
@@ -718,7 +718,7 @@ pub fn build_test_assurances(
     let bitfield_bytes = config.avail_bitfield_bytes();
 
     let mut assurances = Vec::new();
-    for i in 0..num_assurers {
+    for (i, secret) in secrets.iter().enumerate().take(num_assurers) {
         // Build bitfield with core bit set
         let mut bitfield = vec![0u8; bitfield_bytes];
         let byte_idx = core as usize / 8;
@@ -729,7 +729,7 @@ pub fn build_test_assurances(
         let mut msg = Vec::new();
         msg.extend_from_slice(&parent_hash.0);
         msg.extend_from_slice(&bitfield);
-        let sig = secrets[i].ed25519.sign(&msg);
+        let sig = secret.ed25519.sign(&msg);
 
         assurances.push(Assurance {
             anchor: parent_hash,

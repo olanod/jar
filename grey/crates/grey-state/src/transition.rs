@@ -30,6 +30,7 @@ pub fn apply(state: &State, block: &Block) -> Result<State, TransitionError> {
 /// Apply a block with a specific configuration (for testing with tiny constants).
 /// Returns (new_state, remaining_opaque_data) where remaining_opaque_data is the
 /// opaque service data after consuming entries accessed during accumulation.
+#[allow(clippy::type_complexity)]
 pub fn apply_with_config(
     state: &State,
     block: &Block,
@@ -300,22 +301,22 @@ fn process_assurances(
     let mut assurance_counts = vec![0u32; num_cores];
 
     for assurance in assurances {
-        for core in 0..num_cores {
+        for (core, count) in assurance_counts.iter_mut().enumerate() {
             let byte_idx = core / 8;
             let bit_idx = core % 8;
             if byte_idx < assurance.bitfield.len()
                 && (assurance.bitfield[byte_idx] & (1 << bit_idx)) != 0
             {
-                assurance_counts[core] += 1;
+                *count += 1;
             }
         }
     }
 
     for (core, count) in assurance_counts.iter().enumerate() {
-        if *count >= threshold {
-            if let Some(pending) = &state.pending_reports[core] {
-                available.push(pending.report.clone());
-            }
+        if *count >= threshold
+            && let Some(pending) = &state.pending_reports[core]
+        {
+            available.push(pending.report.clone());
         }
     }
 
@@ -395,7 +396,8 @@ fn process_preimages(
             let key = (hash, data.len() as u32);
 
             // Promote from opaque data if not in structured preimage_info
-            if !account.preimage_info.contains_key(&key) {
+            if let std::collections::btree_map::Entry::Vacant(e) = account.preimage_info.entry(key)
+            {
                 let state_key = grey_merkle::state_serial::compute_preimage_info_state_key(
                     *service_id,
                     &hash,
@@ -404,7 +406,7 @@ fn process_preimages(
                 if let Some(opaque_entry) = opaque_data.iter().find(|(k, _)| *k == state_key) {
                     let timeslots =
                         crate::accumulate::decode_preimage_info_timeslots(&opaque_entry.1);
-                    account.preimage_info.insert(key, timeslots);
+                    e.insert(timeslots);
                 }
             }
 
@@ -593,7 +595,7 @@ mod tests {
     fn test_invalid_author_index() {
         let state = make_default_state();
         let mut block = make_empty_block(1);
-        block.header.author_index = TOTAL_VALIDATORS as u16; // out of range
+        block.header.author_index = TOTAL_VALIDATORS; // out of range
         assert!(apply(&state, &block).is_err());
     }
 
@@ -607,7 +609,7 @@ mod tests {
         let judgments: Vec<Judgment> = (0..supermajority)
             .map(|i| Judgment {
                 is_valid: true,
-                validator_index: i as u16,
+                validator_index: i,
                 signature: Ed25519Signature::default(),
             })
             .collect();
@@ -656,7 +658,7 @@ mod tests {
         state.statistics.current[0].blocks_produced = 10;
 
         // Block in a new epoch
-        let block = make_empty_block(EPOCH_LENGTH as u32 + 1);
+        let block = make_empty_block(EPOCH_LENGTH + 1);
 
         let new_state = apply(&state, &block).unwrap();
         // Old stats should be in `last`

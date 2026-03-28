@@ -94,7 +94,7 @@ impl RpcClient {
             return Err(RpcError::JsonRpc(msg.to_string()));
         }
         let result = resp.get("result").ok_or(RpcError::MissingResult)?;
-        Ok(serde_json::from_value(result.clone()).map_err(|e| RpcError::JsonRpc(e.to_string()))?)
+        serde_json::from_value(result.clone()).map_err(|e| RpcError::JsonRpc(e.to_string()))
     }
 
     pub async fn get_status(&self) -> Result<NodeStatus, RpcError> {

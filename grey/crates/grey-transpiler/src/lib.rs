@@ -49,7 +49,7 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
 pub fn ensure_branch_targets_are_block_starts(
     code: &mut Vec<u8>,
     bitmask: &mut Vec<u8>,
-    jump_table: &mut Vec<u32>,
+    jump_table: &mut [u32],
 ) {
     let terminators: &[u8] = &[0, 1, 2, 10, 40, 50, 80, 180];
     let is_terminator = |op: u8| -> bool {
@@ -155,10 +155,13 @@ pub fn ensure_branch_targets_are_block_starts(
     // Also check jump table entries
     for &jt_entry in jump_table.iter() {
         let t = jt_entry as usize;
-        if t < len && t < bitmask.len() && bitmask[t] == 1 && !post_term.contains(&t) {
-            if !insert_positions.contains(&t) {
-                insert_positions.push(t);
-            }
+        if t < len
+            && t < bitmask.len()
+            && bitmask[t] == 1
+            && !post_term.contains(&t)
+            && !insert_positions.contains(&t)
+        {
+            insert_positions.push(t);
         }
     }
 
@@ -214,7 +217,7 @@ pub fn ensure_branch_targets_are_block_starts(
 
             // OneOffset with fixed 4-byte immediate: opcode 40 (jump)
             if op == 40 && i + 5 <= new_code.len() {
-                let old_off = i32::from_le_bytes([
+                let _old_off = i32::from_le_bytes([
                     new_code[i + 1],
                     new_code[i + 2],
                     new_code[i + 3],
@@ -306,9 +309,8 @@ pub fn ensure_branch_targets_are_block_starts(
                         // Write back with same length ly
                         let new_bytes = new_off.to_le_bytes();
                         let off_start_new = new_i + 2 + lx;
-                        for k in 0..ly {
-                            new_code[off_start_new + k] = new_bytes[k];
-                        }
+                        new_code[off_start_new..off_start_new + ly]
+                            .copy_from_slice(&new_bytes[..ly]);
                     }
                 }
             }

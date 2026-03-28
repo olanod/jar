@@ -8,6 +8,7 @@ fn decode_hex(s: &str) -> Vec<u8> {
     hex::decode(s.strip_prefix("0x").unwrap_or(s)).expect("bad hex")
 }
 
+#[allow(clippy::type_complexity)]
 fn load_block_pre_state(path: &str) -> (Vec<([u8; 31], Vec<u8>)>, String) {
     let json_str = std::fs::read_to_string(path).expect("failed to read block input JSON");
     let data: serde_json::Value = serde_json::from_str(&json_str).unwrap();
@@ -61,7 +62,7 @@ fn test_deserialize_initial_state() {
     assert_eq!(svc.balance, u64::MAX);
 
     // Opaque entries should exist
-    assert!(opaque.len() > 0, "expected some opaque service data");
+    assert!(!opaque.is_empty(), "expected some opaque service data");
 }
 
 #[test]

@@ -399,13 +399,13 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         let threshold = config.protocol_config.super_majority() as u32;
                         let mut assurance_counts = vec![0u32; num_cores];
                         for a in &assurances {
-                            for core in 0..num_cores {
+                            for (core, count) in assurance_counts.iter_mut().enumerate() {
                                 let byte_idx = core / 8;
                                 let bit_idx = core % 8;
                                 if byte_idx < a.bitfield.len()
                                     && (a.bitfield[byte_idx] >> bit_idx) & 1 == 1
                                 {
-                                    assurance_counts[core] += 1;
+                                    *count += 1;
                                 }
                             }
                         }
@@ -419,11 +419,10 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         // Also check for availability timeout: cores that have timed out
                         // will be cleared even without assurances.
                         for (core, slot) in state.pending_reports.iter().enumerate() {
-                            if let Some(pending) = slot {
-                                if current_slot >= pending.timeslot + config.protocol_config.availability_timeout {
+                            if let Some(pending) = slot
+                                && current_slot >= pending.timeslot + config.protocol_config.availability_timeout {
                                     cores_will_clear.insert(core);
                                 }
-                            }
                         }
 
                         // Filter out guarantees for cores that are occupied AND won't be
@@ -601,8 +600,8 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                     if audit_state.completed_audits.contains(&report_hash) {
                         continue;
                     }
-                    if let Some(pending) = audit_state.pending_audits.get(&report_hash) {
-                        if let Some(our_tranche) = pending.our_tranche {
+                    if let Some(pending) = audit_state.pending_audits.get(&report_hash)
+                        && let Some(our_tranche) = pending.our_tranche {
                             let elapsed_secs = (state.timeslot.saturating_sub(pending.report_timeslot)) as u64 * 6;
                             let current_tranche = (elapsed_secs / 8) as u32;
                             if our_tranche <= current_tranche {
@@ -637,7 +636,6 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                 audit_state.mark_completed(&report_hash);
                             }
                         }
-                    }
                 }
 
                 // Prune old audits (older than 30 slots)
@@ -923,15 +921,14 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         let _ = response_tx.send(block_data);
                     }
                     NetworkEvent::TicketReceived { data, source } => {
-                        if let Some(proof) = tickets::decode_ticket_proof(&data) {
-                            if ticket_state.add_ticket(proof, protocol, &state) {
+                        if let Some(proof) = tickets::decode_ticket_proof(&data)
+                            && ticket_state.add_ticket(proof, protocol, &state) {
                                 tracing::debug!(
                                     "Validator {} received ticket from {}",
                                     config.validator_index,
                                     source
                                 );
                             }
-                        }
                     }
                     NetworkEvent::PeerIdentified { peer_id, validator_index: vi } => {
                         tracing::info!(

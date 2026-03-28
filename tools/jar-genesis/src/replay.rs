@@ -4,7 +4,6 @@ use std::path::Path;
 use crate::git;
 use crate::hash;
 use crate::lean;
-use crate::types::CommitIndex;
 
 /// A parsed merge commit with genesis trailers.
 struct GenesisCommitEntry {
@@ -81,12 +80,11 @@ fn expand_review_hashes(commit: &mut serde_json::Value) {
             ] {
                 if let Some(ranking) = review[*field].as_array_mut() {
                     for entry in ranking.iter_mut() {
-                        if let Some(h) = entry.as_str() {
-                            if h.len() < 40 {
-                                if let Ok(full) = hash::expand_short_hash(h, &candidates) {
-                                    *entry = serde_json::Value::String(full);
-                                }
-                            }
+                        if let Some(h) = entry.as_str()
+                            && h.len() < 40
+                            && let Ok(full) = hash::expand_short_hash(h, &candidates)
+                        {
+                            *entry = serde_json::Value::String(full);
                         }
                     }
                 }
@@ -104,8 +102,7 @@ fn get_ranking_snapshot(
     // Find the last index with epoch < target epoch
     let last = indices
         .iter()
-        .filter(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))
-        .last()?;
+        .rfind(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))?;
 
     let commit_hash = last["commitHash"].as_str()?;
     rankings.get(commit_hash).cloned()
@@ -113,6 +110,7 @@ fn get_ranking_snapshot(
 
 /// Core incremental replay loop. Evaluates each signed commit incrementally.
 /// Returns (rebuilt_indices, ranking_snapshots).
+#[allow(clippy::type_complexity)]
 fn replay_incremental(
     spec_dir: &Path,
     signed_commits: &[serde_json::Value],
@@ -245,7 +243,7 @@ pub fn verify_cache() -> Result<(), Box<dyn std::error::Error>> {
     let signed_commits: Vec<serde_json::Value> =
         entries.iter().map(|e| e.signed_commit.clone()).collect();
 
-    let replayable: Vec<&serde_json::Value> =
+    let _replayable: Vec<&serde_json::Value> =
         signed_commits.iter().filter(|c| !c.is_null()).collect();
 
     let (rebuilt_indices, rebuilt_rankings) = replay_incremental(&spec, &signed_commits)?;

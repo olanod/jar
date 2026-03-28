@@ -11,6 +11,12 @@ pub struct InstBuf {
     length: u32, // in bits
 }
 
+impl Default for InstBuf {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InstBuf {
     #[inline(always)]
     pub fn new() -> Self {
@@ -43,6 +49,10 @@ impl InstBuf {
     #[inline(always)]
     pub fn len(&self) -> usize {
         (self.length >> 3) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
     }
 }
 
@@ -151,6 +161,12 @@ pub struct Assembler {
 /// zeroed memory (calloc / zero-page COW) instead of writing 0xFF to every byte.
 /// Bound labels store `native_offset + 1` to avoid collision with the sentinel.
 const LABEL_UNBOUND: usize = 0;
+
+impl Default for Assembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Assembler {
     pub fn new() -> Self {
@@ -361,6 +377,7 @@ impl Assembler {
     }
 
     #[inline(always)]
+    #[allow(dead_code)]
     fn emit_u64(&mut self, v: u64) {
         debug_assert!(self.write_pos + 8 <= self.capacity);
         unsafe {
@@ -403,6 +420,7 @@ impl Assembler {
     // === REX prefix helpers ===
 
     /// REX prefix for 64-bit reg-reg operations.
+    #[allow(dead_code)]
     fn rex_w(&mut self, reg: Reg, rm: Reg) {
         self.emit(0x48 | (reg.hi() << 2) | rm.hi());
     }
@@ -413,6 +431,7 @@ impl Assembler {
     }
 
     /// Optional REX prefix for 32-bit ops (only if extended registers).
+    #[allow(dead_code)]
     fn rex_opt(&mut self, reg: Reg, rm: Reg) {
         let r = reg.hi();
         let b = rm.hi();
@@ -428,6 +447,7 @@ impl Assembler {
     }
 
     /// ModR/M byte: mod=3 (register direct), reg, rm.
+    #[allow(dead_code)]
     fn modrm_rr(&mut self, reg: Reg, rm: Reg) {
         self.emit(0xC0 | (reg.lo() << 3) | rm.lo());
     }
@@ -446,7 +466,7 @@ impl Assembler {
             } else {
                 ib.push((reg << 3) | bl);
             }
-        } else if disp >= -128 && disp <= 127 {
+        } else if (-128..=127).contains(&disp) {
             if needs_sib {
                 ib.push(0x40 | (reg << 3) | 4);
                 ib.push(0x24);
@@ -466,6 +486,7 @@ impl Assembler {
     }
 
     /// Legacy wrapper — delegates to InstBuf-based version.
+    #[allow(dead_code)]
     fn modrm_disp(&mut self, reg: u8, base: Reg, disp: i32) {
         let mut ib = InstBuf::new();
         Self::modrm_disp_ib(&mut ib, reg, base, disp);
@@ -641,6 +662,7 @@ impl Assembler {
     /// Emit ModR/M + SIB for [base + index] addressing (scale=1, no displacement).
     /// Special case: base=RBP/R13 requires mod=01 with disp8=0.
     /// Legacy wrapper — used by methods not yet converted to InstBuf.
+    #[allow(dead_code)]
     fn modrm_sib_base_index(&mut self, reg: u8, base: Reg, index: Reg) {
         let mut ib = InstBuf::new();
         Self::modrm_sib_base_index_ib(&mut ib, reg, base, index);
@@ -906,7 +928,7 @@ impl Assembler {
     fn alu_ri64(&mut self, ext: u8, dst: Reg, imm: i32) {
         let mut ib = InstBuf::new();
         ib.push(0x48 | dst.hi());
-        if imm >= -128 && imm <= 127 {
+        if (-128..=127).contains(&imm) {
             ib.push(0x83);
             ib.push(0xC0 | (ext << 3) | dst.lo());
             ib.push(imm as u8);
@@ -923,7 +945,7 @@ impl Assembler {
         if dst.needs_rex() {
             ib.push(0x40 | dst.hi());
         }
-        if imm >= -128 && imm <= 127 {
+        if (-128..=127).contains(&imm) {
             ib.push(0x83);
             ib.push(0xC0 | (ext << 3) | dst.lo());
             ib.push(imm as u8);
@@ -1643,11 +1665,12 @@ impl Assembler {
 
 impl Drop for Assembler {
     fn drop(&mut self) {
-        if let CodeBuf::Mmap { ptr, capacity } = self.code_buf {
-            if !ptr.is_null() && capacity > 0 {
-                unsafe {
-                    libc::munmap(ptr as *mut libc::c_void, capacity);
-                }
+        if let CodeBuf::Mmap { ptr, capacity } = self.code_buf
+            && !ptr.is_null()
+            && capacity > 0
+        {
+            unsafe {
+                libc::munmap(ptr as *mut libc::c_void, capacity);
             }
         }
     }
