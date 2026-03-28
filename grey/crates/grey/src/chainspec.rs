@@ -109,7 +109,10 @@ pub fn print_genesis_info(config: &Config) {
     println!("  Epoch length: {} slots", config.epoch_length);
     println!("  Slot period: 6s");
     println!("  Tickets per block: {}", config.max_tickets_per_block);
-    println!("  Ticket submission end: slot {}", config.ticket_submission_end());
+    println!(
+        "  Ticket submission end: slot {}",
+        config.ticket_submission_end()
+    );
     println!();
     println!("Genesis config hash: 0x{}", hex::encode(genesis_hash.0));
     println!("Genesis seed hash: {seed_hash}");

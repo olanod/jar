@@ -18,9 +18,12 @@ pub fn run(pr: u64, created_at: &str) -> Result<(), Box<dyn std::error::Error>> 
 
     // Check cache staleness
     if let Err(e) = cache::check_staleness(&cache_indices, &spec_dir) {
-        github::pr_comment(pr, &format!(
-            "**JAR Bot:** Genesis cache is stale — cannot compute comparison targets. {e}"
-        ))?;
+        github::pr_comment(
+            pr,
+            &format!(
+                "**JAR Bot:** Genesis cache is stale — cannot compute comparison targets. {e}"
+            ),
+        )?;
         return Err(e.into());
     }
 
@@ -28,8 +31,8 @@ pub fn run(pr: u64, created_at: &str) -> Result<(), Box<dyn std::error::Error>> 
     let pr_created_epoch = parse_iso8601_to_epoch(created_at)?;
 
     // Get ranking snapshot
-    let ranking_json = git::show_file("origin/genesis-state:ranking.json")
-        .unwrap_or_else(|_| "{}".to_string());
+    let ranking_json =
+        git::show_file("origin/genesis-state:ranking.json").unwrap_or_else(|_| "{}".to_string());
     let ranking: serde_json::Value = serde_json::from_str(&ranking_json)?;
 
     // Find ranking snapshot for this PR's created_at
@@ -45,8 +48,7 @@ pub fn run(pr: u64, created_at: &str) -> Result<(), Box<dyn std::error::Error>> 
         input["ranking"] = snapshot.clone();
     }
 
-    let output: SelectTargetsOutput =
-        lean::invoke("genesis_select_targets", &input, &spec_dir)?;
+    let output: SelectTargetsOutput = lean::invoke("genesis_select_targets", &input, &spec_dir)?;
 
     // Format and post comment
     let mut comment = String::from("## Genesis Review\n\n**Comparison targets:**\n\n");

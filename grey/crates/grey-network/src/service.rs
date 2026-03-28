@@ -6,11 +6,11 @@
 //! - Peer tracking: validator index ↔ PeerId mapping
 
 use libp2p::{
-    gossipsub, identify, noise, request_response, tcp, yamux, Multiaddr, PeerId, Swarm,
-    SwarmBuilder,
+    Multiaddr, PeerId, Swarm, SwarmBuilder, gossipsub, identify, noise, request_response, tcp,
+    yamux,
 };
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -394,12 +394,8 @@ fn build_swarm() -> Result<Swarm<JamBehaviour>, Box<dyn std::error::Error + Send
 
             // Request-response for chunk/block fetching
             let reqres = request_response::Behaviour::new(
-                [(
-                    "/jam/fetch/1",
-                    request_response::ProtocolSupport::Full,
-                )],
-                request_response::Config::default()
-                    .with_request_timeout(Duration::from_secs(10)),
+                [("/jam/fetch/1", request_response::ProtocolSupport::Full)],
+                request_response::Config::default().with_request_timeout(Duration::from_secs(10)),
             );
 
             JamBehaviour {
@@ -732,8 +728,14 @@ mod tests {
     #[test]
     fn test_parse_validator_index() {
         assert_eq!(parse_validator_index_from_agent("jam-validator-0"), Some(0));
-        assert_eq!(parse_validator_index_from_agent("jam-validator-42"), Some(42));
-        assert_eq!(parse_validator_index_from_agent("jam-validator-1023"), Some(1023));
+        assert_eq!(
+            parse_validator_index_from_agent("jam-validator-42"),
+            Some(42)
+        );
+        assert_eq!(
+            parse_validator_index_from_agent("jam-validator-1023"),
+            Some(1023)
+        );
         assert_eq!(parse_validator_index_from_agent("other"), None);
         assert_eq!(parse_validator_index_from_agent(""), None);
     }

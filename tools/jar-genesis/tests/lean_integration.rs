@@ -42,7 +42,10 @@ fn test_select_targets_with_real_cache() {
 
     // Find the ranking snapshot for the last index
     let last_hash = cache.last().unwrap()["commitHash"].as_str().unwrap();
-    let ranking_snapshot = ranking.get(last_hash).cloned().unwrap_or(serde_json::json!([]));
+    let ranking_snapshot = ranking
+        .get(last_hash)
+        .cloned()
+        .unwrap_or(serde_json::json!([]));
 
     let input = serde_json::json!({
         "prId": 999,
@@ -52,9 +55,17 @@ fn test_select_targets_with_real_cache() {
     });
     let output: SelectTargetsOutput =
         lean::invoke("genesis_select_targets", &input, &spec).unwrap();
-    assert_eq!(output.targets.len(), 7, "should select 7 comparison targets");
+    assert_eq!(
+        output.targets.len(),
+        7,
+        "should select 7 comparison targets"
+    );
     for target in &output.targets {
-        assert_eq!(target.len(), 40, "target should be 40-char hex hash: {target}");
+        assert_eq!(
+            target.len(),
+            40,
+            "target should be 40-char hex hash: {target}"
+        );
     }
 }
 
@@ -66,8 +77,7 @@ fn test_check_merge_no_reviews() {
         "metaReviews": [],
         "indices": [],
     });
-    let output: MergeReadiness =
-        lean::invoke("genesis_check_merge", &input, &spec_dir()).unwrap();
+    let output: MergeReadiness = lean::invoke("genesis_check_merge", &input, &spec_dir()).unwrap();
     assert!(!output.ready);
     assert_eq!(output.merge_weight, 0);
 }
@@ -94,11 +104,13 @@ fn test_check_merge_founder_review() {
         "metaReviews": [],
         "indices": cache,
     });
-    let output: MergeReadiness =
-        lean::invoke("genesis_check_merge", &input, &spec).unwrap();
+    let output: MergeReadiness = lean::invoke("genesis_check_merge", &input, &spec).unwrap();
     // Founder has weight — single merge vote should reach quorum
-    assert!(output.ready, "founder review should reach quorum (mergeWeight={}, totalWeight={})",
-        output.merge_weight, output.total_weight);
+    assert!(
+        output.ready,
+        "founder review should reach quorum (mergeWeight={}, totalWeight={})",
+        output.merge_weight, output.total_weight
+    );
 }
 
 #[test]
@@ -126,11 +138,13 @@ fn test_evaluate_minimal_commit() {
         "pastIndices": [],
     });
 
-    let output: serde_json::Value =
-        lean::invoke("genesis_evaluate", &input, &spec_dir()).unwrap();
+    let output: serde_json::Value = lean::invoke("genesis_evaluate", &input, &spec_dir()).unwrap();
 
     // Verify output has expected fields
-    assert_eq!(output["commitHash"], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(
+        output["commitHash"],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
     assert!(output["score"]["difficulty"].is_number());
     assert!(output["score"]["novelty"].is_number());
     assert!(output["score"]["designQuality"].is_number());
@@ -170,8 +184,10 @@ fn test_ranking_single_commit() {
         "indices": [index],
     });
 
-    let output: RankingOutput =
-        lean::invoke("genesis_ranking", &input, &spec_dir()).unwrap();
+    let output: RankingOutput = lean::invoke("genesis_ranking", &input, &spec_dir()).unwrap();
     assert_eq!(output.ranking.len(), 1);
-    assert_eq!(output.ranking[0], "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(
+        output.ranking[0],
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
 }

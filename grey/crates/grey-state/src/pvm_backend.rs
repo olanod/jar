@@ -15,9 +15,7 @@ pub use javm::ExitReason;
 /// Check once whether the recompiler backend is requested.
 fn pvm_mode() -> &'static str {
     static MODE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    MODE.get_or_init(|| {
-        std::env::var("GREY_PVM").unwrap_or_else(|_| "interpreter".to_string())
-    })
+    MODE.get_or_init(|| std::env::var("GREY_PVM").unwrap_or_else(|_| "interpreter".to_string()))
 }
 
 /// Backend-agnostic PVM instance.
@@ -40,21 +38,24 @@ impl PvmInstance {
     /// Create a PVM from a code blob, arguments, and gas budget.
     pub fn initialize(code_blob: &[u8], args: &[u8], gas: Gas) -> Option<Self> {
         match pvm_mode() {
-            "recompiler" => {
-                javm::recompiler::initialize_program_recompiled(code_blob, args, gas)
-                    .map(|pvm| PvmInstance { inner: Backend::Recompiler(pvm) })
-            }
+            "recompiler" => javm::recompiler::initialize_program_recompiled(code_blob, args, gas)
+                .map(|pvm| PvmInstance {
+                    inner: Backend::Recompiler(pvm),
+                }),
             "compare" => {
                 let interp = javm::program::initialize_program(code_blob, args, gas)?;
                 let recomp = javm::recompiler::initialize_program_recompiled(code_blob, args, gas)?;
                 Some(PvmInstance {
-                    inner: Backend::Compare { interp, recomp, step: 0 },
+                    inner: Backend::Compare {
+                        interp,
+                        recomp,
+                        step: 0,
+                    },
                 })
             }
-            _ => {
-                javm::program::initialize_program(code_blob, args, gas)
-                    .map(|pvm| PvmInstance { inner: Backend::Interpreter(pvm) })
-            }
+            _ => javm::program::initialize_program(code_blob, args, gas).map(|pvm| PvmInstance {
+                inner: Backend::Interpreter(pvm),
+            }),
         }
     }
 
@@ -66,7 +67,11 @@ impl PvmInstance {
                 reason
             }
             Backend::Recompiler(pvm) => pvm.run(),
-            Backend::Compare { interp, recomp, step } => {
+            Backend::Compare {
+                interp,
+                recomp,
+                step,
+            } => {
                 *step += 1;
                 let s = *step;
 
@@ -87,11 +92,22 @@ impl PvmInstance {
                 if mismatch {
                     eprintln!(
                         "COMPARE step {}: MISMATCH exit_i={:?} exit_r={:?} pc_i={} pc_r={} gas_i={} gas_r={}",
-                        s, ie, re, interp.pc, recomp.pc(), interp.gas, recomp.gas()
+                        s,
+                        ie,
+                        re,
+                        interp.pc,
+                        recomp.pc(),
+                        interp.gas,
+                        recomp.gas()
                     );
                     for i in 0..13 {
                         if interp.registers[i] != recomp.registers()[i] {
-                            eprintln!("  reg[{:2}]: interp={:#18x} recomp={:#18x}", i, interp.registers[i], recomp.registers()[i]);
+                            eprintln!(
+                                "  reg[{:2}]: interp={:#18x} recomp={:#18x}",
+                                i,
+                                interp.registers[i],
+                                recomp.registers()[i]
+                            );
                         }
                     }
                     // Print opcode at the recompiler's exit PC to help identify the buggy instruction
@@ -116,7 +132,9 @@ impl PvmInstance {
                                 break;
                             }
                         }
-                        if mismatch { break; }
+                        if mismatch {
+                            break;
+                        }
                     }
                 }
 
@@ -250,8 +268,12 @@ impl PvmInstance {
 
     pub fn write_byte(&mut self, addr: u32, value: u8) {
         match &mut self.inner {
-            Backend::Interpreter(pvm) => { pvm.write_u8(addr, value); }
-            Backend::Recompiler(pvm) => { pvm.write_byte(addr, value); }
+            Backend::Interpreter(pvm) => {
+                pvm.write_u8(addr, value);
+            }
+            Backend::Recompiler(pvm) => {
+                pvm.write_byte(addr, value);
+            }
             Backend::Compare { interp, recomp, .. } => {
                 interp.write_u8(addr, value);
                 recomp.write_byte(addr, value);
@@ -261,21 +283,15 @@ impl PvmInstance {
 
     pub fn read_bytes(&self, addr: u32, len: u32) -> Vec<u8> {
         match &self.inner {
-            Backend::Interpreter(pvm) => {
-                (0..len)
-                    .map(|i| pvm.read_u8(addr + i).unwrap_or(0))
-                    .collect()
-            }
-            Backend::Recompiler(pvm) => {
-                (0..len)
-                    .map(|i| pvm.read_byte(addr + i).unwrap_or(0))
-                    .collect()
-            }
-            Backend::Compare { recomp, .. } => {
-                (0..len)
-                    .map(|i| recomp.read_byte(addr + i).unwrap_or(0))
-                    .collect()
-            }
+            Backend::Interpreter(pvm) => (0..len)
+                .map(|i| pvm.read_u8(addr + i).unwrap_or(0))
+                .collect(),
+            Backend::Recompiler(pvm) => (0..len)
+                .map(|i| pvm.read_byte(addr + i).unwrap_or(0))
+                .collect(),
+            Backend::Compare { recomp, .. } => (0..len)
+                .map(|i| recomp.read_byte(addr + i).unwrap_or(0))
+                .collect(),
         }
     }
 
@@ -323,7 +339,11 @@ impl PvmInstance {
                 Some(())
             }
             Backend::Recompiler(pvm) => {
-                if pvm.write_bytes(addr, data) { Some(()) } else { None }
+                if pvm.write_bytes(addr, data) {
+                    Some(())
+                } else {
+                    None
+                }
             }
             Backend::Compare { interp, recomp, .. } => {
                 for (i, &byte) in data.iter().enumerate() {
@@ -331,7 +351,9 @@ impl PvmInstance {
                         return None;
                     }
                 }
-                if !recomp.write_bytes(addr, data) { return None; }
+                if !recomp.write_bytes(addr, data) {
+                    return None;
+                }
                 Some(())
             }
         }

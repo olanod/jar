@@ -41,14 +41,18 @@ macro_rules! impl_crypto_type {
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 let s: String = serde::Deserialize::deserialize(d)?;
-                Ok($name(decode_hex_fixed(&s).map_err(serde::de::Error::custom)?))
+                Ok($name(
+                    decode_hex_fixed(&s).map_err(serde::de::Error::custom)?,
+                ))
             }
         }
     };
     // Large array — truncated Debug, manual Default
     ($name:ident, $size:expr, large, $debug_name:expr) => {
         impl Default for $name {
-            fn default() -> Self { Self([0u8; $size]) }
+            fn default() -> Self {
+                Self([0u8; $size])
+            }
         }
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,7 +62,9 @@ macro_rules! impl_crypto_type {
         impl<'de> serde::Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
                 let s: String = serde::Deserialize::deserialize(d)?;
-                Ok($name(decode_hex_fixed(&s).map_err(serde::de::Error::custom)?))
+                Ok($name(
+                    decode_hex_fixed(&s).map_err(serde::de::Error::custom)?,
+                ))
             }
         }
     };
@@ -110,7 +116,9 @@ impl AsRef<[u8]> for Hash {
 impl<'de> serde::Deserialize<'de> for Hash {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s: String = serde::Deserialize::deserialize(d)?;
-        Ok(Hash(decode_hex_fixed(&s).map_err(serde::de::Error::custom)?))
+        Ok(Hash(
+            decode_hex_fixed(&s).map_err(serde::de::Error::custom)?,
+        ))
     }
 }
 

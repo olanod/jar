@@ -156,8 +156,12 @@ pub fn process_work_package(
     for i in 0..chunks.len() {
         chunk_indices.insert(i as u16);
     }
-    guarantor_state.received_chunks.insert(report_hash, chunk_indices);
-    guarantor_state.available_cores.insert(core_index, report_hash);
+    guarantor_state
+        .received_chunks
+        .insert(report_hash, chunk_indices);
+    guarantor_state
+        .available_cores
+        .insert(core_index, report_hash);
 
     tracing::info!(
         "Erasure-coded work package: {} chunks of {} bytes each, bundle_len={}, report_hash=0x{}",
@@ -289,7 +293,8 @@ pub fn handle_received_guarantee(
         tracing::warn!("Received guarantee: missing report length");
         return;
     }
-    let report_len = u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+    let report_len =
+        u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
     pos += 4;
     if pos + report_len > data.len() {
         tracing::warn!("Received guarantee: truncated report data");
@@ -344,17 +349,19 @@ pub fn handle_received_guarantee(
 
     // Mark core as available for assurance generation
     guarantor_state.available_cores.insert(
-        guarantor_state.pending_guarantees.last().unwrap().report.core_index,
+        guarantor_state
+            .pending_guarantees
+            .last()
+            .unwrap()
+            .report
+            .core_index,
         computed_hash,
     );
 }
 
 /// Handle a received assurance from the network.
 /// Collect assurances for inclusion in blocks we author.
-pub fn handle_received_assurance(
-    data: &[u8],
-    collected_assurances: &mut Vec<Assurance>,
-) {
+pub fn handle_received_assurance(data: &[u8], collected_assurances: &mut Vec<Assurance>) {
     if let Some(assurance) = decode_assurance(data) {
         tracing::info!(
             "Received assurance from validator {}, anchor=0x{}",
@@ -450,10 +457,7 @@ fn compute_erasure_root(chunks: &[Vec<u8>]) -> Hash {
         return Hash::ZERO;
     }
     // Hash each chunk, then build a balanced binary tree
-    let leaf_hashes: Vec<Hash> = chunks
-        .iter()
-        .map(|c| grey_crypto::blake2b_256(c))
-        .collect();
+    let leaf_hashes: Vec<Hash> = chunks.iter().map(|c| grey_crypto::blake2b_256(c)).collect();
 
     balanced_merkle_root(&leaf_hashes)
 }

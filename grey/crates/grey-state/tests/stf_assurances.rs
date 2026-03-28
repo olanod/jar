@@ -96,7 +96,8 @@ fn run_assurances_test(dir: &str, stem: &str) {
                 );
 
                 // Verify post-state pending reports
-                let expected_pending = parse_pending_reports(&json["post_state"]["avail_assignments"]);
+                let expected_pending =
+                    parse_pending_reports(&json["post_state"]["avail_assignments"]);
                 assert_eq!(
                     pending_reports.len(),
                     expected_pending.len(),

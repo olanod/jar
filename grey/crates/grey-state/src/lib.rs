@@ -4,12 +4,12 @@
 
 pub mod accumulate;
 pub mod assurances;
-pub mod pvm_backend;
-pub mod refine;
 pub mod authorizations;
 pub mod disputes;
 pub mod history;
 pub mod preimages;
+pub mod pvm_backend;
+pub mod refine;
 pub mod reports;
 pub mod safrole;
 pub mod statistics;

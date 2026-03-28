@@ -92,7 +92,6 @@ pub struct WorkDigest {
     pub result: WorkResult,
 
     // --- RefineLoad fields below ---
-
     /// u: Actual gas used during refinement.
     pub gas_used: Gas,
 

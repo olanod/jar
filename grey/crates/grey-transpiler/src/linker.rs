@@ -11,10 +11,10 @@
 //! 4. Translate RISC-V instructions, using relocation info to replace
 //!    AUIPC+LO12 pairs with direct load_imm of the final PVM address
 
-use std::collections::HashMap;
 use crate::TranspileError;
-use crate::riscv::TranslationContext;
 use crate::emitter;
+use crate::riscv::TranslationContext;
+use std::collections::HashMap;
 
 /// RISC-V relocation types we care about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +40,6 @@ impl RelocType {
         }
     }
 }
-
 
 /// Parsed ELF with relocation info for linking.
 struct LinkedElf {
@@ -90,7 +89,11 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     // Insert fallthrough (opcode 1) before any branch target that isn't
     // preceded by a terminator. This is done on the final PVM code after
     // fixup resolution, so all branch offsets are resolved.
-    crate::ensure_branch_targets_are_block_starts(&mut ctx.code, &mut ctx.bitmask, &mut ctx.jump_table);
+    crate::ensure_branch_targets_are_block_starts(
+        &mut ctx.code,
+        &mut ctx.bitmask,
+        &mut ctx.jump_table,
+    );
 
     Ok(emitter::build_standard_program(
         &elf.ro_data,
@@ -116,16 +119,16 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
 pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     let elf = parse_linked_elf(elf_data)?;
 
-    let refine_addr = elf.symbol_address("refine")
+    let refine_addr = elf
+        .symbol_address("refine")
         .or_else(|| elf.symbol_address("_start"))
-        .ok_or_else(|| TranspileError::InvalidSection(
-            "no 'refine' or '_start' symbol found".into()
-        ))?;
+        .ok_or_else(|| {
+            TranspileError::InvalidSection("no 'refine' or '_start' symbol found".into())
+        })?;
 
-    let accumulate_addr = elf.symbol_address("accumulate")
-        .ok_or_else(|| TranspileError::InvalidSection(
-            "no 'accumulate' symbol found".into()
-        ))?;
+    let accumulate_addr = elf
+        .symbol_address("accumulate")
+        .ok_or_else(|| TranspileError::InvalidSection("no 'accumulate' symbol found".into()))?;
 
     let mut ctx = TranslationContext::new(elf.is_64bit);
 
@@ -142,20 +145,30 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
         translate_section_linked(&mut ctx, data, *vaddr, &elf)?;
     }
     ctx.apply_fixups();
-    crate::ensure_branch_targets_are_block_starts(&mut ctx.code, &mut ctx.bitmask, &mut ctx.jump_table);
+    crate::ensure_branch_targets_are_block_starts(
+        &mut ctx.code,
+        &mut ctx.bitmask,
+        &mut ctx.jump_table,
+    );
 
     // Resolve entry points to PVM offsets
-    let refine_pvm = ctx.address_map.get(&refine_addr)
-        .copied()
-        .ok_or_else(|| TranspileError::InvalidSection(
-            format!("refine symbol at {:#x} not in translated code", refine_addr)
-        ))?;
+    let refine_pvm = ctx.address_map.get(&refine_addr).copied().ok_or_else(|| {
+        TranspileError::InvalidSection(format!(
+            "refine symbol at {:#x} not in translated code",
+            refine_addr
+        ))
+    })?;
 
-    let accumulate_pvm = ctx.address_map.get(&accumulate_addr)
+    let accumulate_pvm = ctx
+        .address_map
+        .get(&accumulate_addr)
         .copied()
-        .ok_or_else(|| TranspileError::InvalidSection(
-            format!("accumulate symbol at {:#x} not in translated code", accumulate_addr)
-        ))?;
+        .ok_or_else(|| {
+            TranspileError::InvalidSection(format!(
+                "accumulate symbol at {:#x} not in translated code",
+                accumulate_addr
+            ))
+        })?;
 
     // Patch dispatch header: jump to refine at byte 0, jump to accumulate at byte 5
     ctx.code[0] = 40; // jump opcode
@@ -179,7 +192,10 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
 
 impl LinkedElf {
     fn symbol_address(&self, name: &str) -> Option<u64> {
-        self.symbols.iter().find(|(n, _)| n == name).map(|(_, a)| *a)
+        self.symbols
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, a)| *a)
     }
 }
 
@@ -197,7 +213,7 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
 
     if !is_64bit {
         return Err(TranspileError::ElfParse(
-            "linker requires 64-bit ELF (rv64em)".into()
+            "linker requires 64-bit ELF (rv64em)".into(),
         ));
     }
 
@@ -210,15 +226,17 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     // Section name string table
     let strtab = {
         let sh = e_shoff + e_shstrndx * e_shentsize;
-        let off = u64::from_le_bytes(data[sh+24..sh+32].try_into().unwrap()) as usize;
-        let sz = u64::from_le_bytes(data[sh+32..sh+40].try_into().unwrap()) as usize;
-        &data[off..off+sz]
+        let off = u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap()) as usize;
+        let sz = u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize;
+        &data[off..off + sz]
     };
 
     let get_name = |name_off: usize| -> &str {
-        if name_off >= strtab.len() { return ""; }
+        if name_off >= strtab.len() {
+            return "";
+        }
         let end = strtab[name_off..].iter().position(|&b| b == 0).unwrap_or(0);
-        std::str::from_utf8(&strtab[name_off..name_off+end]).unwrap_or("")
+        std::str::from_utf8(&strtab[name_off..name_off + end]).unwrap_or("")
     };
 
     // First pass: collect section metadata
@@ -236,16 +254,18 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     let mut sections = Vec::with_capacity(e_shnum);
     for i in 0..e_shnum {
         let sh = e_shoff + i * e_shentsize;
-        if sh + e_shentsize > data.len() { break; }
+        if sh + e_shentsize > data.len() {
+            break;
+        }
         sections.push(SectionInfo {
-            name_off: u32::from_le_bytes(data[sh..sh+4].try_into().unwrap()) as usize,
-            sh_type: u32::from_le_bytes(data[sh+4..sh+8].try_into().unwrap()),
-            flags: u64::from_le_bytes(data[sh+8..sh+16].try_into().unwrap()),
-            addr: u64::from_le_bytes(data[sh+16..sh+24].try_into().unwrap()),
-            file_off: u64::from_le_bytes(data[sh+24..sh+32].try_into().unwrap()) as usize,
-            size: u64::from_le_bytes(data[sh+32..sh+40].try_into().unwrap()) as usize,
-            link: u32::from_le_bytes(data[sh+40..sh+44].try_into().unwrap()) as usize,
-            _info: u32::from_le_bytes(data[sh+44..sh+48].try_into().unwrap()) as usize,
+            name_off: u32::from_le_bytes(data[sh..sh + 4].try_into().unwrap()) as usize,
+            sh_type: u32::from_le_bytes(data[sh + 4..sh + 8].try_into().unwrap()),
+            flags: u64::from_le_bytes(data[sh + 8..sh + 16].try_into().unwrap()),
+            addr: u64::from_le_bytes(data[sh + 16..sh + 24].try_into().unwrap()),
+            file_off: u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap()) as usize,
+            size: u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize,
+            link: u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap()) as usize,
+            _info: u32::from_le_bytes(data[sh + 44..sh + 48].try_into().unwrap()) as usize,
         });
     }
 
@@ -262,13 +282,17 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         let is_exec = s.flags & 4 != 0;
         let is_write = s.flags & 1 != 0;
 
-        if s.sh_type == 2 { // SYMTAB
+        if s.sh_type == 2 {
+            // SYMTAB
             symtab_idx = Some(i);
         }
-        if s.sh_type == 4 { // RELA
+        if s.sh_type == 4 {
+            // RELA
             rela_section_indices.push(i);
         }
-        if !is_alloc || s.sh_type == 0 { continue; }
+        if !is_alloc || s.sh_type == 0 {
+            continue;
+        }
 
         if is_exec && s.file_off + s.size <= data.len() {
             code_sections.push((
@@ -278,13 +302,22 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
             ));
         } else if !is_write && !is_exec && (name.starts_with(".rodata") || name == ".srodata") {
             if s.file_off + s.size <= data.len() {
-                ro_sections.push((s.addr, s.size, data[s.file_off..s.file_off+s.size].to_vec()));
+                ro_sections.push((
+                    s.addr,
+                    s.size,
+                    data[s.file_off..s.file_off + s.size].to_vec(),
+                ));
             }
         } else if is_write {
-            if s.sh_type == 8 { // NOBITS (.bss)
+            if s.sh_type == 8 {
+                // NOBITS (.bss)
                 rw_sections.push((s.addr, s.size, None));
             } else if s.file_off + s.size <= data.len() {
-                rw_sections.push((s.addr, s.size, Some(data[s.file_off..s.file_off+s.size].to_vec())));
+                rw_sections.push((
+                    s.addr,
+                    s.size,
+                    Some(data[s.file_off..s.file_off + s.size].to_vec()),
+                ));
             }
         }
     }
@@ -297,22 +330,29 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         // Get associated string table
         let sym_strtab = {
             let ss = &sections[s.link];
-            &data[ss.file_off..ss.file_off+ss.size]
+            &data[ss.file_off..ss.file_off + ss.size]
         };
         // ELF64 symbol = 24 bytes
         let count = s.size / 24;
         for j in 0..count {
             let off = s.file_off + j * 24;
-            if off + 24 > data.len() { break; }
-            let st_name = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            if off + 24 > data.len() {
+                break;
+            }
+            let st_name = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             let st_info = data[off + 4];
-            let st_value = u64::from_le_bytes(data[off+8..off+16].try_into().unwrap());
+            let st_value = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
 
             let name = {
                 if st_name < sym_strtab.len() {
-                    let end = sym_strtab[st_name..].iter().position(|&b| b == 0).unwrap_or(0);
-                    std::str::from_utf8(&sym_strtab[st_name..st_name+end]).unwrap_or("")
-                } else { "" }
+                    let end = sym_strtab[st_name..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(0);
+                    std::str::from_utf8(&sym_strtab[st_name..st_name + end]).unwrap_or("")
+                } else {
+                    ""
+                }
             };
 
             symbols_by_idx.push((name.to_string(), st_value));
@@ -329,8 +369,12 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     // Compute PVM memory layout
     // PVM linear memory: [stack: 0..s) [ro: s..s+|o|) [rw: s+P(|o|)..] [heap...]
     // We set stack_size = minimum power-of-2 page boundary that contains all ro section addrs.
-    let ro_min = ro_sections.iter().map(|(a,_,_)| *a).min().unwrap_or(0);
-    let ro_max = ro_sections.iter().map(|(a,sz,_)| *a + *sz as u64).max().unwrap_or(0);
+    let ro_min = ro_sections.iter().map(|(a, _, _)| *a).min().unwrap_or(0);
+    let ro_max = ro_sections
+        .iter()
+        .map(|(a, sz, _)| *a + *sz as u64)
+        .max()
+        .unwrap_or(0);
 
     // Round ro_min down to page boundary for stack_size.
     // Minimum 4 pages (16KB) so the stack is usable even without rodata.
@@ -342,12 +386,16 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     };
 
     // Build ro_data blob: section data placed at (section_addr - stack_size) offset
-    let ro_blob_size = if ro_max > stack_size { (ro_max - stack_size) as usize } else { 0 };
+    let ro_blob_size = if ro_max > stack_size {
+        (ro_max - stack_size) as usize
+    } else {
+        0
+    };
     let mut ro_data = vec![0u8; ro_blob_size];
     for (addr, sz, d) in &ro_sections {
         let off = (*addr - stack_size) as usize;
         if off + sz <= ro_data.len() {
-            ro_data[off..off+sz].copy_from_slice(d);
+            ro_data[off..off + sz].copy_from_slice(d);
         }
     }
 
@@ -356,15 +404,19 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     let rw_pvm_base = stack_size + (ro_pages as u64 * page_size);
     let mut rw_data = Vec::new();
     if !rw_sections.is_empty() {
-        let rw_min = rw_sections.iter().map(|(a,_,_)| *a).min().unwrap();
-        let rw_max = rw_sections.iter().map(|(a,sz,_)| *a + *sz as u64).max().unwrap();
+        let rw_min = rw_sections.iter().map(|(a, _, _)| *a).min().unwrap();
+        let rw_max = rw_sections
+            .iter()
+            .map(|(a, sz, _)| *a + *sz as u64)
+            .max()
+            .unwrap();
         let rw_blob_size = (rw_max - rw_pvm_base.min(rw_min)) as usize;
         rw_data = vec![0u8; rw_blob_size];
         for (addr, sz, d) in &rw_sections {
             let off = (*addr - rw_pvm_base.min(rw_min)) as usize;
             if let Some(d) = d {
                 if off + sz <= rw_data.len() {
-                    rw_data[off..off+sz].copy_from_slice(d);
+                    rw_data[off..off + sz].copy_from_slice(d);
                 }
             }
         }
@@ -385,10 +437,12 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         let count = rs.size / 24;
         for j in 0..count {
             let off = rs.file_off + j * 24;
-            if off + 24 > data.len() { break; }
-            let r_offset = u64::from_le_bytes(data[off..off+8].try_into().unwrap());
-            let r_info = u64::from_le_bytes(data[off+8..off+16].try_into().unwrap());
-            let r_addend = i64::from_le_bytes(data[off+16..off+24].try_into().unwrap());
+            if off + 24 > data.len() {
+                break;
+            }
+            let r_offset = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+            let r_info = u64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
+            let r_addend = i64::from_le_bytes(data[off + 16..off + 24].try_into().unwrap());
             let r_type = (r_info & 0xFFFFFFFF) as u32;
             let r_sym = (r_info >> 32) as usize;
 
@@ -399,7 +453,9 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
 
             let sym_value = if r_sym < symbols_by_idx.len() {
                 symbols_by_idx[r_sym].1
-            } else { 0 };
+            } else {
+                0
+            };
 
             let target_addr = (sym_value as i64 + r_addend) as u64;
 
@@ -457,9 +513,16 @@ fn translate_section_linked(
         let rv_addr = base_addr + offset as u64;
         ctx.address_map.insert(rv_addr, ctx.code.len() as u32);
 
-        if offset + 4 > data.len() { break; }
+        if offset + 4 > data.len() {
+            break;
+        }
 
-        let inst = u32::from_le_bytes([data[offset], data[offset+1], data[offset+2], data[offset+3]]);
+        let inst = u32::from_le_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]);
 
         // Skip non-instruction bytes
         if inst & 0x3 != 0x3 {
@@ -472,10 +535,9 @@ fn translate_section_linked(
 
         let opcode = inst & 0x7f;
 
-
-
         // Check for relocation overrides
-        if opcode == 0x17 { // AUIPC
+        if opcode == 0x17 {
+            // AUIPC
             let rd = ((inst >> 7) & 0x1f) as u8;
 
             if let Some(&target_addr) = elf.call_targets.get(&rv_addr) {
@@ -483,7 +545,10 @@ fn translate_section_linked(
                 // Peek at JALR to get link register
                 if offset + 8 <= data.len() {
                     let jalr = u32::from_le_bytes([
-                        data[offset+4], data[offset+5], data[offset+6], data[offset+7],
+                        data[offset + 4],
+                        data[offset + 5],
+                        data[offset + 6],
+                        data[offset + 7],
                     ]);
                     let jalr_rd = ((jalr >> 7) & 0x1f) as u8;
                     let ret_addr = rv_addr + 8;
@@ -508,7 +573,10 @@ fn translate_section_linked(
                 if offset + 8 <= data.len() {
                     if let Some(&_) = elf.lo12_targets.get(&next_addr) {
                         let next_inst = u32::from_le_bytes([
-                            data[offset+4], data[offset+5], data[offset+6], data[offset+7],
+                            data[offset + 4],
+                            data[offset + 5],
+                            data[offset + 6],
+                            data[offset + 7],
                         ]);
                         let next_opcode = next_inst & 0x7f;
                         let next_funct3 = (next_inst >> 12) & 0x7;

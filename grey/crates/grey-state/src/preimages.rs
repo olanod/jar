@@ -56,9 +56,7 @@ pub fn process_preimages(
     //   1. A request (hash, length) exists in the service account
     //   2. The blob is not already stored (hash not in blobs)
     for (sid, hash, length) in &hashed {
-        let account = accounts
-            .get(sid)
-            .ok_or(PreimageError::PreimageUnneeded)?;
+        let account = accounts.get(sid).ok_or(PreimageError::PreimageUnneeded)?;
 
         if !account.requests.contains_key(&(*hash, *length)) {
             return Err(PreimageError::PreimageUnneeded);

@@ -3,12 +3,12 @@
 //! Updates per-validator performance records based on block activity,
 //! and computes per-core (π_C) and per-service (π_S) statistics.
 
+use grey_types::Timeslot;
 use grey_types::config::Config;
 use grey_types::constants::ERASURE_PIECE_SIZE;
 use grey_types::header::Extrinsic;
 use grey_types::state::{CoreStatistics, ServiceStatistics, ValidatorRecord, ValidatorStatistics};
 use grey_types::work::WorkReport;
-use grey_types::Timeslot;
 use std::collections::BTreeMap;
 
 /// Apply the statistics sub-transition.
@@ -84,7 +84,13 @@ pub fn update_statistics(
     }
 
     // Compute per-core statistics π_C (eq 13.3)
-    compute_core_statistics(config, stats, &extrinsic.assurances, incoming_reports, available_reports);
+    compute_core_statistics(
+        config,
+        stats,
+        &extrinsic.assurances,
+        incoming_reports,
+        available_reports,
+    );
 
     // Compute per-service statistics π_S (eq 13.3)
     compute_service_statistics(stats, extrinsic, incoming_reports, accumulation_stats);

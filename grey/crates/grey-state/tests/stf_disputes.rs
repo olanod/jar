@@ -4,11 +4,11 @@ mod common;
 
 use common::{discover_test_stems, ed25519_from_hex, hash_from_hex, sig_from_hex};
 use grey_state::disputes::process_disputes;
+use grey_types::Ed25519PublicKey;
 use grey_types::config::Config;
 use grey_types::header::*;
 use grey_types::state::{Judgments, PendingReport};
 use grey_types::validator::ValidatorKey;
-use grey_types::Ed25519PublicKey;
 
 fn parse_judgments(json: &serde_json::Value) -> Judgments {
     Judgments {
@@ -157,10 +157,7 @@ fn run_disputes_test(dir: &str, stem: &str) {
                     expected_err
                 );
             }
-            Ok(_) => panic!(
-                "expected error '{}' but got Ok in {}",
-                expected_err, path
-            ),
+            Ok(_) => panic!("expected error '{}' but got Ok in {}", expected_err, path),
         }
     } else if let Some(ok_val) = output.get("ok") {
         // Expect success
@@ -254,19 +251,10 @@ dispute_test!(
     "progress_with_bad_signatures-2"
 );
 
-dispute_test!(
-    test_disputes_invalid_keys_1,
-    "progress_with_invalid_keys-1"
-);
-dispute_test!(
-    test_disputes_invalid_keys_2,
-    "progress_with_invalid_keys-2"
-);
+dispute_test!(test_disputes_invalid_keys_1, "progress_with_invalid_keys-1");
+dispute_test!(test_disputes_invalid_keys_2, "progress_with_invalid_keys-2");
 
-dispute_test!(
-    test_disputes_no_verdicts_1,
-    "progress_with_no_verdicts-1"
-);
+dispute_test!(test_disputes_no_verdicts_1, "progress_with_no_verdicts-1");
 
 dispute_test!(
     test_disputes_prev_set_sigs_1,

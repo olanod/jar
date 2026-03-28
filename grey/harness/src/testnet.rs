@@ -21,7 +21,11 @@ impl TestnetProcess {
         let log_stderr = log_file.try_clone()?;
 
         let mode = if seq { "seq-testnet" } else { "testnet" };
-        info!("starting {mode} (bin={}, log={})", grey_bin.display(), log_path.display());
+        info!(
+            "starting {mode} (bin={}, log={})",
+            grey_bin.display(),
+            log_path.display()
+        );
 
         let mut cmd = Command::new(&grey_bin);
         if seq {

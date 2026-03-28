@@ -17,7 +17,10 @@ pub fn run(
     let state_json = github::pr_view(pr, "state")?;
     let state = state_json["state"].as_str().unwrap_or("");
     if state != "OPEN" {
-        github::pr_comment(pr, &format!("**JAR Bot:** PR is not open (state: {state}) — ignoring `/review`."))?;
+        github::pr_comment(
+            pr,
+            &format!("**JAR Bot:** PR is not open (state: {state}) — ignoring `/review`."),
+        )?;
         return Err(format!("PR #{pr} is not open (state: {state})").into());
     }
 
@@ -31,9 +34,10 @@ pub fn run(
 
     // Check cache staleness
     if let Err(e) = cache::check_staleness(&cache_indices, &spec_dir) {
-        github::pr_comment(pr, &format!(
-            "**JAR Bot:** Genesis cache is stale — cannot process review. {e}"
-        ))?;
+        github::pr_comment(
+            pr,
+            &format!("**JAR Bot:** Genesis cache is stale — cannot process review. {e}"),
+        )?;
         return Err(e.into());
     }
 
@@ -52,8 +56,8 @@ pub fn run(
     };
 
     // Get ranking snapshot
-    let ranking_json = git::show_file("origin/genesis-state:ranking.json")
-        .unwrap_or_else(|_| "{}".to_string());
+    let ranking_json =
+        git::show_file("origin/genesis-state:ranking.json").unwrap_or_else(|_| "{}".to_string());
     let ranking: serde_json::Value = serde_json::from_str(&ranking_json)?;
 
     let ranking_snapshot = find_ranking_snapshot(&cache_indices, &ranking, pr_created_epoch);
@@ -88,23 +92,26 @@ pub fn run(
 
     if readiness.ready {
         // Quorum reached — trigger merge workflow
-        github::workflow_run(
-            "genesis-merge.yml",
-            &[("pr_number", &pr.to_string())],
-        )?;
+        github::workflow_run("genesis-merge.yml", &[("pr_number", &pr.to_string())])?;
 
-        github::pr_comment(pr, &format!(
-            "**JAR Bot:** Quorum reached — triggering merge.\n\
+        github::pr_comment(
+            pr,
+            &format!(
+                "**JAR Bot:** Quorum reached — triggering merge.\n\
              Reviews: {review_count}, meta-reviews: {meta_count}.\n\
              Merge weight: {}/{} (>50%).",
-            readiness.merge_weight, readiness.total_weight
-        ))?;
+                readiness.merge_weight, readiness.total_weight
+            ),
+        )?;
     } else {
-        github::pr_comment(pr, &format!(
-            "**JAR Bot:** Review recorded from @{comment_author} ({review_count} reviews, {meta_count} meta-reviews).\n\
+        github::pr_comment(
+            pr,
+            &format!(
+                "**JAR Bot:** Review recorded from @{comment_author} ({review_count} reviews, {meta_count} meta-reviews).\n\
              Merge weight: {}/{} (need >50%).",
-            readiness.merge_weight, readiness.total_weight
-        ))?;
+                readiness.merge_weight, readiness.total_weight
+            ),
+        )?;
     }
 
     Ok(())

@@ -3,12 +3,12 @@
 //! Processes availability assurances to determine which pending work reports
 //! have become available.
 
+use grey_types::Hash;
 use grey_types::config::Config;
 use grey_types::header::Assurance;
 use grey_types::state::PendingReport;
 use grey_types::validator::ValidatorKey;
 use grey_types::work::WorkReport;
-use grey_types::Hash;
 
 /// Error type for assurances validation.
 #[derive(Debug, Clone, PartialEq, Eq)]

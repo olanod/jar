@@ -14,22 +14,13 @@ pub enum TrieNode {
     Empty,
 
     /// Branch node: left and right child hashes.
-    Branch {
-        left: Hash,
-        right: Hash,
-    },
+    Branch { left: Hash, right: Hash },
 
     /// Leaf node with embedded value (≤ 32 bytes).
-    EmbeddedLeaf {
-        key: [u8; 31],
-        value: Vec<u8>,
-    },
+    EmbeddedLeaf { key: [u8; 31], value: Vec<u8> },
 
     /// Leaf node with hashed value (> 32 bytes).
-    HashedLeaf {
-        key: [u8; 31],
-        value_hash: Hash,
-    },
+    HashedLeaf { key: [u8; 31], value_hash: Hash },
 }
 
 impl TrieNode {
@@ -193,13 +184,15 @@ mod tests {
                 })
                 .collect();
 
-            let kvs_refs: Vec<(&[u8], &[u8])> =
-                kvs.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+            let kvs_refs: Vec<(&[u8], &[u8])> = kvs
+                .iter()
+                .map(|(k, v)| (k.as_slice(), v.as_slice()))
+                .collect();
 
             let root = merkle_root(&kvs_refs);
             let expected_hex = &case.output;
-            let expected_bytes =
-                hex::decode(expected_hex).unwrap_or_else(|e| panic!("case {i}: bad output hex: {e}"));
+            let expected_bytes = hex::decode(expected_hex)
+                .unwrap_or_else(|e| panic!("case {i}: bad output hex: {e}"));
             let mut expected = [0u8; 32];
             expected.copy_from_slice(&expected_bytes);
 

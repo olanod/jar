@@ -7,16 +7,16 @@
 //! - Work package context (refinement context + service info)
 
 use grey_store::Store;
-use grey_types::config::Config;
 use grey_types::Hash;
+use grey_types::config::Config;
 use jsonrpsee::core::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use jsonrpsee::server::Server;
 use jsonrpsee::types::ErrorObjectOwned;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 /// Commands sent from RPC to the node event loop.
 #[derive(Debug)]
@@ -85,10 +85,7 @@ pub trait JamRpc {
     /// Get work-package context: refinement context fields and service code hash.
     /// Clients need this to build valid work packages.
     #[method(name = "jam_getContext")]
-    async fn get_context(
-        &self,
-        service_id: u32,
-    ) -> Result<serde_json::Value, ErrorObjectOwned>;
+    async fn get_context(&self, service_id: u32) -> Result<serde_json::Value, ErrorObjectOwned>;
 }
 
 struct RpcImpl {
@@ -124,8 +121,8 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_block(&self, hash_hex: String) -> Result<serde_json::Value, ErrorObjectOwned> {
-        let hash_bytes =
-            hex::decode(hash_hex.trim_start_matches("0x")).map_err(|e| internal_error(e.to_string()))?;
+        let hash_bytes = hex::decode(hash_hex.trim_start_matches("0x"))
+            .map_err(|e| internal_error(e.to_string()))?;
         if hash_bytes.len() != 32 {
             return Err(internal_error("hash must be 32 bytes"));
         }
@@ -143,9 +140,7 @@ impl JamRpcServer for RpcImpl {
                 "guarantees_count": block.extrinsic.guarantees.len(),
                 "assurances_count": block.extrinsic.assurances.len(),
             })),
-            Err(grey_store::StoreError::NotFound) => {
-                Err(not_found("block not found"))
-            }
+            Err(grey_store::StoreError::NotFound) => Err(not_found("block not found")),
             Err(e) => Err(internal_error(e.to_string())),
         }
     }
@@ -156,9 +151,7 @@ impl JamRpcServer for RpcImpl {
                 "hash": hex::encode(hash.0),
                 "slot": slot,
             })),
-            Err(grey_store::StoreError::NotFound) => {
-                Err(not_found("no block at this slot"))
-            }
+            Err(grey_store::StoreError::NotFound) => Err(not_found("no block at this slot")),
             Err(e) => Err(internal_error(e.to_string())),
         }
     }
@@ -240,10 +233,7 @@ impl JamRpcServer for RpcImpl {
         }
     }
 
-    async fn get_context(
-        &self,
-        service_id: u32,
-    ) -> Result<serde_json::Value, ErrorObjectOwned> {
+    async fn get_context(&self, service_id: u32) -> Result<serde_json::Value, ErrorObjectOwned> {
         let (head_hash, head_slot) = self
             .state
             .store
@@ -295,7 +285,10 @@ pub async fn start_rpc_server(
         tower_http::cors::CorsLayer::new()
     };
     let middleware = tower::ServiceBuilder::new().layer(cors_layer);
-    let server = Server::builder().set_http_middleware(middleware).build(&addr).await?;
+    let server = Server::builder()
+        .set_http_middleware(middleware)
+        .build(&addr)
+        .await?;
     let bound_addr = server.local_addr()?;
 
     let rpc_impl = RpcImpl { state };

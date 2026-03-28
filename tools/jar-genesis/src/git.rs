@@ -32,11 +32,7 @@ pub fn git_cmd(args: &[&str]) -> Result<String, GitError> {
 
 /// Run a git command in a specific directory. Returns stdout.
 pub fn git_cmd_in(dir: &str, args: &[&str]) -> Result<String, GitError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()?;
+    let output = Command::new("git").arg("-C").arg(dir).args(args).output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(GitError::CommandFailed(format!(

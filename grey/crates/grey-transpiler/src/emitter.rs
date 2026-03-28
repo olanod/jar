@@ -9,10 +9,7 @@ pub fn encode_natural(value: u64) -> Vec<u8> {
     if value < 128 {
         vec![value as u8]
     } else if value < (1 << 14) {
-        vec![
-            0x80 | ((value >> 8) as u8 & 0x3F),
-            (value & 0xFF) as u8,
-        ]
+        vec![0x80 | ((value >> 8) as u8 & 0x3F), (value & 0xFF) as u8]
     } else if value < (1 << 21) {
         vec![
             0xC0 | ((value >> 16) as u8 & 0x1F),
@@ -45,17 +42,26 @@ pub fn pack_bitmask(bitmask: &[u8]) -> Vec<u8> {
 /// Build the inner code blob (deblob format, GP eq A.2):
 /// `E(|j|) ⌢ E₁(z) ⌢ E(|c|) ⌢ E_z(j) ⌢ E(c) ⌢ packed_bitmask`
 pub fn build_code_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<u8> {
-    assert_eq!(code.len(), bitmask.len(), "code and bitmask must have same length");
+    assert_eq!(
+        code.len(),
+        bitmask.len(),
+        "code and bitmask must have same length"
+    );
 
     // Determine jump table entry encoding size (z)
     let z: u8 = if jump_table.is_empty() {
         1
     } else {
         let max_val = jump_table.iter().copied().max().unwrap_or(0);
-        if max_val <= 0xFF { 1 }
-        else if max_val <= 0xFFFF { 2 }
-        else if max_val <= 0xFFFFFF { 3 }
-        else { 4 }
+        if max_val <= 0xFF {
+            1
+        } else if max_val <= 0xFFFF {
+            2
+        } else if max_val <= 0xFFFFFF {
+            3
+        } else {
+            4
+        }
     };
 
     let mut blob = Vec::new();

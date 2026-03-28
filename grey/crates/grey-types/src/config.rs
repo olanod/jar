@@ -124,26 +124,26 @@ impl Config {
         use crate::constants::*;
         let mut buf = Vec::with_capacity(134);
         // E_8 values
-        buf.extend_from_slice(&BALANCE_PER_ITEM.to_le_bytes());          // B_I
-        buf.extend_from_slice(&BALANCE_PER_OCTET.to_le_bytes());         // B_L
-        buf.extend_from_slice(&BALANCE_SERVICE_MINIMUM.to_le_bytes());   // B_S
+        buf.extend_from_slice(&BALANCE_PER_ITEM.to_le_bytes()); // B_I
+        buf.extend_from_slice(&BALANCE_PER_OCTET.to_le_bytes()); // B_L
+        buf.extend_from_slice(&BALANCE_SERVICE_MINIMUM.to_le_bytes()); // B_S
         // E_2 values
-        buf.extend_from_slice(&self.core_count.to_le_bytes());           // C
+        buf.extend_from_slice(&self.core_count.to_le_bytes()); // C
         // E_4 values
         buf.extend_from_slice(&self.preimage_expunge_period.to_le_bytes()); // D
-        buf.extend_from_slice(&self.epoch_length.to_le_bytes());         // E
+        buf.extend_from_slice(&self.epoch_length.to_le_bytes()); // E
         // E_8 values
-        buf.extend_from_slice(&GAS_ACCUMULATE.to_le_bytes());            // G_A
-        buf.extend_from_slice(&GAS_IS_AUTHORIZED.to_le_bytes());         // G_I
-        buf.extend_from_slice(&self.gas_refine.to_le_bytes());           // G_R
+        buf.extend_from_slice(&GAS_ACCUMULATE.to_le_bytes()); // G_A
+        buf.extend_from_slice(&GAS_IS_AUTHORIZED.to_le_bytes()); // G_I
+        buf.extend_from_slice(&self.gas_refine.to_le_bytes()); // G_R
         buf.extend_from_slice(&self.gas_total_accumulation.to_le_bytes()); // G_T
         // E_2 values
         buf.extend_from_slice(&(self.recent_history_size as u16).to_le_bytes()); // H
-        buf.extend_from_slice(&(MAX_WORK_ITEMS as u16).to_le_bytes());   // I
+        buf.extend_from_slice(&(MAX_WORK_ITEMS as u16).to_le_bytes()); // I
         buf.extend_from_slice(&(MAX_DEPENDENCY_ITEMS as u16).to_le_bytes()); // J
         buf.extend_from_slice(&self.max_tickets_per_block.to_le_bytes()); // K
         // E_4 value
-        buf.extend_from_slice(&MAX_LOOKUP_ANCHOR_AGE.to_le_bytes());     // L
+        buf.extend_from_slice(&MAX_LOOKUP_ANCHOR_AGE.to_le_bytes()); // L
         // E_2 values
         buf.extend_from_slice(&self.tickets_per_validator.to_le_bytes()); // N
         buf.extend_from_slice(&(self.auth_pool_size as u16).to_le_bytes()); // O
@@ -152,17 +152,17 @@ impl Config {
         buf.extend_from_slice(&(self.rotation_period_val as u16).to_le_bytes()); // R
         buf.extend_from_slice(&(MAX_WORK_PACKAGE_EXTRINSICS as u16).to_le_bytes()); // T
         buf.extend_from_slice(&(self.availability_timeout as u16).to_le_bytes()); // U
-        buf.extend_from_slice(&self.validators_count.to_le_bytes());     // V
+        buf.extend_from_slice(&self.validators_count.to_le_bytes()); // V
         // E_4 values
         buf.extend_from_slice(&MAX_IS_AUTHORIZED_CODE_SIZE.to_le_bytes()); // W_A
         buf.extend_from_slice(&MAX_WORK_PACKAGE_BLOB_SIZE.to_le_bytes()); // W_B
-        buf.extend_from_slice(&MAX_SERVICE_CODE_SIZE.to_le_bytes());     // W_C
-        buf.extend_from_slice(&ERASURE_PIECE_SIZE.to_le_bytes());        // W_E
-        buf.extend_from_slice(&MAX_IMPORTS.to_le_bytes());               // W_M
+        buf.extend_from_slice(&MAX_SERVICE_CODE_SIZE.to_le_bytes()); // W_C
+        buf.extend_from_slice(&ERASURE_PIECE_SIZE.to_le_bytes()); // W_E
+        buf.extend_from_slice(&MAX_IMPORTS.to_le_bytes()); // W_M
         buf.extend_from_slice(&self.erasure_pieces_per_segment.to_le_bytes()); // W_P
         buf.extend_from_slice(&MAX_WORK_REPORT_BLOB_SIZE.to_le_bytes()); // W_R
         buf.extend_from_slice(&(TRANSFER_MEMO_SIZE as u32).to_le_bytes()); // W_T
-        buf.extend_from_slice(&MAX_EXPORTS.to_le_bytes());               // W_X
+        buf.extend_from_slice(&MAX_EXPORTS.to_le_bytes()); // W_X
         buf.extend_from_slice(&self.ticket_submission_end_val.to_le_bytes()); // Y
         debug_assert_eq!(buf.len(), 134);
         buf

@@ -87,15 +87,18 @@ fn main() {
 
     let result = match cli.command {
         Command::Workflow { action } => match action {
-            WorkflowAction::Merge { pr, founder_override } => {
-                workflow::merge::run(pr, founder_override)
-            }
+            WorkflowAction::Merge {
+                pr,
+                founder_override,
+            } => workflow::merge::run(pr, founder_override),
             WorkflowAction::PrOpened { pr, created_at } => {
                 workflow::pr_opened::run(pr, &created_at)
             }
-            WorkflowAction::Review { pr, comment_author, comment_body } => {
-                workflow::review::run(pr, &comment_author, &comment_body)
-            }
+            WorkflowAction::Review {
+                pr,
+                comment_author,
+                comment_body,
+            } => workflow::review::run(pr, &comment_author, &comment_body),
         },
         Command::Replay { mode } => match mode {
             ReplayMode::Verify => replay::verify(),
@@ -103,9 +106,11 @@ fn main() {
             ReplayMode::Rebuild => replay::rebuild(),
         },
         Command::CheckCache { cache_file } => cache::check(&cache_file),
-        Command::CollectReviews { pr, head_sha, targets } => {
-            review::collect_and_print(pr, head_sha.as_deref(), targets.as_deref())
-        }
+        Command::CollectReviews {
+            pr,
+            head_sha,
+            targets,
+        } => review::collect_and_print(pr, head_sha.as_deref(), targets.as_deref()),
     };
 
     if let Err(e) = result {

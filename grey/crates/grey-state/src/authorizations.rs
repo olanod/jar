@@ -5,8 +5,8 @@
 //! 2. Append a new authorizer from the queue
 //! 3. Keep only the last O (auth_pool_size) entries
 
-use grey_types::config::Config;
 use grey_types::Hash;
+use grey_types::config::Config;
 
 /// Input for the authorization sub-transition.
 pub struct AuthorizationInput {

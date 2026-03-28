@@ -137,7 +137,8 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     // When we receive a block at slot X but our state is at slot < X-1,
     // we may be missing intermediate blocks. Buffer the block and try
     // to apply it after the missing ones arrive.
-    let mut pending_blocks: std::collections::BTreeMap<Timeslot, (Block, Hash)> = std::collections::BTreeMap::new();
+    let mut pending_blocks: std::collections::BTreeMap<Timeslot, (Block, Hash)> =
+        std::collections::BTreeMap::new();
 
     tracing::info!(
         "Validator {} node started, genesis_time={}",
@@ -1090,8 +1091,13 @@ fn create_demo_work_package(
 ) -> grey_types::work::WorkPackage {
     use grey_types::work::*;
 
-    let (anchor, state_root, beefy_root) = if let Some(recent) = state.recent_blocks.headers.last() {
-        (recent.header_hash, recent.state_root, recent.accumulation_root)
+    let (anchor, state_root, beefy_root) = if let Some(recent) = state.recent_blocks.headers.last()
+    {
+        (
+            recent.header_hash,
+            recent.state_root,
+            recent.accumulation_root,
+        )
     } else {
         (Hash::ZERO, Hash::ZERO, Hash::ZERO)
     };

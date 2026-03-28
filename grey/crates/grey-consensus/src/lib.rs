@@ -11,8 +11,8 @@ pub mod genesis;
 pub mod safrole;
 
 pub use safrole::{
-    accumulate_entropy, apply_safrole, fallback_key_sequence, filter_offenders,
-    is_ticket_sealed, merge_tickets, outside_in_sequence, SafroleError, SafroleOutput,
+    SafroleError, SafroleOutput, accumulate_entropy, apply_safrole, fallback_key_sequence,
+    filter_offenders, is_ticket_sealed, merge_tickets, outside_in_sequence,
 };
 
 /// Compute the epoch index for a given timeslot (eq 4.8).

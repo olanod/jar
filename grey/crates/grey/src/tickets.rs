@@ -87,13 +87,9 @@ impl TicketState {
         let mut tickets = Vec::new();
 
         for attempt in 0..TICKET_ATTEMPTS {
-            if let Some(proof) = generate_ticket_proof(
-                secrets,
-                eta2,
-                attempt,
-                &ring_keys,
-                validator_index as usize,
-            ) {
+            if let Some(proof) =
+                generate_ticket_proof(secrets, eta2, attempt, &ring_keys, validator_index as usize)
+            {
                 tickets.push(proof);
             }
         }
@@ -288,7 +284,10 @@ mod tests {
         // Slot y is outside window
         assert!(!is_ticket_submission_window(y, &config));
         // Slot E-1 is outside window
-        assert!(!is_ticket_submission_window(config.epoch_length - 1, &config));
+        assert!(!is_ticket_submission_window(
+            config.epoch_length - 1,
+            &config
+        ));
     }
 
     #[test]

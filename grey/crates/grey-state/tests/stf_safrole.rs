@@ -133,7 +133,8 @@ fn assert_state_eq(got: &SafroleState, expected: &SafroleState, path: &str) {
     assert_seal_key_series_eq(&got.gamma_s, &expected.gamma_s, path);
 
     assert_eq!(
-        got.gamma_z, expected.gamma_z,
+        got.gamma_z,
+        expected.gamma_z,
         "gamma_z mismatch in {}\nGot:      {}\nExpected: {}",
         path,
         hex::encode(got.gamma_z.0),
@@ -141,12 +142,7 @@ fn assert_state_eq(got: &SafroleState, expected: &SafroleState, path: &str) {
     );
 }
 
-fn assert_validators_eq(
-    got: &[ValidatorKey],
-    expected: &[ValidatorKey],
-    name: &str,
-    path: &str,
-) {
+fn assert_validators_eq(got: &[ValidatorKey], expected: &[ValidatorKey], name: &str, path: &str) {
     assert_eq!(
         got.len(),
         expected.len(),
@@ -178,11 +174,7 @@ fn assert_seal_key_series_eq(got: &SealKeySeries, expected: &SealKeySeries, path
                 path
             );
             for (i, (gk, ek)) in g.iter().zip(e.iter()).enumerate() {
-                assert_eq!(
-                    gk, ek,
-                    "gamma_s fallback key[{}] mismatch in {}",
-                    i, path
-                );
+                assert_eq!(gk, ek, "gamma_s fallback key[{}] mismatch in {}", i, path);
             }
         }
         (SealKeySeries::Tickets(g), SealKeySeries::Tickets(e)) => {
@@ -206,10 +198,16 @@ fn assert_seal_key_series_eq(got: &SealKeySeries, expected: &SealKeySeries, path
             }
         }
         (SealKeySeries::Fallback(_), SealKeySeries::Tickets(_)) => {
-            panic!("gamma_s type mismatch: got Fallback, expected Tickets in {}", path);
+            panic!(
+                "gamma_s type mismatch: got Fallback, expected Tickets in {}",
+                path
+            );
         }
         (SealKeySeries::Tickets(_), SealKeySeries::Fallback(_)) => {
-            panic!("gamma_s type mismatch: got Tickets, expected Fallback in {}", path);
+            panic!(
+                "gamma_s type mismatch: got Tickets, expected Fallback in {}",
+                path
+            );
         }
     }
 }
@@ -219,11 +217,7 @@ fn make_ring_vrf_verifier(
 ) -> impl Fn(&TicketProof, &BandersnatchRingRoot, &Hash, u8) -> Option<Hash> {
     move |tp: &TicketProof, gamma_z: &BandersnatchRingRoot, eta2: &Hash, attempt: u8| {
         let ticket_id_bytes = grey_crypto::bandersnatch::verify_ticket(
-            ring_size,
-            &gamma_z.0,
-            &eta2.0,
-            attempt,
-            &tp.proof,
+            ring_size, &gamma_z.0, &eta2.0, attempt, &tp.proof,
         )?;
         Some(Hash(ticket_id_bytes))
     }
@@ -398,78 +392,30 @@ safrole_test!(
     test_safrole_no_tickets_4,
     "enact-epoch-change-with-no-tickets-4"
 );
-safrole_test!(
-    test_safrole_padding_1,
-    "enact-epoch-change-with-padding-1"
-);
-safrole_test!(
-    test_safrole_skip_epochs_1,
-    "skip-epochs-1"
-);
-safrole_test!(
-    test_safrole_skip_epoch_tail_1,
-    "skip-epoch-tail-1"
-);
+safrole_test!(test_safrole_padding_1, "enact-epoch-change-with-padding-1");
+safrole_test!(test_safrole_skip_epochs_1, "skip-epochs-1");
+safrole_test!(test_safrole_skip_epoch_tail_1, "skip-epoch-tail-1");
 
 // Ticket tests that fail before VRF (no Ring VRF needed)
-safrole_test!(
-    test_safrole_bad_ticket_attempt,
-    "publish-tickets-no-mark-1"
-);
-safrole_test!(
-    test_safrole_unexpected_ticket,
-    "publish-tickets-no-mark-7"
-);
+safrole_test!(test_safrole_bad_ticket_attempt, "publish-tickets-no-mark-1");
+safrole_test!(test_safrole_unexpected_ticket, "publish-tickets-no-mark-7");
 safrole_test!(
     test_safrole_no_tickets_in_sealing_phase,
     "publish-tickets-no-mark-8"
 );
 
 // Ticket tests (with real Bandersnatch Ring VRF verification)
-safrole_test!(
-    test_safrole_tickets_ok_1,
-    "publish-tickets-no-mark-2"
-);
-safrole_test!(
-    test_safrole_tickets_duplicate,
-    "publish-tickets-no-mark-3"
-);
-safrole_test!(
-    test_safrole_tickets_bad_order,
-    "publish-tickets-no-mark-4"
-);
-safrole_test!(
-    test_safrole_tickets_bad_proof,
-    "publish-tickets-no-mark-5"
-);
-safrole_test!(
-    test_safrole_tickets_ok_2,
-    "publish-tickets-no-mark-6"
-);
-safrole_test!(
-    test_safrole_tickets_epoch_mark,
-    "publish-tickets-no-mark-9"
-);
-safrole_test!(
-    test_safrole_with_mark_1,
-    "publish-tickets-with-mark-1"
-);
-safrole_test!(
-    test_safrole_with_mark_2,
-    "publish-tickets-with-mark-2"
-);
-safrole_test!(
-    test_safrole_with_mark_3,
-    "publish-tickets-with-mark-3"
-);
-safrole_test!(
-    test_safrole_with_mark_4,
-    "publish-tickets-with-mark-4"
-);
-safrole_test!(
-    test_safrole_with_mark_5,
-    "publish-tickets-with-mark-5"
-);
+safrole_test!(test_safrole_tickets_ok_1, "publish-tickets-no-mark-2");
+safrole_test!(test_safrole_tickets_duplicate, "publish-tickets-no-mark-3");
+safrole_test!(test_safrole_tickets_bad_order, "publish-tickets-no-mark-4");
+safrole_test!(test_safrole_tickets_bad_proof, "publish-tickets-no-mark-5");
+safrole_test!(test_safrole_tickets_ok_2, "publish-tickets-no-mark-6");
+safrole_test!(test_safrole_tickets_epoch_mark, "publish-tickets-no-mark-9");
+safrole_test!(test_safrole_with_mark_1, "publish-tickets-with-mark-1");
+safrole_test!(test_safrole_with_mark_2, "publish-tickets-with-mark-2");
+safrole_test!(test_safrole_with_mark_3, "publish-tickets-with-mark-3");
+safrole_test!(test_safrole_with_mark_4, "publish-tickets-with-mark-4");
+safrole_test!(test_safrole_with_mark_5, "publish-tickets-with-mark-5");
 
 #[test]
 fn test_safrole_discover_all() {

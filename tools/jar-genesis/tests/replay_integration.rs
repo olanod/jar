@@ -30,8 +30,7 @@ fn test_cache_check_current_repo() {
         jar_genesis::git::show_file("origin/genesis-state:genesis.json").expect("no cache");
     let cache: Vec<serde_json::Value> = serde_json::from_str(&cache_json).unwrap();
 
-    jar_genesis::cache::check_staleness(&cache, &spec)
-        .expect("cache staleness check failed");
+    jar_genesis::cache::check_staleness(&cache, &spec).expect("cache staleness check failed");
 }
 
 #[test]
@@ -64,8 +63,7 @@ fn test_read_genesis_commit_hash() {
         "genesis commit should be hex: {hash}"
     );
     assert_ne!(
-        hash,
-        "0000000000000000000000000000000000000000",
+        hash, "0000000000000000000000000000000000000000",
         "genesis should be launched"
     );
 }

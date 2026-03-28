@@ -238,8 +238,7 @@ fn run_independent_trace(trace_name: &str) {
     let variant = "jar080_tiny";
     let suffix = format!(".input.{variant}.json");
     let mut stems: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("failed to read dir {dir}: {e}"))
+    for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("failed to read dir {dir}: {e}"))
     {
         let name = entry.unwrap().file_name().into_string().unwrap();
         if let Some(stem) = name.strip_suffix(&suffix) {
@@ -342,20 +341,33 @@ fn run_independent_trace(trace_name: &str) {
                             for (k, ev) in &exp_map {
                                 match act_map.get(k) {
                                     Some(av) if av != ev => {
-                                        eprintln!("  DIFF key[0]={} key={}...: exp={}B act={}B",
-                                            k[0], hex::encode(&k[..8]), ev.len(), av.len());
+                                        eprintln!(
+                                            "  DIFF key[0]={} key={}...: exp={}B act={}B",
+                                            k[0],
+                                            hex::encode(&k[..8]),
+                                            ev.len(),
+                                            av.len()
+                                        );
                                     }
                                     None => {
-                                        eprintln!("  MISSING key[0]={} key={}...: exp={}B",
-                                            k[0], hex::encode(&k[..8]), ev.len());
+                                        eprintln!(
+                                            "  MISSING key[0]={} key={}...: exp={}B",
+                                            k[0],
+                                            hex::encode(&k[..8]),
+                                            ev.len()
+                                        );
                                     }
                                     _ => {}
                                 }
                             }
                             for (k, av) in &act_map {
                                 if !exp_map.contains_key(k) {
-                                    eprintln!("  EXTRA key[0]={} key={}...: act={}B",
-                                        k[0], hex::encode(&k[..8]), av.len());
+                                    eprintln!(
+                                        "  EXTRA key[0]={} key={}...: act={}B",
+                                        k[0],
+                                        hex::encode(&k[..8]),
+                                        av.len()
+                                    );
                                 }
                             }
                         }
@@ -390,8 +402,7 @@ fn run_sequential_trace(trace_name: &str) {
     // Discover block files
     let suffix = format!(".input.{variant}.json");
     let mut stems: Vec<String> = Vec::new();
-    for entry in std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("failed to read dir {dir}: {e}"))
+    for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("failed to read dir {dir}: {e}"))
     {
         let name = entry.unwrap().file_name().into_string().unwrap();
         if let Some(stem) = name.strip_suffix(&suffix) {

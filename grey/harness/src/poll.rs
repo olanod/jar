@@ -106,7 +106,10 @@ pub async fn submit_and_verify_pixel(
     timeout: Duration,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = client.get_context(service_id).await?;
-    assert!(ctx.code_hash.is_some(), "service code_hash must be non-null");
+    assert!(
+        ctx.code_hash.is_some(),
+        "service code_hash must be non-null"
+    );
 
     let wp_bytes = pixel::build_pixel_work_package(service_id, &ctx, x, y, r, g, b)?;
     let data_hex = hex::encode(&wp_bytes);

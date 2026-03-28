@@ -4,10 +4,7 @@ use crate::git;
 
 /// Check that cache length matches the number of Genesis-Index trailers in git history.
 /// Returns Ok(()) if they match.
-pub fn check_staleness(
-    cache: &[serde_json::Value],
-    spec_dir: &Path,
-) -> Result<(), String> {
+pub fn check_staleness(cache: &[serde_json::Value], spec_dir: &Path) -> Result<(), String> {
     let genesis_commit = git::read_genesis_commit_hash(spec_dir)
         .map_err(|e| format!("failed to read genesis commit: {e}"))?;
 

@@ -115,7 +115,11 @@ mod tests {
 
             let mut seq: Vec<usize> = (0..case.input).collect();
             shuffle_with_hash(&mut seq, &hash);
-            assert_eq!(seq, case.output, "case {i}: shuffle mismatch (input={})", case.input);
+            assert_eq!(
+                seq, case.output,
+                "case {i}: shuffle mismatch (input={})",
+                case.input
+            );
         }
     }
 }

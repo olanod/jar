@@ -21,8 +21,8 @@ pub struct BlsKeypair {
 impl BlsKeypair {
     /// Derive a BLS keypair from a 32-byte seed.
     pub fn from_seed(seed: &[u8; 32]) -> Self {
-        let secret = SecretKey::key_gen(seed, &[])
-            .expect("key_gen should not fail with 32-byte seed");
+        let secret =
+            SecretKey::key_gen(seed, &[]).expect("key_gen should not fail with 32-byte seed");
         BlsKeypair { secret }
     }
 
@@ -98,7 +98,10 @@ mod tests {
         assert!(bls_verify(&pk, message, &sig), "signature should be valid");
 
         // Wrong message should fail
-        assert!(!bls_verify(&pk, b"wrong", &sig), "wrong message should fail");
+        assert!(
+            !bls_verify(&pk, b"wrong", &sig),
+            "wrong message should fail"
+        );
     }
 
     #[test]

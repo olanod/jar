@@ -5,10 +5,10 @@
 //!
 //! Also provides utilities to hand-assemble PVM programs directly.
 
-pub mod riscv;
-pub mod emitter;
 pub mod assembler;
+pub mod emitter;
 pub mod linker;
+pub mod riscv;
 
 use thiserror::Error;
 
@@ -60,7 +60,9 @@ pub fn ensure_branch_targets_are_block_starts(
     let skip_for = |bm: &[u8], pc: usize| -> usize {
         for j in 0..25 {
             let idx = pc + 1 + j;
-            if idx >= bm.len() || bm[idx] == 1 { return j; }
+            if idx >= bm.len() || bm[idx] == 1 {
+                return j;
+            }
         }
         0
     };
@@ -75,7 +77,10 @@ pub fn ensure_branch_targets_are_block_starts(
     {
         let mut i = 0;
         while i < len {
-            if i >= bitmask.len() || bitmask[i] != 1 { i += 1; continue; }
+            if i >= bitmask.len() || bitmask[i] != 1 {
+                i += 1;
+                continue;
+            }
             let op = code[i];
             let s = skip_for(bitmask, i);
             if is_terminator(op) {
@@ -93,13 +98,16 @@ pub fn ensure_branch_targets_are_block_starts(
     {
         let mut i = 0;
         while i < len {
-            if i >= bitmask.len() || bitmask[i] != 1 { i += 1; continue; }
+            if i >= bitmask.len() || bitmask[i] != 1 {
+                i += 1;
+                continue;
+            }
             let op = code[i];
             let s = skip_for(bitmask, i);
 
             // OneOffset: opcode 40 (jump), 80 (load_imm_jump)
             if op == 40 && i + 5 <= len {
-                let off = i32::from_le_bytes([code[i+1], code[i+2], code[i+3], code[i+4]]);
+                let off = i32::from_le_bytes([code[i + 1], code[i + 2], code[i + 3], code[i + 4]]);
                 let t = (i as i64 + off as i64) as usize;
                 if t < len && t < bitmask.len() && bitmask[t] == 1 {
                     branch_targets.insert(t);
@@ -107,7 +115,7 @@ pub fn ensure_branch_targets_are_block_starts(
             }
             // TwoRegOneOffset: opcodes 170-175
             if (170..=175).contains(&op) && i + 6 <= len {
-                let off = i32::from_le_bytes([code[i+2], code[i+3], code[i+4], code[i+5]]);
+                let off = i32::from_le_bytes([code[i + 2], code[i + 3], code[i + 4], code[i + 5]]);
                 let t = (i as i64 + off as i64) as usize;
                 if t < len && t < bitmask.len() && bitmask[t] == 1 {
                     branch_targets.insert(t);
@@ -123,7 +131,9 @@ pub fn ensure_branch_targets_are_block_starts(
                     let mut buf = [0u8; 4];
                     buf[..ly].copy_from_slice(&code[off_start..off_start + ly]);
                     if ly < 4 && buf[ly - 1] & 0x80 != 0 {
-                        for b in &mut buf[ly..4] { *b = 0xFF; }
+                        for b in &mut buf[ly..4] {
+                            *b = 0xFF;
+                        }
                     }
                     let off = i32::from_le_bytes(buf);
                     let t = (i as i64 + off as i64) as usize;
@@ -185,20 +195,31 @@ pub fn ensure_branch_targets_are_block_starts(
     {
         let mut i = 0;
         while i < new_code.len() {
-            if i >= new_bitmask.len() || new_bitmask[i] != 1 { i += 1; continue; }
+            if i >= new_bitmask.len() || new_bitmask[i] != 1 {
+                i += 1;
+                continue;
+            }
             let op = new_code[i];
             let s = {
                 let mut s = 0;
                 for j in 0..25 {
                     let idx = i + 1 + j;
-                    if idx >= new_bitmask.len() || new_bitmask[idx] == 1 { s = j; break; }
+                    if idx >= new_bitmask.len() || new_bitmask[idx] == 1 {
+                        s = j;
+                        break;
+                    }
                 }
                 s
             };
 
             // OneOffset with fixed 4-byte immediate: opcode 40 (jump)
             if op == 40 && i + 5 <= new_code.len() {
-                let old_off = i32::from_le_bytes([new_code[i+1], new_code[i+2], new_code[i+3], new_code[i+4]]);
+                let old_off = i32::from_le_bytes([
+                    new_code[i + 1],
+                    new_code[i + 2],
+                    new_code[i + 3],
+                    new_code[i + 4],
+                ]);
                 // Find old PC for this instruction
                 // The instruction at new_pc=i maps back to some old_pc.
                 // old_target = old_pc + old_off. new_target = offset_map[old_target].
@@ -225,29 +246,42 @@ pub fn ensure_branch_targets_are_block_starts(
     {
         let mut old_i = 0;
         while old_i < len {
-            if old_i >= bitmask.len() || bitmask[old_i] != 1 { old_i += 1; continue; }
+            if old_i >= bitmask.len() || bitmask[old_i] != 1 {
+                old_i += 1;
+                continue;
+            }
             let op = code[old_i];
             let s = skip_for(bitmask, old_i);
             let new_i = offset_map[old_i] as usize;
 
             // Fix OneOffset: opcode 40
             if op == 40 && old_i + 5 <= len {
-                let old_off = i32::from_le_bytes([code[old_i+1], code[old_i+2], code[old_i+3], code[old_i+4]]);
+                let old_off = i32::from_le_bytes([
+                    code[old_i + 1],
+                    code[old_i + 2],
+                    code[old_i + 3],
+                    code[old_i + 4],
+                ]);
                 let old_target = (old_i as i64 + old_off as i64) as usize;
                 if old_target <= len {
                     let new_target = offset_map[old_target] as i64;
                     let new_off = (new_target - new_i as i64) as i32;
-                    new_code[new_i+1..new_i+5].copy_from_slice(&new_off.to_le_bytes());
+                    new_code[new_i + 1..new_i + 5].copy_from_slice(&new_off.to_le_bytes());
                 }
             }
             // Fix TwoRegOneOffset: opcodes 170-175
             if (170..=175).contains(&op) && old_i + 6 <= len {
-                let old_off = i32::from_le_bytes([code[old_i+2], code[old_i+3], code[old_i+4], code[old_i+5]]);
+                let old_off = i32::from_le_bytes([
+                    code[old_i + 2],
+                    code[old_i + 3],
+                    code[old_i + 4],
+                    code[old_i + 5],
+                ]);
                 let old_target = (old_i as i64 + old_off as i64) as usize;
                 if old_target <= len {
                     let new_target = offset_map[old_target] as i64;
                     let new_off = (new_target - new_i as i64) as i32;
-                    new_code[new_i+2..new_i+6].copy_from_slice(&new_off.to_le_bytes());
+                    new_code[new_i + 2..new_i + 6].copy_from_slice(&new_off.to_le_bytes());
                 }
             }
             // Fix OneRegImmOffset: opcodes 80-90
@@ -260,7 +294,9 @@ pub fn ensure_branch_targets_are_block_starts(
                     let mut buf = [0u8; 4];
                     buf[..ly].copy_from_slice(&code[off_start_old..off_start_old + ly]);
                     if ly < 4 && buf[ly - 1] & 0x80 != 0 {
-                        for b in &mut buf[ly..4] { *b = 0xFF; }
+                        for b in &mut buf[ly..4] {
+                            *b = 0xFF;
+                        }
                     }
                     let old_off = i32::from_le_bytes(buf);
                     let old_target = (old_i as i64 + old_off as i64) as usize;

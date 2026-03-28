@@ -22,8 +22,8 @@
 //! Reserved: R15 = JitContext pointer, RDX = scratch, RSP = native stack.
 
 use super::asm::{Assembler, Cc, Label, Reg};
-use crate::gas_sim::GasSimulator;
 use crate::args::{self, Args};
+use crate::gas_sim::GasSimulator;
 use crate::instruction::Opcode;
 
 /// Compute skip(i) — distance to next instruction start.
@@ -31,26 +31,28 @@ fn compute_skip(pc: usize, bitmask: &[u8]) -> usize {
     for j in 0..25 {
         let idx = pc + 1 + j;
         let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-        if bit == 1 { return j; }
+        if bit == 1 {
+            return j;
+        }
     }
     24
 }
 /// Map PVM register index (0..12) to x86-64 register.
 /// All 13 PVM registers live in x86 registers.
 const REG_MAP: [Reg; 13] = [
-    Reg::RBP,  // φ[0] — RA (rarely used as memory base, so RBP encoding penalty is acceptable)
-    Reg::RBX,  // φ[1] — SP (frequently used as memory base, RBX avoids RBP disp8 penalty)
-    Reg::R12,  // φ[2]
-    Reg::R13,  // φ[3]
-    Reg::R14,  // φ[4]
-    Reg::RSI,  // φ[5]
-    Reg::RDI,  // φ[6]
-    Reg::R8,   // φ[7]
-    Reg::R9,   // φ[8]
-    Reg::R10,  // φ[9]
-    Reg::R11,  // φ[10]
-    Reg::RAX,  // φ[11]
-    Reg::RCX,  // φ[12]
+    Reg::RBP, // φ[0] — RA (rarely used as memory base, so RBP encoding penalty is acceptable)
+    Reg::RBX, // φ[1] — SP (frequently used as memory base, RBX avoids RBP disp8 penalty)
+    Reg::R12, // φ[2]
+    Reg::R13, // φ[3]
+    Reg::R14, // φ[4]
+    Reg::RSI, // φ[5]
+    Reg::RDI, // φ[6]
+    Reg::R8,  // φ[7]
+    Reg::R9,  // φ[8]
+    Reg::R10, // φ[9]
+    Reg::R11, // φ[10]
+    Reg::RAX, // φ[11]
+    Reg::RCX, // φ[12]
 ];
 
 /// Scratch register (not mapped to any PVM register).
@@ -60,7 +62,14 @@ const CTX: Reg = Reg::R15;
 
 /// Caller-saved PVM registers that need saving around helper calls.
 const CALLER_SAVED: [Reg; 8] = [
-    Reg::RSI, Reg::RDI, Reg::R8, Reg::R9, Reg::R10, Reg::R11, Reg::RAX, Reg::RCX,
+    Reg::RSI,
+    Reg::RDI,
+    Reg::R8,
+    Reg::R9,
+    Reg::R10,
+    Reg::R11,
+    Reg::RAX,
+    Reg::RCX,
 ];
 
 /// JitContext field offsets — all NEGATIVE from R15 (guest memory base).
@@ -71,11 +80,11 @@ const CALLER_SAVED: [Reg; 8] = [
 ///   R15                .. R15 + 4GB:          guest memory (flat buffer)
 ///
 /// CTX_OFFSET is the page-aligned distance from R15 to JitContext start.
-pub const CTX_OFFSET: i32 = 4096;         // JitContext at R15 - 4096
+pub const CTX_OFFSET: i32 = 4096; // JitContext at R15 - 4096
 pub const PERMS_OFFSET: i32 = CTX_OFFSET + (1 << 20); // perms at R15 - 1052672
 
-use memoffset::offset_of;
 use super::JitContext;
+use memoffset::offset_of;
 
 pub const CTX_REGS: i32 = -CTX_OFFSET + offset_of!(JitContext, regs) as i32;
 pub const CTX_GAS: i32 = -CTX_OFFSET + offset_of!(JitContext, gas) as i32;
@@ -165,7 +174,7 @@ pub struct Compiler {
     /// Label for OOG handler that reads PC from SCRATCH: stores PC, then falls through to oog_label.
     oog_pc_label: Label,
     /// Per-gas-block OOG stubs: (label, pvm_pc) — emitted as cold code after main body.
-    oog_stubs: Vec<(Label, u32, u32)>,  // (label, pvm_pc, block_cost)
+    oog_stubs: Vec<(Label, u32, u32)>, // (label, pvm_pc, block_cost)
     /// Per-memory-access fault stubs: (label, pvm_pc) — stores PC, jumps to shared handler.
     fault_stubs: Vec<(Label, u32)>,
     /// Helper function addresses.
@@ -277,7 +286,9 @@ impl Compiler {
 
         // Find first instruction start
         let mut pc: usize = 0;
-        while pc < code.len() && (pc >= bitmask.len() || bitmask[pc] != 1) { pc += 1; }
+        while pc < code.len() && (pc >= bitmask.len() || bitmask[pc] != 1) {
+            pc += 1;
+        }
 
         while pc < code.len() {
             self.asm.ensure_capacity(512);
@@ -288,7 +299,8 @@ impl Compiler {
 
             // Fast skip for Fallthrough/Unlikely: these produce zero native code
             // but ARE terminators, so the next instruction starts a new gas block.
-            if raw_byte == 1 || raw_byte == 2 { // Fallthrough=1, Unlikely=2
+            if raw_byte == 1 || raw_byte == 2 {
+                // Fallthrough=1, Unlikely=2
                 let skip = crate::vm::skip_for_bitmask(bitmask, pc);
                 if is_gas_start {
                     let label = Label(self.label_base + pc as u32);
@@ -308,8 +320,13 @@ impl Compiler {
                     pending_gas = Some((stub_label, pc as u32, patch_offset));
                 }
                 gas_sim.feed(&crate::gas_cost::FastCost {
-                    cycles: 2, decode_slots: 1, exec_unit: 0,
-                    src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false,
+                    cycles: 2,
+                    decode_slots: 1,
+                    exec_unit: 0,
+                    src_mask: 0,
+                    dst_mask: 0,
+                    is_terminator: true,
+                    is_move_reg: false,
                 });
                 next_is_gas_start = true; // fallthrough IS a terminator
                 pc += 1 + skip;
@@ -334,7 +351,11 @@ impl Compiler {
                     Args::ThreeReg {
                         ra: (reg_byte & 0x0F).min(12) as usize,
                         rb: (reg_byte >> 4).min(12) as usize,
-                        rd: if pc + 2 < code.len() { code[pc + 2].min(12) as usize } else { 0 },
+                        rd: if pc + 2 < code.len() {
+                            code[pc + 2].min(12) as usize
+                        } else {
+                            0
+                        },
                     }
                 }
                 crate::instruction::InstructionCategory::TwoReg => {
@@ -358,23 +379,35 @@ impl Compiler {
                 crate::instruction::InstructionCategory::NoArgs => Args::None,
                 crate::instruction::InstructionCategory::OneImm => {
                     let lx = skip.min(4);
-                    Args::Imm { imm: args::read_signed_imm(code, pc + 1, lx) }
+                    Args::Imm {
+                        imm: args::read_signed_imm(code, pc + 1, lx),
+                    }
                 }
                 crate::instruction::InstructionCategory::OneRegOneImm => {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let ra = (reg_byte & 0x0F).min(12) as usize;
                     let lx = if skip > 1 { (skip - 1).min(4) } else { 0 };
-                    Args::RegImm { ra, imm: args::read_signed_imm(code, pc + 2, lx) }
+                    Args::RegImm {
+                        ra,
+                        imm: args::read_signed_imm(code, pc + 2, lx),
+                    }
                 }
                 crate::instruction::InstructionCategory::OneRegExtImm => {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let ra = (reg_byte & 0x0F).min(12) as usize;
-                    Args::RegExtImm { ra, imm: args::read_le_imm(code, pc + 2, 8) }
+                    Args::RegExtImm {
+                        ra,
+                        imm: args::read_le_imm(code, pc + 2, 8),
+                    }
                 }
                 crate::instruction::InstructionCategory::TwoImm => {
                     let first = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let lx = (first as usize % 8).min(4);
-                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let ly = if skip > lx + 1 {
+                        (skip - lx - 1).min(4)
+                    } else {
+                        0
+                    };
                     Args::TwoImm {
                         imm_x: args::read_signed_imm(code, pc + 2, lx),
                         imm_y: args::read_signed_imm(code, pc + 2 + lx, ly),
@@ -383,13 +416,19 @@ impl Compiler {
                 crate::instruction::InstructionCategory::OneOffset => {
                     let lx = skip.min(4);
                     let signed_off = args::read_signed_imm(code, pc + 1, lx) as i64;
-                    Args::Offset { offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                    Args::Offset {
+                        offset: (pc as i64).wrapping_add(signed_off) as u64,
+                    }
                 }
                 crate::instruction::InstructionCategory::OneRegTwoImm => {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let ra = (reg_byte & 0x0F).min(12) as usize;
                     let lx = ((reg_byte as usize / 16) % 8).min(4);
-                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let ly = if skip > lx + 1 {
+                        (skip - lx - 1).min(4)
+                    } else {
+                        0
+                    };
                     Args::RegTwoImm {
                         ra,
                         imm_x: args::read_signed_imm(code, pc + 2, lx),
@@ -400,10 +439,18 @@ impl Compiler {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
                     let ra = (reg_byte & 0x0F).min(12) as usize;
                     let lx = ((reg_byte as usize / 16) % 8).min(4);
-                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let ly = if skip > lx + 1 {
+                        (skip - lx - 1).min(4)
+                    } else {
+                        0
+                    };
                     let imm = args::read_signed_imm(code, pc + 2, lx);
                     let signed_off = args::read_signed_imm(code, pc + 2 + lx, ly) as i64;
-                    Args::RegImmOffset { ra, imm, offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                    Args::RegImmOffset {
+                        ra,
+                        imm,
+                        offset: (pc as i64).wrapping_add(signed_off) as u64,
+                    }
                 }
                 crate::instruction::InstructionCategory::TwoRegOneOffset => {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
@@ -411,7 +458,11 @@ impl Compiler {
                     let rb = (reg_byte >> 4).min(12) as usize;
                     let lx = if skip > 1 { (skip - 1).min(4) } else { 0 };
                     let signed_off = args::read_signed_imm(code, pc + 2, lx) as i64;
-                    Args::TwoRegOffset { ra, rb, offset: (pc as i64).wrapping_add(signed_off) as u64 }
+                    Args::TwoRegOffset {
+                        ra,
+                        rb,
+                        offset: (pc as i64).wrapping_add(signed_off) as u64,
+                    }
                 }
                 crate::instruction::InstructionCategory::TwoRegTwoImm => {
                     let reg_byte = if pc + 1 < code.len() { code[pc + 1] } else { 0 };
@@ -419,9 +470,14 @@ impl Compiler {
                     let rb = (reg_byte >> 4).min(12) as usize;
                     let lx_byte = if pc + 2 < code.len() { code[pc + 2] } else { 0 };
                     let lx = (lx_byte as usize % 8).min(4);
-                    let ly = if skip > lx + 2 { (skip - lx - 2).min(4) } else { 0 };
+                    let ly = if skip > lx + 2 {
+                        (skip - lx - 2).min(4)
+                    } else {
+                        0
+                    };
                     Args::TwoRegTwoImm {
-                        ra, rb,
+                        ra,
+                        rb,
                         imm_x: args::read_signed_imm(code, pc + 3, lx),
                         imm_y: args::read_signed_imm(code, pc + 3 + lx, ly),
                     }
@@ -453,14 +509,22 @@ impl Compiler {
             // Feed gas simulator via lookup table (single array access + mask
             // computation, replaces the 256-arm match in fast_cost_from_decoded).
             let fc = crate::gas_cost::fast_cost_lut(
-                opcode as u8, &decoded_args, pc as u32, code, bitmask,
+                opcode as u8,
+                &decoded_args,
+                pc as u32,
+                code,
+                bitmask,
             );
             gas_sim.feed(&fc);
 
             // Peephole fusions
             let fused = match opcode {
-                Opcode::Add64 => self.try_fuse_scaled_index_raw(code, bitmask, pc, &decoded_args, &mut gas_sim),
-                Opcode::Mul64 => self.try_fuse_mul_pair_raw(code, bitmask, pc, &decoded_args, &mut gas_sim),
+                Opcode::Add64 => {
+                    self.try_fuse_scaled_index_raw(code, bitmask, pc, &decoded_args, &mut gas_sim)
+                }
+                Opcode::Mul64 => {
+                    self.try_fuse_mul_pair_raw(code, bitmask, pc, &decoded_args, &mut gas_sim)
+                }
                 _ => None,
             };
 
@@ -484,8 +548,11 @@ impl Compiler {
             // avoids the opcode match + Args re-destructuring for ~95% of
             // instructions.
             match opcode {
-                Opcode::Add64 | Opcode::LoadImm | Opcode::LoadImm64
-                | Opcode::ShloLImm64 | Opcode::MoveReg => {
+                Opcode::Add64
+                | Opcode::LoadImm
+                | Opcode::LoadImm64
+                | Opcode::ShloLImm64
+                | Opcode::MoveReg => {
                     self.update_reg_defs(opcode, &decoded_args);
                 }
                 _ => {
@@ -508,7 +575,11 @@ impl Compiler {
                         | crate::instruction::InstructionCategory::OneRegTwoImm
                         | crate::instruction::InstructionCategory::OneRegImmOffset => {
                             // Destination = first register (ra in raw byte low nibble)
-                            let ra = if pc + 1 < code.len() { (code[pc + 1] & 0x0F).min(12) as usize } else { 0 };
+                            let ra = if pc + 1 < code.len() {
+                                (code[pc + 1] & 0x0F).min(12) as usize
+                            } else {
+                                0
+                            };
                             self.invalidate_reg(ra);
                         }
                         _ => {
@@ -577,19 +648,17 @@ impl Compiler {
                     mmap_cap,
                 }
             }
-            Err(_) => {
-                CompileResult {
-                    native_code: self.asm.finalize(),
-                    dispatch_table,
-                    #[cfg(feature = "signals")]
-                    trap_table,
-                    #[cfg(feature = "signals")]
-                    exit_label_offset,
-                    mmap_ptr: None,
-                    mmap_len: 0,
-                    mmap_cap: 0,
-                }
-            }
+            Err(_) => CompileResult {
+                native_code: self.asm.finalize(),
+                dispatch_table,
+                #[cfg(feature = "signals")]
+                trap_table,
+                #[cfg(feature = "signals")]
+                exit_label_offset,
+                mmap_ptr: None,
+                mmap_len: 0,
+                mmap_cap: 0,
+            },
         }
     }
 
@@ -607,49 +676,93 @@ impl Compiler {
         }
     }
 
-/// Load the JitContext pointer (R15 - CTX_OFFSET) into a register.
+    /// Load the JitContext pointer (R15 - CTX_OFFSET) into a register.
     fn emit_ctx_ptr(&mut self, dst: Reg) {
         self.asm.lea(dst, CTX, -CTX_OFFSET);
     }
 
     /// Peephole: fuse scaled-index from raw code (no pre-decoded array).
     /// Pattern: add64 D,A,A / add64 D,D,D / add64 D2,BASE,D / load/store_ind R,D2,0
-    fn try_fuse_scaled_index_raw(&mut self, code: &[u8], bitmask: &[u8], pc: usize,
-        args: &Args, gas_sim: &mut GasSimulator) -> Option<usize>
-    {
-        let Args::ThreeReg { ra: a1_ra, rb: a1_rb, rd: a1_rd } = args else { return None; };
-        if a1_ra != a1_rb { return None; }
+    fn try_fuse_scaled_index_raw(
+        &mut self,
+        code: &[u8],
+        bitmask: &[u8],
+        pc: usize,
+        args: &Args,
+        gas_sim: &mut GasSimulator,
+    ) -> Option<usize> {
+        let Args::ThreeReg {
+            ra: a1_ra,
+            rb: a1_rb,
+            rd: a1_rd,
+        } = args
+        else {
+            return None;
+        };
+        if a1_ra != a1_rb {
+            return None;
+        }
         let idx_reg = *a1_ra;
         let d1 = *a1_rd;
 
         // Peek instruction 2
         let skip1 = compute_skip(pc, bitmask);
         let pc2 = pc + 1 + skip1;
-        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) { return None; }
+        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) {
+            return None;
+        }
         let op2 = Opcode::from_byte(code[pc2])?;
-        if op2 != Opcode::Add64 { return None; }
+        if op2 != Opcode::Add64 {
+            return None;
+        }
         let skip2 = compute_skip(pc2, bitmask);
         let args2 = args::decode_args(code, pc2, skip2, op2.category());
-        let Args::ThreeReg { ra: a2_ra, rb: a2_rb, rd: a2_rd } = args2 else { return None; };
-        if a2_ra != d1 || a2_rb != d1 || a2_rd != d1 { return None; }
+        let Args::ThreeReg {
+            ra: a2_ra,
+            rb: a2_rb,
+            rd: a2_rd,
+        } = args2
+        else {
+            return None;
+        };
+        if a2_ra != d1 || a2_rb != d1 || a2_rd != d1 {
+            return None;
+        }
 
         // Peek instruction 3
         let pc3 = pc2 + 1 + skip2;
-        if pc3 >= code.len() || (pc3 < bitmask.len() && bitmask[pc3] != 1) { return None; }
+        if pc3 >= code.len() || (pc3 < bitmask.len() && bitmask[pc3] != 1) {
+            return None;
+        }
         let op3 = Opcode::from_byte(code[pc3])?;
-        if op3 != Opcode::Add64 { return None; }
+        if op3 != Opcode::Add64 {
+            return None;
+        }
         let skip3 = compute_skip(pc3, bitmask);
         let args3 = args::decode_args(code, pc3, skip3, op3.category());
-        let Args::ThreeReg { ra: a3_ra, rb: a3_rb, rd: a3_rd } = args3 else { return None; };
+        let Args::ThreeReg {
+            ra: a3_ra,
+            rb: a3_rb,
+            rd: a3_rd,
+        } = args3
+        else {
+            return None;
+        };
         let base_reg;
-        if a3_rb == d1 && a3_ra != d1 { base_reg = a3_ra; }
-        else if a3_ra == d1 && a3_rb != d1 { base_reg = a3_rb; }
-        else { return None; }
+        if a3_rb == d1 && a3_ra != d1 {
+            base_reg = a3_ra;
+        } else if a3_ra == d1 && a3_rb != d1 {
+            base_reg = a3_rb;
+        } else {
+            return None;
+        }
         let addr_reg = a3_rd;
 
         // Peek instruction 4
         let pc4 = pc3 + 1 + skip3;
-        if pc4 >= code.len() || (pc4 < bitmask.len() && bitmask[pc4] != 1) { return None; }
+        if pc4 >= code.len() || (pc4 < bitmask.len() && bitmask[pc4] != 1) {
+            return None;
+        }
         let op4 = Opcode::from_byte(code[pc4])?;
         let skip4 = compute_skip(pc4, bitmask);
         let args4 = args::decode_args(code, pc4, skip4, op4.category());
@@ -666,11 +779,21 @@ impl Compiler {
         // starts. No label binding needed.
 
         match op4 {
-            Opcode::LoadIndU8 | Opcode::LoadIndI8 | Opcode::LoadIndU16 | Opcode::LoadIndI16 |
-            Opcode::LoadIndU32 | Opcode::LoadIndI32 | Opcode::LoadIndU64 => {
-                let Args::TwoRegImm { ra, rb, imm } = args4 else { return None; };
-                if rb != addr_reg || imm as i32 != 0 { return None; }
-                self.asm.lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
+            Opcode::LoadIndU8
+            | Opcode::LoadIndI8
+            | Opcode::LoadIndU16
+            | Opcode::LoadIndI16
+            | Opcode::LoadIndU32
+            | Opcode::LoadIndI32
+            | Opcode::LoadIndU64 => {
+                let Args::TwoRegImm { ra, rb, imm } = args4 else {
+                    return None;
+                };
+                if rb != addr_reg || imm as i32 != 0 {
+                    return None;
+                }
+                self.asm
+                    .lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
                 let fn_addr = self.read_fn_for(op4);
                 let ra_reg = REG_MAP[ra];
                 self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc4 as u32);
@@ -683,10 +806,18 @@ impl Compiler {
                 self.invalidate_all_regs();
                 Some(pc4 + 1 + skip4 - pc)
             }
-            Opcode::StoreIndU8 | Opcode::StoreIndU16 | Opcode::StoreIndU32 | Opcode::StoreIndU64 => {
-                let Args::TwoRegImm { ra, rb, imm } = args4 else { return None; };
-                if rb != addr_reg || imm as i32 != 0 { return None; }
-                self.asm.lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
+            Opcode::StoreIndU8
+            | Opcode::StoreIndU16
+            | Opcode::StoreIndU32
+            | Opcode::StoreIndU64 => {
+                let Args::TwoRegImm { ra, rb, imm } = args4 else {
+                    return None;
+                };
+                if rb != addr_reg || imm as i32 != 0 {
+                    return None;
+                }
+                self.asm
+                    .lea_sib_scaled_32(SCRATCH, REG_MAP[base_reg], REG_MAP[idx_reg], 2);
                 let fn_addr = self.write_fn_for(op4);
                 let ra_reg = REG_MAP[ra];
                 self.emit_mem_write(true, ra_reg, fn_addr, pc4 as u32);
@@ -698,14 +829,28 @@ impl Compiler {
     }
 
     /// Peephole: fuse Mul64 + MulUpper from raw code.
-    fn try_fuse_mul_pair_raw(&mut self, code: &[u8], bitmask: &[u8], pc: usize,
-        args: &Args, gas_sim: &mut GasSimulator) -> Option<usize>
-    {
-        let Args::ThreeReg { ra: m_ra, rb: m_rb, rd: m_rd } = args else { return None; };
+    fn try_fuse_mul_pair_raw(
+        &mut self,
+        code: &[u8],
+        bitmask: &[u8],
+        pc: usize,
+        args: &Args,
+        gas_sim: &mut GasSimulator,
+    ) -> Option<usize> {
+        let Args::ThreeReg {
+            ra: m_ra,
+            rb: m_rb,
+            rd: m_rd,
+        } = args
+        else {
+            return None;
+        };
 
         let skip1 = compute_skip(pc, bitmask);
         let pc2 = pc + 1 + skip1;
-        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) { return None; }
+        if pc2 >= code.len() || (pc2 < bitmask.len() && bitmask[pc2] != 1) {
+            return None;
+        }
         let op2 = Opcode::from_byte(code[pc2])?;
         let signed = match op2 {
             Opcode::MulUpperSS => true,
@@ -714,11 +859,21 @@ impl Compiler {
         };
         let skip2 = compute_skip(pc2, bitmask);
         let args2 = args::decode_args(code, pc2, skip2, op2.category());
-        let Args::ThreeReg { ra: u_ra, rb: u_rb, rd: u_rd } = args2 else { return None; };
-        if u_ra != *m_ra || u_rb != *m_rb { return None; }
+        let Args::ThreeReg {
+            ra: u_ra,
+            rb: u_rb,
+            rd: u_rd,
+        } = args2
+        else {
+            return None;
+        };
+        if u_ra != *m_ra || u_rb != *m_rb {
+            return None;
+        }
 
         // Feed instruction 2 to gas sim (using decoded args, no redundant decode)
-        let fc = crate::gas_cost::fast_cost_from_decoded(op2 as u8, &args2, pc2 as u32, code, bitmask);
+        let fc =
+            crate::gas_cost::fast_cost_from_decoded(op2 as u8, &args2, pc2 as u32, code, bitmask);
         gas_sim.feed(&fc);
 
         // Bind labels
@@ -733,8 +888,14 @@ impl Compiler {
         let mul_src = if b == Reg::RAX {
             self.asm.mov_load64(SCRATCH, Reg::RSP, 8);
             SCRATCH
-        } else { b };
-        if signed { self.asm.imul_rdx_rax(mul_src); } else { self.asm.mul_rdx_rax(mul_src); }
+        } else {
+            b
+        };
+        if signed {
+            self.asm.imul_rdx_rax(mul_src);
+        } else {
+            self.asm.mul_rdx_rax(mul_src);
+        }
         self.asm.push(SCRATCH);
         self.asm.push(Reg::RAX);
         self.asm.mov_load64(SCRATCH, Reg::RSP, 16);
@@ -756,11 +917,18 @@ impl Compiler {
     /// Hot path: cmp + jae + load (2 instructions, no extra stores).
     /// With `signals` feature: no bounds check, just the load (SIGSEGV handles OOB).
     fn emit_mem_read_sized(&mut self, dst: Reg, fn_addr: u64, width_bytes: u32, pvm_pc: u32) {
-        let w = if width_bytes > 0 { width_bytes } else {
-            if fn_addr == self.helpers.mem_read_u8 { 1 }
-            else if fn_addr == self.helpers.mem_read_u16 { 2 }
-            else if fn_addr == self.helpers.mem_read_u32 { 4 }
-            else { 8 }
+        let w = if width_bytes > 0 {
+            width_bytes
+        } else {
+            if fn_addr == self.helpers.mem_read_u8 {
+                1
+            } else if fn_addr == self.helpers.mem_read_u16 {
+                2
+            } else if fn_addr == self.helpers.mem_read_u32 {
+                4
+            } else {
+                8
+            }
         };
 
         #[cfg(feature = "signals")]
@@ -798,10 +966,15 @@ impl Compiler {
     /// Emit memory write with bounds check (cold fault path).
     /// With `signals` feature: no bounds check, just the store.
     fn emit_mem_write(&mut self, _addr_in_scratch: bool, val_reg: Reg, fn_addr: u64, pvm_pc: u32) {
-        let w = if fn_addr == self.helpers.mem_write_u8 { 1u32 }
-            else if fn_addr == self.helpers.mem_write_u16 { 2 }
-            else if fn_addr == self.helpers.mem_write_u32 { 4 }
-            else { 8 };
+        let w = if fn_addr == self.helpers.mem_write_u8 {
+            1u32
+        } else if fn_addr == self.helpers.mem_write_u16 {
+            2
+        } else if fn_addr == self.helpers.mem_write_u32 {
+            4
+        } else {
+            8
+        };
 
         #[cfg(feature = "signals")]
         {
@@ -836,7 +1009,14 @@ impl Compiler {
     /// Emit store-immediate-indirect: store an immediate value to memory.
     /// With `signals` feature: inline SIB store (no function call needed).
     /// Without `signals`: falls back to helper function call.
-    fn emit_store_imm_ind(&mut self, opcode: Opcode, ra: usize, imm_x: i32, imm_y: u64, pvm_pc: u32) {
+    fn emit_store_imm_ind(
+        &mut self,
+        opcode: Opcode,
+        ra: usize,
+        imm_x: i32,
+        imm_y: u64,
+        pvm_pc: u32,
+    ) {
         // Compute address into SCRATCH
         self.emit_addr_to_scratch(ra, imm_x);
 
@@ -914,7 +1094,8 @@ impl Compiler {
         // Peephole: use SIB addressing for scaled-index patterns
         if imm == 0 {
             if let RegDef::ScaledAdd { base, idx, shift } = self.reg_defs[rb] {
-                self.asm.lea_sib_scaled_32(SCRATCH, REG_MAP[base], REG_MAP[idx], shift);
+                self.asm
+                    .lea_sib_scaled_32(SCRATCH, REG_MAP[base], REG_MAP[idx], shift);
                 return;
             }
         }
@@ -974,7 +1155,10 @@ impl Compiler {
                         // add64 D, D, D — doubles again. Shifted{src,s} → Shifted{src,s+1}.
                         if let RegDef::Shifted { src, shift } = self.reg_defs[*rd] {
                             if shift < 3 {
-                                self.reg_defs[*rd] = RegDef::Shifted { src, shift: shift + 1 };
+                                self.reg_defs[*rd] = RegDef::Shifted {
+                                    src,
+                                    shift: shift + 1,
+                                };
                                 self.reg_defs_active |= 1u16 << *rd;
                             } else {
                                 self.reg_defs[*rd] = RegDef::Unknown;
@@ -1099,7 +1283,10 @@ impl Compiler {
             }
 
             // === A.5.4: Two immediates (store_imm) ===
-            Opcode::StoreImmU8 | Opcode::StoreImmU16 | Opcode::StoreImmU32 | Opcode::StoreImmU64 => {
+            Opcode::StoreImmU8
+            | Opcode::StoreImmU16
+            | Opcode::StoreImmU32
+            | Opcode::StoreImmU64 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     // Reuse StoreImmInd logic: treat as register 0 with the address
                     // replaced by a direct constant load into SCRATCH.
@@ -1182,8 +1369,13 @@ impl Compiler {
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                 }
             }
-            Opcode::LoadU8 | Opcode::LoadI8 | Opcode::LoadU16 | Opcode::LoadI16 |
-            Opcode::LoadU32 | Opcode::LoadI32 | Opcode::LoadU64 => {
+            Opcode::LoadU8
+            | Opcode::LoadI8
+            | Opcode::LoadU16
+            | Opcode::LoadI16
+            | Opcode::LoadU32
+            | Opcode::LoadI32
+            | Opcode::LoadU64 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = *imm as u32;
                     let fn_addr = self.read_fn_for(opcode);
@@ -1210,7 +1402,10 @@ impl Compiler {
             }
 
             // === A.5.7: One register + two immediates (store_imm_ind) ===
-            Opcode::StoreImmIndU8 | Opcode::StoreImmIndU16 | Opcode::StoreImmIndU32 | Opcode::StoreImmIndU64 => {
+            Opcode::StoreImmIndU8
+            | Opcode::StoreImmIndU16
+            | Opcode::StoreImmIndU32
+            | Opcode::StoreImmIndU64 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     self.emit_store_imm_ind(opcode, *ra, *imm_x as i32, *imm_y, pc);
                 }
@@ -1289,7 +1484,6 @@ impl Compiler {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.mov_rr(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::Sbrk => {
@@ -1301,7 +1495,6 @@ impl Compiler {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.popcnt64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::CountSetBits32 => {
@@ -1310,14 +1503,12 @@ impl Compiler {
                     // Zero-extend to 32 bits first, then popcnt
                     self.asm.movzx_32_64(SCRATCH, ra_reg);
                     self.asm.popcnt64(REG_MAP[*rd], SCRATCH);
-
                 }
             }
             Opcode::LeadingZeroBits64 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.lzcnt64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::LeadingZeroBits32 => {
@@ -1327,14 +1518,12 @@ impl Compiler {
                     // lzcnt on 64-bit value then subtract 32
                     self.asm.lzcnt64(REG_MAP[*rd], SCRATCH);
                     self.asm.sub_ri(REG_MAP[*rd], 32);
-
                 }
             }
             Opcode::TrailingZeroBits64 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.tzcnt64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::TrailingZeroBits32 => {
@@ -1350,28 +1539,24 @@ impl Compiler {
                     self.asm.pop(REG_MAP[*rd]);
                     self.asm.or_rr(REG_MAP[*rd], tmp);
                     self.asm.tzcnt64(REG_MAP[*rd], REG_MAP[*rd]);
-
                 }
             }
             Opcode::SignExtend8 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.movsx_8_64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::SignExtend16 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.movsx_16_64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::ZeroExtend16 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.asm.movzx_16_64(REG_MAP[*rd], ra_reg);
-
                 }
             }
             Opcode::ReverseBytes => {
@@ -1381,12 +1566,14 @@ impl Compiler {
                         self.asm.mov_rr(REG_MAP[*rd], ra_reg);
                     }
                     self.asm.bswap64(REG_MAP[*rd]);
-
                 }
             }
 
             // === A.5.10: Two registers + one immediate ===
-            Opcode::StoreIndU8 | Opcode::StoreIndU16 | Opcode::StoreIndU32 | Opcode::StoreIndU64 => {
+            Opcode::StoreIndU8
+            | Opcode::StoreIndU16
+            | Opcode::StoreIndU32
+            | Opcode::StoreIndU64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.emit_addr_to_scratch(*rb, *imm as i32);
@@ -1394,8 +1581,13 @@ impl Compiler {
                     self.emit_mem_write(true, ra_reg, fn_addr, pc);
                 }
             }
-            Opcode::LoadIndU8 | Opcode::LoadIndI8 | Opcode::LoadIndU16 | Opcode::LoadIndI16 |
-            Opcode::LoadIndU32 | Opcode::LoadIndI32 | Opcode::LoadIndU64 => {
+            Opcode::LoadIndU8
+            | Opcode::LoadIndI8
+            | Opcode::LoadIndU16
+            | Opcode::LoadIndI16
+            | Opcode::LoadIndU32
+            | Opcode::LoadIndI32
+            | Opcode::LoadIndU64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let ra_reg = REG_MAP[*ra];
                     self.emit_addr_to_scratch(*rb, *imm as i32);
@@ -1408,22 +1600,24 @@ impl Compiler {
                         Opcode::LoadIndI32 => self.asm.movsxd(ra_reg, ra_reg),
                         _ => {}
                     }
-
                 }
             }
             Opcode::AddImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.add_ri32(REG_MAP[*ra], *imm as i32);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::AddImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     if *imm as i32 == 1 {
                         self.asm.inc64(REG_MAP[*ra]);
                     } else if *imm as i32 == -1 {
@@ -1431,31 +1625,33 @@ impl Compiler {
                     } else {
                         self.asm.add_ri(REG_MAP[*ra], *imm as i32);
                     }
-
                 }
             }
             Opcode::AndImm => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.and_ri(REG_MAP[*ra], *imm as i32);
-
                 }
             }
             Opcode::XorImm => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.xor_ri(REG_MAP[*ra], *imm as i32);
-
                 }
             }
             Opcode::OrImm => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.or_ri(REG_MAP[*ra], *imm as i32);
-
                 }
             }
             Opcode::MulImm32 => {
@@ -1463,14 +1659,12 @@ impl Compiler {
                     let rb_reg = REG_MAP[*rb];
                     self.asm.imul_rri32(REG_MAP[*ra], rb_reg, *imm as i32);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::MulImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
                     self.asm.imul_rri(REG_MAP[*ra], rb_reg, *imm as i32);
-
                 }
             }
             Opcode::SetLtUImm => {
@@ -1496,53 +1690,59 @@ impl Compiler {
             Opcode::ShloLImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.shl_ri32(REG_MAP[*ra], (*imm as u8) & 31);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::ShloRImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.movzx_32_64(REG_MAP[*ra], REG_MAP[*ra]);
                     self.asm.shr_ri32(REG_MAP[*ra], (*imm as u8) & 31);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::SharRImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.sar_ri32(REG_MAP[*ra], (*imm as u8) & 31);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::ShloLImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.shl_ri64(REG_MAP[*ra], (*imm as u8) & 63);
-
                 }
             }
             Opcode::ShloRImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.shr_ri64(REG_MAP[*ra], (*imm as u8) & 63);
-
                 }
             }
             Opcode::SharRImm64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.sar_ri64(REG_MAP[*ra], (*imm as u8) & 63);
-
                 }
             }
             Opcode::NegAddImm32 => {
@@ -1558,7 +1758,6 @@ impl Compiler {
                         self.asm.sub_rr32(REG_MAP[*ra], rb_reg);
                     }
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::NegAddImm64 => {
@@ -1572,7 +1771,6 @@ impl Compiler {
                         self.asm.mov_ri64(REG_MAP[*ra], *imm);
                         self.asm.sub_rr(REG_MAP[*ra], rb_reg);
                     }
-
                 }
             }
             // Alt shifts: rd = imm OP rb (operands swapped)
@@ -1580,59 +1778,83 @@ impl Compiler {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     // rd = imm << (rb & 31)
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg32(REG_MAP[*ra], shift_src, 4); // SHL
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::ShloRImmAlt32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.asm.movzx_32_64(REG_MAP[*ra], REG_MAP[*ra]);
                     self.emit_shift_by_reg32(REG_MAP[*ra], shift_src, 5); // SHR
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::SharRImmAlt32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg32(REG_MAP[*ra], shift_src, 7); // SAR
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::ShloLImmAlt64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg64(REG_MAP[*ra], shift_src, 4);
-
                 }
             }
             Opcode::ShloRImmAlt64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg64(REG_MAP[*ra], shift_src, 5);
-
                 }
             }
             Opcode::SharRImmAlt64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg64(REG_MAP[*ra], shift_src, 7);
-
                 }
             }
             Opcode::CmovIzImm => {
@@ -1661,40 +1883,50 @@ impl Compiler {
             Opcode::RotR64Imm => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.ror_ri64(REG_MAP[*ra], (*imm as u8) & 63);
-
                 }
             }
             Opcode::RotR64ImmAlt => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     // rd = imm ROR rb
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.emit_shift_by_reg64(REG_MAP[*ra], shift_src, 1); // ROR
-
                 }
             }
             Opcode::RotR32Imm => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    if *ra != *rb { self.asm.mov_rr(REG_MAP[*ra], rb_reg); }
+                    if *ra != *rb {
+                        self.asm.mov_rr(REG_MAP[*ra], rb_reg);
+                    }
                     self.asm.movzx_32_64(REG_MAP[*ra], REG_MAP[*ra]);
                     self.asm.ror_ri32(REG_MAP[*ra], (*imm as u8) & 31);
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
             Opcode::RotR32ImmAlt => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let rb_reg = REG_MAP[*rb];
-                    let shift_src = if *ra == *rb { self.asm.mov_rr(SCRATCH, rb_reg); SCRATCH } else { rb_reg };
+                    let shift_src = if *ra == *rb {
+                        self.asm.mov_rr(SCRATCH, rb_reg);
+                        SCRATCH
+                    } else {
+                        rb_reg
+                    };
                     self.asm.mov_ri64(REG_MAP[*ra], *imm);
                     self.asm.movzx_32_64(REG_MAP[*ra], REG_MAP[*ra]);
                     self.emit_shift_by_reg32(REG_MAP[*ra], shift_src, 1); // ROR
                     self.asm.movsxd(REG_MAP[*ra], REG_MAP[*ra]);
-
                 }
             }
 
@@ -1740,7 +1972,13 @@ impl Compiler {
 
             // === A.5.12: Two registers + two immediates ===
             Opcode::LoadImmJumpInd => {
-                if let Args::TwoRegTwoImm { ra, rb, imm_x, imm_y } = args {
+                if let Args::TwoRegTwoImm {
+                    ra,
+                    rb,
+                    imm_x,
+                    imm_y,
+                } = args
+                {
                     // GP: registers[ra] = imm_x, addr = registers[rb] + imm_y
                     // Per GP semantics, ra is written first, then jump uses the
                     // (possibly updated) rb value.
@@ -1751,26 +1989,34 @@ impl Compiler {
             }
 
             // === A.5.13: Three registers ===
-            Opcode::Add32 => { self.emit_alu3_32(args, |a, d, s| { a.add_rr32(d, s); }); }
-            Opcode::Sub32 => { self.emit_alu3_32_sub(args); }
+            Opcode::Add32 => {
+                self.emit_alu3_32(args, |a, d, s| {
+                    a.add_rr32(d, s);
+                });
+            }
+            Opcode::Sub32 => {
+                self.emit_alu3_32_sub(args);
+            }
             Opcode::Mul32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     if *rd == *rb && *rd != *ra {
                         self.asm.mov_rr(SCRATCH, b);
                         self.asm.mov_rr(d, a);
                         self.asm.imul_rr32(d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.imul_rr32(d, b);
                     }
                     self.asm.movsxd(d, d);
-
                 }
             }
             Opcode::Add64 => {
-                self.emit_alu3_64_comm(args, true, |a, d, s| { a.add_rr(d, s); });
+                self.emit_alu3_64_comm(args, true, |a, d, s| {
+                    a.add_rr(d, s);
+                });
                 // Track CF: after add64 D, A, B, CF = overflow(A+B).
                 // A subsequent setLtU C, D, A (or D, B) can use CF directly.
                 if let Args::ThreeReg { ra, rb, rd } = args {
@@ -1786,99 +2032,167 @@ impl Compiler {
                         self.asm.neg64(d);
                         self.asm.add_rr(d, a);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.sub_rr(d, b);
                     }
                 }
             }
             Opcode::Mul64 => {
-                self.emit_alu3_64_comm(args, true, |a, d, s| { a.imul_rr(d, s); });
+                self.emit_alu3_64_comm(args, true, |a, d, s| {
+                    a.imul_rr(d, s);
+                });
             }
-            Opcode::And => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.and_rr(d, s); }); }
-            Opcode::Or => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.or_rr(d, s); }); }
-            Opcode::Xor => { self.emit_alu3_64_comm(args, true, |a, d, s| { a.xor_rr(d, s); }); }
+            Opcode::And => {
+                self.emit_alu3_64_comm(args, true, |a, d, s| {
+                    a.and_rr(d, s);
+                });
+            }
+            Opcode::Or => {
+                self.emit_alu3_64_comm(args, true, |a, d, s| {
+                    a.or_rr(d, s);
+                });
+            }
+            Opcode::Xor => {
+                self.emit_alu3_64_comm(args, true, |a, d, s| {
+                    a.xor_rr(d, s);
+                });
+            }
 
             // Division (32-bit and 64-bit)
-            Opcode::DivU32 => { self.emit_div(args, false, false, true); }
-            Opcode::DivS32 => { self.emit_div(args, true, false, true); }
-            Opcode::RemU32 => { self.emit_div(args, false, true, true); }
-            Opcode::RemS32 => { self.emit_div(args, true, true, true); }
-            Opcode::DivU64 => { self.emit_div(args, false, false, false); }
-            Opcode::DivS64 => { self.emit_div(args, true, false, false); }
-            Opcode::RemU64 => { self.emit_div(args, false, true, false); }
-            Opcode::RemS64 => { self.emit_div(args, true, true, false); }
+            Opcode::DivU32 => {
+                self.emit_div(args, false, false, true);
+            }
+            Opcode::DivS32 => {
+                self.emit_div(args, true, false, true);
+            }
+            Opcode::RemU32 => {
+                self.emit_div(args, false, true, true);
+            }
+            Opcode::RemS32 => {
+                self.emit_div(args, true, true, true);
+            }
+            Opcode::DivU64 => {
+                self.emit_div(args, false, false, false);
+            }
+            Opcode::DivS64 => {
+                self.emit_div(args, true, false, false);
+            }
+            Opcode::RemU64 => {
+                self.emit_div(args, false, true, false);
+            }
+            Opcode::RemS64 => {
+                self.emit_div(args, true, true, false);
+            }
 
             // Shifts (three-register)
             // Note: when rd==rb, we must save rb to SCRATCH before mov rd, ra.
             Opcode::ShloL32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg32(d, shift_src, 4);
                     self.asm.movsxd(d, d);
-
                 }
             }
             Opcode::ShloR32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.asm.movzx_32_64(d, d);
                     self.emit_shift_by_reg32(d, shift_src, 5);
                     self.asm.movsxd(d, d);
-
                 }
             }
             Opcode::SharR32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg32(d, shift_src, 7);
                     self.asm.movsxd(d, d);
-
                 }
             }
             Opcode::ShloL64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg64(d, shift_src, 4);
-
                 }
             }
             Opcode::ShloR64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg64(d, shift_src, 5);
-
                 }
             }
             Opcode::SharR64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg64(d, shift_src, 7);
-
                 }
             }
 
             // Multiply upper
-            Opcode::MulUpperSS => { self.emit_mul_upper(args, true, true); }
-            Opcode::MulUpperUU => { self.emit_mul_upper(args, false, false); }
-            Opcode::MulUpperSU => { self.emit_mul_upper(args, true, false); }
+            Opcode::MulUpperSS => {
+                self.emit_mul_upper(args, true, true);
+            }
+            Opcode::MulUpperUU => {
+                self.emit_mul_upper(args, false, false);
+            }
+            Opcode::MulUpperSU => {
+                self.emit_mul_upper(args, true, false);
+            }
 
             // Set comparisons (three-register)
             Opcode::SetLtU => {
@@ -1893,7 +2207,8 @@ impl Compiler {
                         // which now holds the sum). If rb == add_d, both sides of
                         // the comparison would be the sum, giving 0 always, but CF
                         // might be 1.
-                        if *ra == add_d && *rb != add_d
+                        if *ra == add_d
+                            && *rb != add_d
                             && (*rb == add_a || *rb == add_b)
                             && *rd != *rb
                         {
@@ -1939,75 +2254,90 @@ impl Compiler {
             // Rotates (three-register)
             Opcode::RotL64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg64(d, shift_src, 0); // ROL
-
                 }
             }
             Opcode::RotL32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.asm.movzx_32_64(d, d);
                     self.emit_shift_by_reg32(d, shift_src, 0);
                     self.asm.movsxd(d, d);
-
                 }
             }
             Opcode::RotR64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.emit_shift_by_reg64(d, shift_src, 1); // ROR
-
                 }
             }
             Opcode::RotR32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
-                    let shift_src = if *rd == *rb && *rd != *ra { self.asm.mov_rr(SCRATCH, b); SCRATCH } else { b };
-                    if *rd != *ra { self.asm.mov_rr(d, a); }
+                    let shift_src = if *rd == *rb && *rd != *ra {
+                        self.asm.mov_rr(SCRATCH, b);
+                        SCRATCH
+                    } else {
+                        b
+                    };
+                    if *rd != *ra {
+                        self.asm.mov_rr(d, a);
+                    }
                     self.asm.movzx_32_64(d, d);
                     self.emit_shift_by_reg32(d, shift_src, 1);
                     self.asm.movsxd(d, d);
-
                 }
             }
 
             // Logical with invert
             Opcode::AndInv => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     // rd = ra & ~rb
                     self.asm.mov_rr(SCRATCH, REG_MAP[*rb]);
                     self.asm.not64(SCRATCH);
                     self.asm.mov_rr(REG_MAP[*rd], REG_MAP[*ra]);
                     self.asm.and_rr(REG_MAP[*rd], SCRATCH);
-
                 }
             }
             Opcode::OrInv => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     // rd = ra | ~rb
                     self.asm.mov_rr(SCRATCH, REG_MAP[*rb]);
                     self.asm.not64(SCRATCH);
                     self.asm.mov_rr(REG_MAP[*rd], REG_MAP[*ra]);
                     self.asm.or_rr(REG_MAP[*rd], SCRATCH);
-
                 }
             }
             Opcode::Xnor => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     // rd = ~(ra ^ rb)
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     if *rd == *rb && *rd != *ra {
@@ -2015,18 +2345,18 @@ impl Compiler {
                         self.asm.mov_rr(d, a);
                         self.asm.xor_rr(d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.xor_rr(d, b);
                     }
                     self.asm.not64(REG_MAP[*rd]);
-
                 }
             }
 
             // Min/Max
             Opcode::Max => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     self.asm.cmp_rr(a, b);
                     if *rd == *rb && *rd != *ra {
@@ -2034,15 +2364,15 @@ impl Compiler {
                         self.asm.mov_rr(d, a);
                         self.asm.cmovcc(Cc::L, d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.cmovcc(Cc::L, d, b);
                     }
-
                 }
             }
             Opcode::MaxU => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     self.asm.cmp_rr(a, b);
                     if *rd == *rb && *rd != *ra {
@@ -2050,15 +2380,15 @@ impl Compiler {
                         self.asm.mov_rr(d, a);
                         self.asm.cmovcc(Cc::B, d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.cmovcc(Cc::B, d, b);
                     }
-
                 }
             }
             Opcode::Min => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     self.asm.cmp_rr(a, b);
                     if *rd == *rb && *rd != *ra {
@@ -2066,15 +2396,15 @@ impl Compiler {
                         self.asm.mov_rr(d, a);
                         self.asm.cmovcc(Cc::G, d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.cmovcc(Cc::G, d, b);
                     }
-
                 }
             }
             Opcode::MinU => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-
                     let (d, a, b) = (REG_MAP[*rd], REG_MAP[*ra], REG_MAP[*rb]);
                     self.asm.cmp_rr(a, b);
                     if *rd == *rb && *rd != *ra {
@@ -2082,10 +2412,11 @@ impl Compiler {
                         self.asm.mov_rr(d, a);
                         self.asm.cmovcc(Cc::A, d, SCRATCH);
                     } else {
-                        if *rd != *ra { self.asm.mov_rr(d, a); }
+                        if *rd != *ra {
+                            self.asm.mov_rr(d, a);
+                        }
                         self.asm.cmovcc(Cc::A, d, b);
                     }
-
                 }
             }
         }
@@ -2140,7 +2471,7 @@ impl Compiler {
         self.asm.jcc_label(Cc::E, self.panic_label);
 
         // idx = addr/2 - 1 (also checks alignment: bit 0 goes to CF via SHR)
-        self.asm.shr_ri64(SCRATCH, 1);  // CF = bit 0 (alignment)
+        self.asm.shr_ri64(SCRATCH, 1); // CF = bit 0 (alignment)
         self.asm.jcc_label(Cc::B, self.panic_label); // odd addr → panic (B = carry set)
         self.asm.sub_ri(SCRATCH, 1);
 
@@ -2173,9 +2504,9 @@ impl Compiler {
         self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
         // RAX = native addr, [rsp] = saved φ[11].
         // Use SCRATCH (which we no longer need) to swap.
-        self.asm.mov_rr(SCRATCH, Reg::RAX);  // SCRATCH = native addr
-        self.asm.pop(Reg::RAX);               // restore φ[11]
-        self.asm.jmp_reg(SCRATCH);            // jump to native addr
+        self.asm.mov_rr(SCRATCH, Reg::RAX); // SCRATCH = native addr
+        self.asm.pop(Reg::RAX); // restore φ[11]
+        self.asm.jmp_reg(SCRATCH); // jump to native addr
 
         self.asm.bind_label(djump_panic);
         self.asm.pop(Reg::RAX); // restore φ[11] before panicking
@@ -2225,7 +2556,15 @@ impl Compiler {
     }
 
     /// Emit a branch comparing register against immediate.
-    fn emit_branch_imm(&mut self, reg: Reg, imm: u64, cc: Cc, target: u32, _fallthrough: u32, pc: u32) {
+    fn emit_branch_imm(
+        &mut self,
+        reg: Reg,
+        imm: u64,
+        cc: Cc,
+        target: u32,
+        _fallthrough: u32,
+        pc: u32,
+    ) {
         if !self.is_basic_block_start(target) {
             // Target not valid → store PC and panic if condition true (cold path)
             self.asm.mov_store32_imm(CTX, CTX_PC as i32, pc as i32);
@@ -2299,7 +2638,7 @@ impl Compiler {
         }
     }
 
-/// Three-register 64-bit ALU: rd = ra OP rb
+    /// Three-register 64-bit ALU: rd = ra OP rb
     fn emit_alu3_64(&mut self, args: &Args, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
         self.emit_alu3_64_comm(args, false, op);
     }
@@ -2307,7 +2646,12 @@ impl Compiler {
     /// Three-register 64-bit ALU with optional commutativity optimization.
     /// When `commutative` is true and rd == rb, emit `op(d, a)` directly
     /// instead of saving/restoring via SCRATCH.
-    fn emit_alu3_64_comm(&mut self, args: &Args, commutative: bool, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
+    fn emit_alu3_64_comm(
+        &mut self,
+        args: &Args,
+        commutative: bool,
+        op: impl FnOnce(&mut Assembler, Reg, Reg),
+    ) {
         if let Args::ThreeReg { ra, rb, rd } = args {
             let d = REG_MAP[*rd];
             let a = REG_MAP[*ra];
@@ -2331,7 +2675,6 @@ impl Compiler {
     /// Three-register 32-bit ALU with sign extension: rd = sx32(ra OP rb)
     fn emit_alu3_32(&mut self, args: &Args, op: impl FnOnce(&mut Assembler, Reg, Reg)) {
         if let Args::ThreeReg { ra, rb, rd } = args {
-
             let d = REG_MAP[*rd];
             let a = REG_MAP[*ra];
             let b = REG_MAP[*rb];
@@ -2346,7 +2689,6 @@ impl Compiler {
                 op(&mut self.asm, d, b);
             }
             self.asm.movsxd(d, d);
-
         }
     }
 
@@ -2425,8 +2767,13 @@ impl Compiler {
     /// Division fast path: b_reg is not RAX, so we use it directly as the divisor.
     /// DIV/IDIV does not clobber the operand register, so only RAX needs saving.
     fn emit_div_fast(
-        &mut self, a_reg: Reg, b_reg: Reg, d_reg: Reg,
-        signed: bool, remainder: bool, is_32bit: bool,
+        &mut self,
+        a_reg: Reg,
+        b_reg: Reg,
+        d_reg: Reg,
+        signed: bool,
+        remainder: bool,
+        is_32bit: bool,
     ) {
         let save_rax = d_reg != Reg::RAX;
 
@@ -2458,12 +2805,16 @@ impl Compiler {
     /// Division slow path: b_reg == RAX (divisor is φ[11]).
     /// We must move the divisor to RCX before loading the dividend into RAX.
     fn emit_div_b_is_rax(
-        &mut self, a_reg: Reg, d_reg: Reg,
-        signed: bool, remainder: bool, is_32bit: bool,
+        &mut self,
+        a_reg: Reg,
+        d_reg: Reg,
+        signed: bool,
+        remainder: bool,
+        is_32bit: bool,
     ) {
         // Always save RAX and RCX so we can restore both PVM registers.
-        self.asm.push(Reg::RAX);  // save φ[11]
-        self.asm.push(Reg::RCX);  // save φ[12]
+        self.asm.push(Reg::RAX); // save φ[11]
+        self.asm.push(Reg::RCX); // save φ[12]
         // Stack: [RSP+0]=old_RCX, [RSP+8]=old_RAX
 
         // Move divisor (currently in RAX) to RCX.
@@ -2491,16 +2842,16 @@ impl Compiler {
             if remainder {
                 self.asm.mov_rr(Reg::RAX, SCRATCH);
             }
-            self.asm.pop(Reg::RCX);     // restore φ[12]
-            self.asm.pop(SCRATCH);       // discard saved RAX (d_reg overwrites φ[11])
+            self.asm.pop(Reg::RCX); // restore φ[12]
+            self.asm.pop(SCRATCH); // discard saved RAX (d_reg overwrites φ[11])
         } else if d_reg == Reg::RCX {
             self.asm.mov_rr(Reg::RCX, result_reg);
-            self.asm.pop(SCRATCH);       // discard saved RCX (d_reg overwrites φ[12])
-            self.asm.pop(Reg::RAX);      // restore φ[11]
+            self.asm.pop(SCRATCH); // discard saved RCX (d_reg overwrites φ[12])
+            self.asm.pop(Reg::RAX); // restore φ[11]
         } else {
             self.asm.mov_rr(d_reg, result_reg);
-            self.asm.pop(Reg::RCX);      // restore φ[12]
-            self.asm.pop(Reg::RAX);       // restore φ[11]
+            self.asm.pop(Reg::RCX); // restore φ[12]
+            self.asm.pop(Reg::RAX); // restore φ[11]
         }
     }
 
@@ -2538,7 +2889,7 @@ impl Compiler {
             let save_rax = d_reg != Reg::RAX || rb_is_rax;
 
             if save_rax {
-                self.asm.push(Reg::RAX);  // save φ[11]
+                self.asm.push(Reg::RAX); // save φ[11]
             }
 
             // Load ra into RAX (push doesn't modify RAX).
@@ -2605,10 +2956,12 @@ impl Compiler {
         }
     }
 
-/// Emit an exit sequence that sets exit_reason and exit_arg.
+    /// Emit an exit sequence that sets exit_reason and exit_arg.
     fn emit_exit(&mut self, reason: u32, arg: u32) {
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, reason as i32);
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_ARG as i32, arg as i32);
+        self.asm
+            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, reason as i32);
+        self.asm
+            .mov_store32_imm(CTX, CTX_EXIT_ARG as i32, arg as i32);
         self.asm.jmp_label(self.exit_label);
     }
 
@@ -2646,7 +2999,8 @@ impl Compiler {
 
         // Load all 13 PVM registers from context
         for i in 0..13 {
-            self.asm.mov_load64(REG_MAP[i], CTX, CTX_REGS + (i as i32) * 8);
+            self.asm
+                .mov_load64(REG_MAP[i], CTX, CTX_REGS + (i as i32) * 8);
         }
 
         // Jump to the dispatch target (pop into SCRATCH, then indirect jump)
@@ -2666,7 +3020,8 @@ impl Compiler {
         self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
         // fall through to oog_label:
         self.asm.bind_label(self.oog_label);
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_OOG as i32);
+        self.asm
+            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_OOG as i32);
         self.asm.jmp_label(self.exit_label);
 
         // Per-gas-block OOG stubs: compact format — load PC into SCRATCH,
@@ -2689,7 +3044,8 @@ impl Compiler {
         self.asm.mov_store32(CTX, CTX_EXIT_ARG as i32, SCRATCH);
         self.asm.pop(SCRATCH);
         self.asm.mov_store32(CTX, CTX_PC as i32, SCRATCH);
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
+        self.asm
+            .mov_store32_imm(CTX, CTX_EXIT_REASON, EXIT_PAGE_FAULT as i32);
         self.asm.jmp_label(self.exit_label);
 
         // Per-memory-access fault stubs: compact format — push PC, jump
@@ -2703,13 +3059,15 @@ impl Compiler {
 
         // Panic exit
         self.asm.bind_label(self.panic_label);
-        self.asm.mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_PANIC as i32);
+        self.asm
+            .mov_store32_imm(CTX, CTX_EXIT_REASON as i32, EXIT_PANIC as i32);
         // fall through to exit_label
 
         // Common exit: save all 13 PVM registers to context, restore callee-saved, return
         self.asm.bind_label(self.exit_label);
         for i in 0..13 {
-            self.asm.mov_store64(CTX, CTX_REGS + (i as i32) * 8, REG_MAP[i]);
+            self.asm
+                .mov_store64(CTX, CTX_REGS + (i as i32) * 8, REG_MAP[i]);
         }
 
         // Restore callee-saved (+ alignment padding)
@@ -2726,9 +3084,15 @@ impl Compiler {
     /// Get the memory read helper for a load opcode.
     fn read_fn_for(&self, opcode: Opcode) -> u64 {
         match opcode {
-            Opcode::LoadU8 | Opcode::LoadI8 | Opcode::LoadIndU8 | Opcode::LoadIndI8 => self.helpers.mem_read_u8,
-            Opcode::LoadU16 | Opcode::LoadI16 | Opcode::LoadIndU16 | Opcode::LoadIndI16 => self.helpers.mem_read_u16,
-            Opcode::LoadU32 | Opcode::LoadI32 | Opcode::LoadIndU32 | Opcode::LoadIndI32 => self.helpers.mem_read_u32,
+            Opcode::LoadU8 | Opcode::LoadI8 | Opcode::LoadIndU8 | Opcode::LoadIndI8 => {
+                self.helpers.mem_read_u8
+            }
+            Opcode::LoadU16 | Opcode::LoadI16 | Opcode::LoadIndU16 | Opcode::LoadIndI16 => {
+                self.helpers.mem_read_u16
+            }
+            Opcode::LoadU32 | Opcode::LoadI32 | Opcode::LoadIndU32 | Opcode::LoadIndI32 => {
+                self.helpers.mem_read_u32
+            }
             Opcode::LoadU64 | Opcode::LoadIndU64 => self.helpers.mem_read_u64,
             _ => self.helpers.mem_read_u8,
         }
@@ -2745,4 +3109,3 @@ impl Compiler {
         }
     }
 }
-

@@ -211,10 +211,12 @@ fn recover_data_shards(
         let recoveries: Vec<(usize, [u8; 2])> = chunks
             .iter()
             .filter(|(_, idx)| *idx >= params.data_shards)
-            .map(|(data, idx)| (
-                *idx - params.data_shards,
-                [data[sym_pos * 2], data[sym_pos * 2 + 1]],
-            ))
+            .map(|(data, idx)| {
+                (
+                    *idx - params.data_shards,
+                    [data[sym_pos * 2], data[sym_pos * 2 + 1]],
+                )
+            })
             .collect();
 
         let restored = reed_solomon_simd::decode(

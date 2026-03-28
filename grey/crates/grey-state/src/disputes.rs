@@ -77,7 +77,11 @@ pub fn process_disputes(
 
     // eq 10.10: Judgments within each verdict must be sorted by validator index, no duplicates
     for verdict in &disputes.verdicts {
-        let indices: Vec<u16> = verdict.judgments.iter().map(|j| j.validator_index).collect();
+        let indices: Vec<u16> = verdict
+            .judgments
+            .iter()
+            .map(|j| j.validator_index)
+            .collect();
         for w in indices.windows(2) {
             if w[0] >= w[1] {
                 return Err(DisputeError::JudgementsNotSortedUnique);
@@ -148,11 +152,7 @@ pub fn process_disputes(
     // Build verdict summary: (report_hash, positive_count)
     let mut verdict_summary: Vec<(Hash, u16)> = Vec::new();
     for verdict in &disputes.verdicts {
-        let positive: u16 = verdict
-            .judgments
-            .iter()
-            .filter(|j| j.is_valid)
-            .count() as u16;
+        let positive: u16 = verdict.judgments.iter().filter(|j| j.is_valid).count() as u16;
 
         if positive != super_majority && positive != 0 && positive != one_third {
             return Err(DisputeError::BadVoteSplit);
@@ -202,7 +202,8 @@ pub fn process_disputes(
 
     // eq 10.8: Culprits sorted by key, no duplicates
     {
-        let keys: Vec<&Ed25519PublicKey> = disputes.culprits.iter().map(|c| &c.validator_key).collect();
+        let keys: Vec<&Ed25519PublicKey> =
+            disputes.culprits.iter().map(|c| &c.validator_key).collect();
         for w in keys.windows(2) {
             if w[0] >= w[1] {
                 return Err(DisputeError::CulpritsNotSortedUnique);
@@ -212,7 +213,8 @@ pub fn process_disputes(
 
     // eq 10.8: Faults sorted by key, no duplicates
     {
-        let keys: Vec<&Ed25519PublicKey> = disputes.faults.iter().map(|f| &f.validator_key).collect();
+        let keys: Vec<&Ed25519PublicKey> =
+            disputes.faults.iter().map(|f| &f.validator_key).collect();
         for w in keys.windows(2) {
             if w[0] >= w[1] {
                 return Err(DisputeError::FaultsNotSortedUnique);
@@ -248,11 +250,7 @@ pub fn process_disputes(
         message.extend_from_slice(b"jam_guarantee");
         message.extend_from_slice(&culprit.report_hash.0);
 
-        if !grey_crypto::ed25519_verify(
-            &culprit.validator_key,
-            &message,
-            &culprit.signature,
-        ) {
+        if !grey_crypto::ed25519_verify(&culprit.validator_key, &message, &culprit.signature) {
             return Err(DisputeError::BadSignature);
         }
     }
@@ -295,11 +293,7 @@ pub fn process_disputes(
         message.extend_from_slice(domain);
         message.extend_from_slice(&fault.report_hash.0);
 
-        if !grey_crypto::ed25519_verify(
-            &fault.validator_key,
-            &message,
-            &fault.signature,
-        ) {
+        if !grey_crypto::ed25519_verify(&fault.validator_key, &message, &fault.signature) {
             return Err(DisputeError::BadSignature);
         }
     }

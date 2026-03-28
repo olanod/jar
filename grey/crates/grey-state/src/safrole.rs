@@ -93,8 +93,7 @@ pub struct EpochMark {
 
 /// Callback for Ring VRF verification and ticket ID extraction.
 /// Returns the ticket ID (VRF output Y(p)) or None if verification fails.
-pub type RingVrfVerifier =
-    dyn Fn(&TicketProof, &BandersnatchRingRoot, &Hash, u8) -> Option<Hash>;
+pub type RingVrfVerifier = dyn Fn(&TicketProof, &BandersnatchRingRoot, &Hash, u8) -> Option<Hash>;
 
 /// Apply the Safrole sub-transition (eq 6.1-6.35).
 ///
@@ -199,8 +198,7 @@ pub fn process_safrole(
 
     // eq 6.35: All submitted tickets must be retained
     if !new_tickets.is_empty() {
-        let retained_ids: BTreeSet<[u8; 32]> =
-            new_gamma_a.iter().map(|t| t.id.0).collect();
+        let retained_ids: BTreeSet<[u8; 32]> = new_gamma_a.iter().map(|t| t.id.0).collect();
         for t in &new_tickets {
             if !retained_ids.contains(&t.id.0) {
                 return Err(SafroleError::TicketNotRetained);
@@ -312,8 +310,7 @@ pub fn fallback_key_sequence(
             preimage.extend_from_slice(&entropy.0);
             preimage.extend_from_slice(&i.to_le_bytes());
             let hash = grey_crypto::blake2b_256(&preimage);
-            let idx =
-                u32::from_le_bytes([hash.0[0], hash.0[1], hash.0[2], hash.0[3]]) as usize % v;
+            let idx = u32::from_le_bytes([hash.0[0], hash.0[1], hash.0[2], hash.0[3]]) as usize % v;
             validators[idx].bandersnatch
         })
         .collect()
@@ -386,5 +383,7 @@ fn extract_tickets(
 /// Compute ring root from validator Bandersnatch keys (eq 6.13: γZ' = O([k_b | k ← γP'])).
 fn compute_ring_root(keys: &[ValidatorKey]) -> BandersnatchRingRoot {
     let bandersnatch_keys: Vec<[u8; 32]> = keys.iter().map(|k| k.bandersnatch.0).collect();
-    BandersnatchRingRoot(grey_crypto::bandersnatch::compute_ring_commitment(&bandersnatch_keys))
+    BandersnatchRingRoot(grey_crypto::bandersnatch::compute_ring_commitment(
+        &bandersnatch_keys,
+    ))
 }

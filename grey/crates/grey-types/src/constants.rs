@@ -123,12 +123,12 @@ pub const JAM_EPOCH_UNIX: u64 = 1_735_732_800;
 // ---------------------------------------------------------------------------
 
 pub const HOST_OK: u64 = 0;
-pub const HOST_NONE: u64 = u64::MAX;       // 2^64 - 1
-pub const HOST_WHAT: u64 = u64::MAX - 1;   // 2^64 - 2
-pub const HOST_OOB: u64 = u64::MAX - 2;    // 2^64 - 3
-pub const HOST_WHO: u64 = u64::MAX - 3;    // 2^64 - 4
-pub const HOST_FULL: u64 = u64::MAX - 4;   // 2^64 - 5
-pub const HOST_CORE: u64 = u64::MAX - 5;   // 2^64 - 6
-pub const HOST_CASH: u64 = u64::MAX - 6;   // 2^64 - 7
-pub const HOST_LOW: u64 = u64::MAX - 7;    // 2^64 - 8
-pub const HOST_HUH: u64 = u64::MAX - 8;    // 2^64 - 9
+pub const HOST_NONE: u64 = u64::MAX; // 2^64 - 1
+pub const HOST_WHAT: u64 = u64::MAX - 1; // 2^64 - 2
+pub const HOST_OOB: u64 = u64::MAX - 2; // 2^64 - 3
+pub const HOST_WHO: u64 = u64::MAX - 3; // 2^64 - 4
+pub const HOST_FULL: u64 = u64::MAX - 4; // 2^64 - 5
+pub const HOST_CORE: u64 = u64::MAX - 5; // 2^64 - 6
+pub const HOST_CASH: u64 = u64::MAX - 6; // 2^64 - 7
+pub const HOST_LOW: u64 = u64::MAX - 7; // 2^64 - 8
+pub const HOST_HUH: u64 = u64::MAX - 8; // 2^64 - 9

@@ -1,8 +1,8 @@
 //! Work package builder for pixel submissions.
 
 use grey_codec::Encode;
-use grey_types::work::{RefinementContext, WorkItem, WorkPackage};
 use grey_types::Hash;
+use grey_types::work::{RefinementContext, WorkItem, WorkPackage};
 
 use crate::rpc::ContextResult;
 

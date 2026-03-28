@@ -18,9 +18,9 @@ pub mod program;
 pub mod recompiler;
 pub mod vm;
 
-pub use vm::{ExitReason, Pvm};
 #[cfg(feature = "std")]
 pub use recompiler::RecompiledPvm;
+pub use vm::{ExitReason, Pvm};
 
 // --- PVM constants (Gray Paper Appendix A / I.4.4) ---
 

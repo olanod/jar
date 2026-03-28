@@ -9,8 +9,8 @@
 
 pub mod accumulation;
 
-use grey_types::state::ServiceAccount;
 use grey_types::Balance;
+use grey_types::state::ServiceAccount;
 
 /// Compute the minimum balance for a service account (eq 9.8).
 ///

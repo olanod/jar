@@ -157,8 +157,7 @@ impl AuditState {
         }
 
         // Also prune completed audits that are old
-        self.completed_audits
-            .retain(|h| !old_hashes.contains(h));
+        self.completed_audits.retain(|h| !old_hashes.contains(h));
     }
 }
 
@@ -186,11 +185,7 @@ pub fn compute_audit_tranche(
 /// Execute an audit of a work report by re-running refinement.
 ///
 /// Returns true if the work report is valid (results match), false otherwise.
-pub fn audit_work_report(
-    _config: &Config,
-    report: &WorkReport,
-    _ctx: &dyn RefineContext,
-) -> bool {
+pub fn audit_work_report(_config: &Config, report: &WorkReport, _ctx: &dyn RefineContext) -> bool {
     // Re-execute each work item and compare results
     for digest in &report.results {
         // Look up the service code
@@ -309,10 +304,7 @@ pub fn decode_announcement(data: &[u8]) -> Option<AuditAnnouncement> {
 }
 
 /// Verify an audit announcement signature.
-pub fn verify_announcement(
-    announcement: &AuditAnnouncement,
-    state: &State,
-) -> bool {
+pub fn verify_announcement(announcement: &AuditAnnouncement, state: &State) -> bool {
     let idx = announcement.validator_index as usize;
     if idx >= state.current_validators.len() {
         return false;
@@ -421,7 +413,10 @@ mod tests {
         assert!(!all_same || MAX_TRANCHES <= 1);
 
         // Same inputs should give same output (deterministic)
-        assert_eq!(t0, compute_audit_tranche(&entropy, &report_hash, 0, MAX_TRANCHES));
+        assert_eq!(
+            t0,
+            compute_audit_tranche(&entropy, &report_hash, 0, MAX_TRANCHES)
+        );
     }
 
     #[test]

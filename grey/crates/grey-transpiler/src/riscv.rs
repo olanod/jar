@@ -20,21 +20,21 @@ use crate::TranspileError;
 /// x3 (gp) and x4 (tp) have no direct mapping and must be spilled.
 fn map_register(rv_reg: u8) -> Result<Option<u8>, TranspileError> {
     match rv_reg {
-        0 => Ok(None),     // x0 = zero register (always 0)
-        1 => Ok(Some(0)),  // x1 (ra) → PVM reg 0 (RA)
-        2 => Ok(Some(1)),  // x2 (sp) → PVM reg 1 (SP)
+        0 => Ok(None),                                         // x0 = zero register (always 0)
+        1 => Ok(Some(0)),                                      // x1 (ra) → PVM reg 0 (RA)
+        2 => Ok(Some(1)),                                      // x2 (sp) → PVM reg 1 (SP)
         3 | 4 => Err(TranspileError::RegisterMapping(rv_reg)), // gp, tp: no mapping
-        5 => Ok(Some(2)),  // x5 (t0) → PVM reg 2 (T0)
-        6 => Ok(Some(3)),  // x6 (t1) → PVM reg 3 (T1)
-        7 => Ok(Some(4)),  // x7 (t2) → PVM reg 4 (T2)
-        8 => Ok(Some(5)),  // x8 (s0) → PVM reg 5 (S0)
-        9 => Ok(Some(6)),  // x9 (s1) → PVM reg 6 (S1)
-        10 => Ok(Some(7)), // x10 (a0) → PVM reg 7 (A0)
-        11 => Ok(Some(8)), // x11 (a1) → PVM reg 8 (A1)
-        12 => Ok(Some(9)), // x12 (a2) → PVM reg 9 (A2)
-        13 => Ok(Some(10)), // x13 (a3) → PVM reg 10 (A3)
-        14 => Ok(Some(11)), // x14 (a4) → PVM reg 11 (A4)
-        15 => Ok(Some(12)), // x15 (a5) → PVM reg 12 (A5)
+        5 => Ok(Some(2)),                                      // x5 (t0) → PVM reg 2 (T0)
+        6 => Ok(Some(3)),                                      // x6 (t1) → PVM reg 3 (T1)
+        7 => Ok(Some(4)),                                      // x7 (t2) → PVM reg 4 (T2)
+        8 => Ok(Some(5)),                                      // x8 (s0) → PVM reg 5 (S0)
+        9 => Ok(Some(6)),                                      // x9 (s1) → PVM reg 6 (S1)
+        10 => Ok(Some(7)),                                     // x10 (a0) → PVM reg 7 (A0)
+        11 => Ok(Some(8)),                                     // x11 (a1) → PVM reg 8 (A1)
+        12 => Ok(Some(9)),                                     // x12 (a2) → PVM reg 9 (A2)
+        13 => Ok(Some(10)),                                    // x13 (a3) → PVM reg 10 (A3)
+        14 => Ok(Some(11)),                                    // x14 (a4) → PVM reg 11 (A4)
+        15 => Ok(Some(12)),                                    // x15 (a5) → PVM reg 12 (A5)
         _ => Err(TranspileError::RegisterMapping(rv_reg)),
     }
 }
@@ -121,8 +121,18 @@ impl TranslationContext {
 
     /// Translate one or more 32-bit RISC-V instructions starting at `offset`.
     /// Returns the number of bytes consumed (always 4).
-    pub(crate) fn translate_instruction(&mut self, section: &[u8], offset: usize, base: u64) -> Result<usize, TranspileError> {
-        let inst = u32::from_le_bytes([section[offset], section[offset+1], section[offset+2], section[offset+3]]);
+    pub(crate) fn translate_instruction(
+        &mut self,
+        section: &[u8],
+        offset: usize,
+        base: u64,
+    ) -> Result<usize, TranspileError> {
+        let inst = u32::from_le_bytes([
+            section[offset],
+            section[offset + 1],
+            section[offset + 2],
+            section[offset + 3],
+        ]);
         let addr = base + offset as u64;
         self.translate_one(inst, addr)?;
         Ok(4)
@@ -159,7 +169,8 @@ impl TranslationContext {
         }
 
         match opcode {
-            0x37 => { // LUI — buffer for potential LUI+ADDI fusion
+            0x37 => {
+                // LUI — buffer for potential LUI+ADDI fusion
                 let imm = (inst & 0xFFFFF000) as i32;
                 // Flush any previous pending LUI (consecutive LUIs)
                 if let Some((prev_rd, prev_val)) = self.pending_lui.take() {
@@ -167,14 +178,16 @@ impl TranslationContext {
                 }
                 self.pending_lui = Some((rd, imm as i64));
             }
-            0x17 => { // AUIPC — PC + upper immediate
+            0x17 => {
+                // AUIPC — PC + upper immediate
                 let imm = (inst & 0xFFFFF000) as i32;
                 let computed = (_addr as i64 + imm as i64) as u64;
                 // Record for pairing with the next JALR instruction.
                 // Don't emit anything yet — the JALR handler will use this.
                 self.pending_auipc = Some((rd, computed));
             }
-            0x6F => { // JAL
+            0x6F => {
+                // JAL
                 let imm = decode_j_imm(inst);
                 let target = (_addr as i64 + imm as i64) as u64;
                 if rd == 0 {
@@ -186,46 +199,57 @@ impl TranslationContext {
                     self.emit_call(rd, rv_return_addr, target)?;
                 }
             }
-            0x67 => { // JALR
+            0x67 => {
+                // JALR
                 match funct3 {
                     0 => {
                         let imm = ((inst as i32) >> 20) as i32;
                         self.translate_jalr(rd, rs1, imm, _addr)?;
                     }
-                    _ => return Err(TranspileError::UnsupportedInstruction {
-                        offset: _addr as usize,
-                        detail: format!("JALR funct3={}", funct3),
-                    }),
+                    _ => {
+                        return Err(TranspileError::UnsupportedInstruction {
+                            offset: _addr as usize,
+                            detail: format!("JALR funct3={}", funct3),
+                        });
+                    }
                 }
             }
-            0x63 => { // Branch
+            0x63 => {
+                // Branch
                 let imm = decode_b_imm(inst);
                 let target = (_addr as i64 + imm as i64) as u64;
                 self.translate_branch(funct3, rs1, rs2, target)?;
             }
-            0x03 => { // Load
+            0x03 => {
+                // Load
                 let imm = ((inst as i32) >> 20) as i32;
                 self.translate_load(funct3, rd, rs1, imm)?;
             }
-            0x23 => { // Store
+            0x23 => {
+                // Store
                 let imm = decode_s_imm(inst);
                 self.translate_store(funct3, rs1, rs2, imm)?;
             }
-            0x13 => { // OP-IMM (add_i, xor_i, etc.)
+            0x13 => {
+                // OP-IMM (add_i, xor_i, etc.)
                 let imm = ((inst as i32) >> 20) as i32;
                 self.translate_op_imm(funct3, funct7, rd, rs1, imm)?;
             }
-            0x33 => { // OP (add, sub, mul, etc.)
+            0x33 => {
+                // OP (add, sub, mul, etc.)
                 self.translate_op(funct3, funct7, rd, rs1, rs2, _addr)?;
             }
-            0x1B => { // OP-IMM-32 (addiw, slliw, etc.) — RV64 only
+            0x1B => {
+                // OP-IMM-32 (addiw, slliw, etc.) — RV64 only
                 let imm = ((inst as i32) >> 20) as i32;
                 self.translate_op_imm_32(funct3, funct7, rd, rs1, imm)?;
             }
-            0x3B => { // OP-32 (addw, subw, etc.) — RV64 only
+            0x3B => {
+                // OP-32 (addw, subw, etc.) — RV64 only
                 self.translate_op_32(funct3, funct7, rd, rs1, rs2)?;
             }
-            0x73 => { // SYSTEM
+            0x73 => {
+                // SYSTEM
                 match funct3 {
                     0 => {
                         let csr = (inst >> 20) & 0xFFF;
@@ -236,20 +260,24 @@ impl TranslationContext {
                                 self.emit_ecalli(id);
                                 self.last_t0_imm = None;
                             }
-                            1 => self.emit_inst(0),   // EBREAK → trap
-                            _ => self.emit_inst(0),   // unimp/unknown CSR → trap
+                            1 => self.emit_inst(0), // EBREAK → trap
+                            _ => self.emit_inst(0), // unimp/unknown CSR → trap
                         }
                     }
                     _ => self.emit_inst(0), // CSR ops → trap
                 }
             }
-            0x0F => { // FENCE
+            0x0F => {
+                // FENCE
                 self.emit_inst(1); // → fallthrough (nop)
             }
-            0x0B => { // CUSTOM-0 — T-Head extensions
+            0x0B => {
+                // CUSTOM-0 — T-Head extensions
                 match (funct7, funct3) {
-                    (0x20, 1) => { // th.mveqz rd, rs1, rs2: if rs2 == 0 then rd = rs1
-                        if rd == 0 { /* nop */ } else if rs2 == 0 {
+                    (0x20, 1) => {
+                        // th.mveqz rd, rs1, rs2: if rs2 == 0 then rd = rs1
+                        if rd == 0 { /* nop */
+                        } else if rs2 == 0 {
                             // Condition is x0 (always 0) → always execute: rd = rs1
                             if rs1 == 0 {
                                 self.emit_load_imm(rd, 0)?;
@@ -278,7 +306,8 @@ impl TranslationContext {
                             self.emit_data(pvm_rd);
                         }
                     }
-                    (0x21, 1) => { // th.mvnez rd, rs1, rs2: if rs2 != 0 then rd = rs1
+                    (0x21, 1) => {
+                        // th.mvnez rd, rs1, rs2: if rs2 != 0 then rd = rs1
                         if rd == 0 || rs2 == 0 {
                             // rd==0: nop. rs2==x0: condition "x0 != 0" is always false → nop
                             self.emit_inst(1); // fallthrough
@@ -316,7 +345,13 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_jalr(&mut self, rd: u8, rs1: u8, imm: i32, addr: u64) -> Result<(), TranspileError> {
+    fn translate_jalr(
+        &mut self,
+        rd: u8,
+        rs1: u8,
+        imm: i32,
+        addr: u64,
+    ) -> Result<(), TranspileError> {
         // Check for auipc+jalr pair (PC-relative call/jump)
         if let Some((auipc_rd, auipc_val)) = self.pending_auipc.take() {
             if auipc_rd == rs1 {
@@ -354,7 +389,13 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_branch(&mut self, funct3: u32, rs1: u8, rs2: u8, target: u64) -> Result<(), TranspileError> {
+    fn translate_branch(
+        &mut self,
+        funct3: u32,
+        rs1: u8,
+        rs2: u8,
+        target: u64,
+    ) -> Result<(), TranspileError> {
         // Fuse load_imm + branch: if one operand was just loaded via load_imm,
         // use the immediate branch form instead of a two-register branch.
         // Saves one PVM instruction (the load_imm) per fused branch.
@@ -365,12 +406,12 @@ impl TranslationContext {
                 if rs2 == load_rd && rs1 != load_rd {
                     let pvm_rs1 = self.require_reg(rs1)?;
                     let pvm_opcode = match funct3 {
-                        0 => Some(81),  // BEQ → branch_eq_imm
-                        1 => Some(82),  // BNE → branch_ne_imm
-                        4 => Some(87),  // BLT → branch_lt_s_imm
-                        5 => Some(89),  // BGE → branch_ge_s_imm
-                        6 => Some(83),  // BLTU → branch_lt_u_imm
-                        7 => Some(85),  // BGEU → branch_ge_u_imm
+                        0 => Some(81), // BEQ → branch_eq_imm
+                        1 => Some(82), // BNE → branch_ne_imm
+                        4 => Some(87), // BLT → branch_lt_s_imm
+                        5 => Some(89), // BGE → branch_ge_s_imm
+                        6 => Some(83), // BLTU → branch_lt_u_imm
+                        7 => Some(85), // BGEU → branch_ge_u_imm
                         _ => None,
                     };
                     if let Some(opc) = pvm_opcode {
@@ -386,9 +427,9 @@ impl TranslationContext {
                 if rs1 == load_rd && rs2 != load_rd {
                     let pvm_rs2 = self.require_reg(rs2)?;
                     let pvm_opcode = match funct3 {
-                        0 => Some(81),  // BEQ is symmetric → branch_eq_imm rs2, imm
-                        1 => Some(82),  // BNE is symmetric → branch_ne_imm rs2, imm
-                        _ => None,      // Inequalities need careful flipping, skip for now
+                        0 => Some(81), // BEQ is symmetric → branch_eq_imm rs2, imm
+                        1 => Some(82), // BNE is symmetric → branch_ne_imm rs2, imm
+                        _ => None,     // Inequalities need careful flipping, skip for now
                     };
                     if let Some(opc) = pvm_opcode {
                         self.code.truncate(undo_pos);
@@ -406,15 +447,18 @@ impl TranslationContext {
         if rs2 == 0 {
             let pvm_rs1 = self.require_reg(rs1)?;
             let pvm_opcode = match funct3 {
-                0 => 81,  // BEQ x, x0 → branch_eq_imm x, 0
-                1 => 82,  // BNE x, x0 → branch_ne_imm x, 0
-                4 => 87,  // BLT x, x0 → branch_lt_s_imm x, 0
-                5 => 89,  // BGE x, x0 → branch_ge_s_imm x, 0
-                6 => 83,  // BLTU x, x0 → branch_lt_u_imm x, 0
-                7 => 85,  // BGEU x, x0 → branch_ge_u_imm x, 0
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("branch funct3={}", funct3),
-                }),
+                0 => 81, // BEQ x, x0 → branch_eq_imm x, 0
+                1 => 82, // BNE x, x0 → branch_ne_imm x, 0
+                4 => 87, // BLT x, x0 → branch_lt_s_imm x, 0
+                5 => 89, // BGE x, x0 → branch_ge_s_imm x, 0
+                6 => 83, // BLTU x, x0 → branch_lt_u_imm x, 0
+                7 => 85, // BGEU x, x0 → branch_ge_u_imm x, 0
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("branch funct3={}", funct3),
+                    });
+                }
             };
             self.emit_branch_imm(pvm_opcode, pvm_rs1, 0, target);
             return Ok(());
@@ -430,9 +474,12 @@ impl TranslationContext {
                 5 => self.emit_branch_imm(87, pvm_rs2, 1, target), // BGE x0, rs2 → rs2 < 1 (signed)
                 6 => self.emit_branch_imm(82, pvm_rs2, 0, target), // BLTU x0, rs2 → rs2 != 0
                 7 => self.emit_branch_imm(81, pvm_rs2, 0, target), // BGEU x0, rs2 → rs2 == 0
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("branch funct3={}", funct3),
-                }),
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("branch funct3={}", funct3),
+                    });
+                }
             };
             return Ok(());
         }
@@ -448,9 +495,12 @@ impl TranslationContext {
             5 => 175, // BGE → branch_ge_s
             6 => 172, // BLTU → branch_lt_u
             7 => 174, // BGEU → branch_ge_u
-            _ => return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("branch funct3={}", funct3),
-            }),
+            _ => {
+                return Err(TranspileError::UnsupportedInstruction {
+                    offset: 0,
+                    detail: format!("branch funct3={}", funct3),
+                });
+            }
         };
 
         let inst_pc = self.code.len() as u32;
@@ -465,8 +515,16 @@ impl TranslationContext {
         Ok(())
     }
 
-    pub(crate) fn translate_load(&mut self, funct3: u32, rd: u8, rs1: u8, imm: i32) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); } // Write to x0 is a no-op
+    pub(crate) fn translate_load(
+        &mut self,
+        funct3: u32,
+        rd: u8,
+        rs1: u8,
+        imm: i32,
+    ) -> Result<(), TranspileError> {
+        if rd == 0 {
+            return Ok(());
+        } // Write to x0 is a no-op
 
         // Fuse load_imm + load_ind: if the base register was just loaded with
         // a constant address, use the direct load form (OneRegOneImm) instead.
@@ -476,13 +534,13 @@ impl TranslationContext {
                 let combined = load_val.wrapping_add(imm as i64);
                 if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
                     let direct_opcode = match funct3 {
-                        0 => Some(53),  // LB → load_i8
-                        1 => Some(55),  // LH → load_i16
-                        2 => Some(57),  // LW → load_i32
-                        3 => Some(58),  // LD → load_u64
-                        4 => Some(52),  // LBU → load_u8
-                        5 => Some(54),  // LHU → load_u16
-                        6 => Some(56),  // LWU → load_u32
+                        0 => Some(53), // LB → load_i8
+                        1 => Some(55), // LH → load_i16
+                        2 => Some(57), // LW → load_i32
+                        3 => Some(58), // LD → load_u64
+                        4 => Some(52), // LBU → load_u8
+                        5 => Some(54), // LHU → load_u16
+                        6 => Some(56), // LWU → load_u32
                         _ => None,
                     };
                     if let Some(opc) = direct_opcode {
@@ -511,9 +569,12 @@ impl TranslationContext {
             4 => 124, // LBU → load_ind_u8
             5 => 126, // LHU → load_ind_u16
             6 => 128, // LWU → load_ind_u32
-            _ => return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("load funct3={}", funct3),
-            }),
+            _ => {
+                return Err(TranspileError::UnsupportedInstruction {
+                    offset: 0,
+                    detail: format!("load funct3={}", funct3),
+                });
+            }
         };
 
         self.emit_inst(pvm_opcode);
@@ -523,7 +584,13 @@ impl TranslationContext {
         Ok(())
     }
 
-    pub(crate) fn translate_store(&mut self, funct3: u32, rs1: u8, rs2: u8, imm: i32) -> Result<(), TranspileError> {
+    pub(crate) fn translate_store(
+        &mut self,
+        funct3: u32,
+        rs1: u8,
+        rs2: u8,
+        imm: i32,
+    ) -> Result<(), TranspileError> {
         // Fuse load_imm + store: check if the base address or stored value was constant.
         if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
             if load_val >= i32::MIN as i64 && load_val <= i32::MAX as i64 {
@@ -534,10 +601,10 @@ impl TranslationContext {
                     let combined = load_val.wrapping_add(imm as i64);
                     if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
                         let direct_opcode = match funct3 {
-                            0 => Some(59),  // SB → store_u8
-                            1 => Some(60),  // SH → store_u16
-                            2 => Some(61),  // SW → store_u32
-                            3 => Some(62),  // SD → store_u64
+                            0 => Some(59), // SB → store_u8
+                            1 => Some(60), // SH → store_u16
+                            2 => Some(61), // SW → store_u32
+                            3 => Some(62), // SD → store_u64
                             _ => None,
                         };
                         if let Some(opc) = direct_opcode {
@@ -556,11 +623,11 @@ impl TranslationContext {
                     let store_val = load_val as i32;
                     let pvm_rs1 = self.require_reg(rs1)?;
                     let pvm_opcode = match funct3 {
-                        0 => 70,  // store_imm_ind_u8
-                        1 => 71,  // store_imm_ind_u16
-                        2 => 72,  // store_imm_ind_u32
-                        3 => 73,  // store_imm_ind_u64
-                        _ => 0,   // can't fuse
+                        0 => 70, // store_imm_ind_u8
+                        1 => 71, // store_imm_ind_u16
+                        2 => 72, // store_imm_ind_u32
+                        3 => 73, // store_imm_ind_u64
+                        _ => 0,  // can't fuse
                     };
                     if pvm_opcode != 0 {
                         self.code.truncate(undo_pos);
@@ -569,8 +636,12 @@ impl TranslationContext {
                         let (ly, value_bytes) = encode_var_imm(store_val);
                         self.emit_inst(pvm_opcode);
                         self.emit_data(pvm_rs1 | (lx << 4));
-                        for b in &offset_bytes { self.emit_data(*b); }
-                        for b in &value_bytes { self.emit_data(*b); }
+                        for b in &offset_bytes {
+                            self.emit_data(*b);
+                        }
+                        for b in &value_bytes {
+                            self.emit_data(*b);
+                        }
                         return Ok(());
                     }
                 }
@@ -583,13 +654,16 @@ impl TranslationContext {
         if rs2 == 0 {
             let pvm_rs1 = self.require_reg(rs1)?;
             let pvm_opcode = match funct3 {
-                0 => 70,  // store_imm_ind_u8
-                1 => 71,  // store_imm_ind_u16
-                2 => 72,  // store_imm_ind_u32
-                3 => 73,  // store_imm_ind_u64
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("store funct3={}", funct3),
-                }),
+                0 => 70, // store_imm_ind_u8
+                1 => 71, // store_imm_ind_u16
+                2 => 72, // store_imm_ind_u32
+                3 => 73, // store_imm_ind_u64
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("store funct3={}", funct3),
+                    });
+                }
             };
             // Format: OneRegTwoImm — reg_byte encodes ra + imm_x length
             // reg_byte = ra | (lx << 4)
@@ -597,7 +671,9 @@ impl TranslationContext {
             let (lx, imm_bytes) = encode_var_imm(imm);
             self.emit_inst(pvm_opcode);
             self.emit_data(pvm_rs1 | (lx << 4));
-            for b in &imm_bytes { self.emit_data(*b); }
+            for b in &imm_bytes {
+                self.emit_data(*b);
+            }
             return Ok(());
         }
 
@@ -609,9 +685,12 @@ impl TranslationContext {
             1 => 121, // SH → store_ind_u16
             2 => 122, // SW → store_ind_u32
             3 => 123, // SD → store_ind_u64
-            _ => return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("store funct3={}", funct3),
-            }),
+            _ => {
+                return Err(TranspileError::UnsupportedInstruction {
+                    offset: 0,
+                    detail: format!("store funct3={}", funct3),
+                });
+            }
         };
 
         self.emit_inst(pvm_opcode);
@@ -621,7 +700,14 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_op_imm(&mut self, funct3: u32, funct7: u32, rd: u8, rs1: u8, imm: i32) -> Result<(), TranspileError> {
+    fn translate_op_imm(
+        &mut self,
+        funct3: u32,
+        funct7: u32,
+        rd: u8,
+        rs1: u8,
+        imm: i32,
+    ) -> Result<(), TranspileError> {
         // Track `li t0, N` (ADDI x5, x0, N) for ecall ID translation
         if funct3 == 0 && rd == 5 && rs1 == 0 {
             self.last_t0_imm = Some(imm);
@@ -642,7 +728,9 @@ impl TranslationContext {
             self.emit_load_imm(lui_rd, lui_val)?;
         }
 
-        if rd == 0 { return Ok(()); } // Write to x0 is a no-op in RISC-V
+        if rd == 0 {
+            return Ok(());
+        } // Write to x0 is a no-op in RISC-V
 
         // ADDI rd, rs, 0 is the RISC-V `mv rd, rs` pseudo-instruction.
         // Use compact move_reg (2 bytes) instead of add_imm (6 bytes).
@@ -664,16 +752,18 @@ impl TranslationContext {
         if rs1 == 0 {
             match funct3 {
                 0 => return self.emit_load_imm(rd, imm as i64), // li rd, imm
-                2 => { // SLTI rd, x0, imm → rd = (0 < imm) ? 1 : 0
+                2 => {
+                    // SLTI rd, x0, imm → rd = (0 < imm) ? 1 : 0
                     return self.emit_load_imm(rd, if 0 < imm { 1 } else { 0 });
                 }
-                3 => { // SLTIU rd, x0, imm → rd = (0 < imm unsigned) ? 1 : 0
+                3 => {
+                    // SLTIU rd, x0, imm → rd = (0 < imm unsigned) ? 1 : 0
                     return self.emit_load_imm(rd, if imm != 0 { 1 } else { 0 });
                 }
                 4 => return self.emit_load_imm(rd, imm as i64), // XORI rd, x0, imm = imm
                 6 => return self.emit_load_imm(rd, imm as i64), // ORI rd, x0, imm = imm
-                7 => return self.emit_load_imm(rd, 0), // ANDI rd, x0, imm = 0
-                _ => {} // shifts with x0 → just 0, but rare
+                7 => return self.emit_load_imm(rd, 0),          // ANDI rd, x0, imm = 0
+                _ => {}                                         // shifts with x0 → just 0, but rare
             }
         }
 
@@ -682,14 +772,51 @@ impl TranslationContext {
 
         // RV32 uses 32-bit PVM ops; RV64 uses 64-bit PVM ops
         let pvm_opcode = match funct3 {
-            0 => if self.is_64bit { 149 } else { 131 }, // ADDI → add_imm_64/32
+            0 => {
+                if self.is_64bit {
+                    149
+                } else {
+                    131
+                }
+            } // ADDI → add_imm_64/32
             1 => {
-                if funct7 == 0x30 { // Zbb unary: clz/ctz/cpop/sext.b/sext.h
+                if funct7 == 0x30 {
+                    // Zbb unary: clz/ctz/cpop/sext.b/sext.h
                     let rs2 = (imm & 0x1F) as u8;
-                    let opc = match rs2 { 0 => if self.is_64bit {104} else {105}, 1 => if self.is_64bit {106} else {107},
-                        2 => if self.is_64bit {102} else {103}, 4 => 108, 5 => 109,
-                        _ => return Err(TranspileError::UnsupportedInstruction { offset: 0, detail: format!("Zbb rs2={}", rs2) }) };
-                    self.emit_inst(opc); self.emit_data(pvm_rd | (pvm_rs1 << 4)); return Ok(());
+                    let opc = match rs2 {
+                        0 => {
+                            if self.is_64bit {
+                                104
+                            } else {
+                                105
+                            }
+                        }
+                        1 => {
+                            if self.is_64bit {
+                                106
+                            } else {
+                                107
+                            }
+                        }
+                        2 => {
+                            if self.is_64bit {
+                                102
+                            } else {
+                                103
+                            }
+                        }
+                        4 => 108,
+                        5 => 109,
+                        _ => {
+                            return Err(TranspileError::UnsupportedInstruction {
+                                offset: 0,
+                                detail: format!("Zbb rs2={}", rs2),
+                            });
+                        }
+                    };
+                    self.emit_inst(opc);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    return Ok(());
                 }
                 // SLLI (funct7=0x00)
                 let shamt = imm & if self.is_64bit { 0x3F } else { 0x1F };
@@ -702,18 +829,26 @@ impl TranslationContext {
             3 => 136, // SLTIU → set_lt_u_imm
             4 => 133, // XORI → xor_imm
             5 => {
-                if (funct7 == 0x35 || funct7 == 0x34) && (imm & 0x1F) == 0x18 { // Zbb rev8 (RV64: 0x35, RV32: 0x34)
-                    self.emit_inst(111); self.emit_data(pvm_rd | (pvm_rs1 << 4)); return Ok(());
+                if (funct7 == 0x35 || funct7 == 0x34) && (imm & 0x1F) == 0x18 {
+                    // Zbb rev8 (RV64: 0x35, RV32: 0x34)
+                    self.emit_inst(111);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    return Ok(());
                 }
-                if funct7 == 0x30 { // Zbb rori
+                if funct7 == 0x30 {
+                    // Zbb rori
                     let shamt = imm & if self.is_64bit { 0x3F } else { 0x1F };
                     self.emit_inst(if self.is_64bit { 158 } else { 160 });
-                    self.emit_data(pvm_rd | (pvm_rs1 << 4)); self.emit_var_imm(shamt); return Ok(());
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    self.emit_var_imm(shamt);
+                    return Ok(());
                 }
-                if funct7 == 0x14 { // Zbb orc.b — OR-combine bytes
+                if funct7 == 0x14 {
+                    // Zbb orc.b — OR-combine bytes
                     // No PVM equivalent; emit as trap (rare instruction)
                     return Err(TranspileError::UnsupportedInstruction {
-                        offset: 0, detail: "Zbb orc.b not yet supported".into(),
+                        offset: 0,
+                        detail: "Zbb orc.b not yet supported".into(),
                     });
                 }
                 // SRLI (funct7=0x00) / SRAI (funct7=0x20+)
@@ -739,8 +874,18 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_op(&mut self, funct3: u32, funct7: u32, rd: u8, rs1: u8, rs2: u8, addr: u64) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); } // Write to x0 is a no-op in RISC-V
+    fn translate_op(
+        &mut self,
+        funct3: u32,
+        funct7: u32,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+        addr: u64,
+    ) -> Result<(), TranspileError> {
+        if rd == 0 {
+            return Ok(());
+        } // Write to x0 is a no-op in RISC-V
 
         // Fuse load_imm + ALU op: if one operand was just loaded via load_imm
         // and the value fits in i32, undo the load_imm and emit the immediate
@@ -761,11 +906,11 @@ impl TranslationContext {
                 if let Some(base) = fuse_base {
                     let pvm_imm_opcode = match (funct7, funct3) {
                         (0, 0) => Some(if self.is_64bit { 149 } else { 131 }), // ADD → add_imm
-                        (0, 7) => Some(132), // AND → and_imm
-                        (0, 6) => Some(134), // OR → or_imm
-                        (0, 4) => Some(133), // XOR → xor_imm
+                        (0, 7) => Some(132),                                   // AND → and_imm
+                        (0, 6) => Some(134),                                   // OR → or_imm
+                        (0, 4) => Some(133),                                   // XOR → xor_imm
                         (1, 0) => Some(if self.is_64bit { 150 } else { 135 }), // MUL → mul_imm
-                        (0, 2) => Some(137), // SLT → set_lt_s_imm
+                        (0, 2) => Some(137),                                   // SLT → set_lt_s_imm
                         (0, 3) => Some(136), // SLTU → set_lt_u_imm
                         _ => None,
                     };
@@ -790,9 +935,27 @@ impl TranslationContext {
                 // SLL/SRL/SRA rd, rs1, load_rd → shlo_l/shlo_r/shar_r_imm rd, rs1, imm
                 if rs2 == load_rd && matches!((funct7, funct3), (0, 1) | (0, 5) | (0x20, 5)) {
                     let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 1) => if self.is_64bit { 151 } else { 138 }, // SLL → shlo_l_imm
-                        (0, 5) => if self.is_64bit { 152 } else { 139 }, // SRL → shlo_r_imm
-                        (0x20, 5) => if self.is_64bit { 153 } else { 140 }, // SRA → shar_r_imm
+                        (0, 1) => {
+                            if self.is_64bit {
+                                151
+                            } else {
+                                138
+                            }
+                        } // SLL → shlo_l_imm
+                        (0, 5) => {
+                            if self.is_64bit {
+                                152
+                            } else {
+                                139
+                            }
+                        } // SRL → shlo_r_imm
+                        (0x20, 5) => {
+                            if self.is_64bit {
+                                153
+                            } else {
+                                140
+                            }
+                        } // SRA → shar_r_imm
                         _ => unreachable!(),
                     };
                     self.code.truncate(undo_pos);
@@ -892,7 +1055,9 @@ impl TranslationContext {
                 _ => {
                     return Err(TranspileError::UnsupportedInstruction {
                         offset: addr as usize,
-                        detail: format!("unhandled x0-as-rs1 op: funct7={funct7:#x} funct3={funct3}"),
+                        detail: format!(
+                            "unhandled x0-as-rs1 op: funct7={funct7:#x} funct3={funct3}"
+                        ),
                     });
                 }
             }
@@ -932,7 +1097,9 @@ impl TranslationContext {
                 _ => {
                     return Err(TranspileError::UnsupportedInstruction {
                         offset: addr as usize,
-                        detail: format!("unhandled x0-as-rs2 op: funct7={funct7:#x} funct3={funct3}"),
+                        detail: format!(
+                            "unhandled x0-as-rs2 op: funct7={funct7:#x} funct3={funct3}"
+                        ),
                     });
                 }
             }
@@ -946,57 +1113,177 @@ impl TranslationContext {
         let pvm_opcode = if funct7 == 1 {
             // M extension (multiply/divide)
             match funct3 {
-                0 => if self.is_64bit { 202 } else { 192 }, // MUL
+                0 => {
+                    if self.is_64bit {
+                        202
+                    } else {
+                        192
+                    }
+                } // MUL
                 1 => 213, // MULH → mul_upper_ss (always 64-bit, gives upper bits)
                 2 => 215, // MULHSU → mul_upper_su
                 3 => 214, // MULHU → mul_upper_uu
-                4 => if self.is_64bit { 204 } else { 194 }, // DIV
-                5 => if self.is_64bit { 203 } else { 193 }, // DIVU
-                6 => if self.is_64bit { 206 } else { 196 }, // REM
-                7 => if self.is_64bit { 205 } else { 195 }, // REMU
+                4 => {
+                    if self.is_64bit {
+                        204
+                    } else {
+                        194
+                    }
+                } // DIV
+                5 => {
+                    if self.is_64bit {
+                        203
+                    } else {
+                        193
+                    }
+                } // DIVU
+                6 => {
+                    if self.is_64bit {
+                        206
+                    } else {
+                        196
+                    }
+                } // REM
+                7 => {
+                    if self.is_64bit {
+                        205
+                    } else {
+                        195
+                    }
+                } // REMU
                 _ => unreachable!(),
             }
         } else if funct7 == 0x20 {
             match funct3 {
-                0 => if self.is_64bit { 201 } else { 191 }, // SUB
-                5 => if self.is_64bit { 209 } else { 199 }, // SRA
-                7 | 6 | 4 => { // Zbb ANDN/ORN/XNOR: rd = rs1 OP ~rs2
+                0 => {
+                    if self.is_64bit {
+                        201
+                    } else {
+                        191
+                    }
+                } // SUB
+                5 => {
+                    if self.is_64bit {
+                        209
+                    } else {
+                        199
+                    }
+                } // SRA
+                7 | 6 | 4 => {
+                    // Zbb ANDN/ORN/XNOR: rd = rs1 OP ~rs2
                     if rd == rs1 && rd == rs2 {
                         return self.emit_load_imm(rd, if funct3 == 7 { 0 } else { -1i64 });
                     }
-                    let alu: u8 = match funct3 { 7 => 210, 6 => 212, _ => 211 };
-                    if rd != rs1 { // use rd as temp for ~rs2
-                        self.emit_inst(133); self.emit_data(pvm_rd | (pvm_rs2 << 4)); self.emit_var_imm(-1);
-                        self.emit_inst(alu); self.emit_data(pvm_rs1 | (pvm_rd << 4)); self.emit_data(pvm_rd);
-                    } else { // rd==rs1: NOT rs2 in-place, OP, restore
-                        self.emit_inst(133); self.emit_data(pvm_rs2 | (pvm_rs2 << 4)); self.emit_var_imm(-1);
-                        self.emit_inst(alu); self.emit_data(pvm_rd | (pvm_rs2 << 4)); self.emit_data(pvm_rd);
-                        self.emit_inst(133); self.emit_data(pvm_rs2 | (pvm_rs2 << 4)); self.emit_var_imm(-1);
+                    let alu: u8 = match funct3 {
+                        7 => 210,
+                        6 => 212,
+                        _ => 211,
+                    };
+                    if rd != rs1 {
+                        // use rd as temp for ~rs2
+                        self.emit_inst(133);
+                        self.emit_data(pvm_rd | (pvm_rs2 << 4));
+                        self.emit_var_imm(-1);
+                        self.emit_inst(alu);
+                        self.emit_data(pvm_rs1 | (pvm_rd << 4));
+                        self.emit_data(pvm_rd);
+                    } else {
+                        // rd==rs1: NOT rs2 in-place, OP, restore
+                        self.emit_inst(133);
+                        self.emit_data(pvm_rs2 | (pvm_rs2 << 4));
+                        self.emit_var_imm(-1);
+                        self.emit_inst(alu);
+                        self.emit_data(pvm_rd | (pvm_rs2 << 4));
+                        self.emit_data(pvm_rd);
+                        self.emit_inst(133);
+                        self.emit_data(pvm_rs2 | (pvm_rs2 << 4));
+                        self.emit_var_imm(-1);
                     }
                     return Ok(());
                 }
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("OP funct7=0x20 funct3={}", funct3),
-                }),
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("OP funct7=0x20 funct3={}", funct3),
+                    });
+                }
             }
-        } else if funct7 == 0x05 { // Zbb min/max
-            match funct3 { 4 => 229, 5 => 230, 6 => 227, 7 => 228,
-                _ => return Err(TranspileError::UnsupportedInstruction { offset: 0, detail: format!("Zbb f7=5 f3={}", funct3) }) }
-        } else if funct7 == 0x30 { // Zbb rotations — emit and return early
-            let opc = match funct3 { 1 => if self.is_64bit { 220 } else { 221 }, 5 => if self.is_64bit { 222 } else { 223 },
-                _ => return Err(TranspileError::UnsupportedInstruction { offset: 0, detail: format!("Zbb f7=30 f3={}", funct3) }) };
-            self.emit_inst(opc); self.emit_data(pvm_rs1 | (pvm_rs2 << 4)); self.emit_data(pvm_rd); return Ok(());
+        } else if funct7 == 0x05 {
+            // Zbb min/max
+            match funct3 {
+                4 => 229,
+                5 => 230,
+                6 => 227,
+                7 => 228,
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("Zbb f7=5 f3={}", funct3),
+                    });
+                }
+            }
+        } else if funct7 == 0x30 {
+            // Zbb rotations — emit and return early
+            let opc = match funct3 {
+                1 => {
+                    if self.is_64bit {
+                        220
+                    } else {
+                        221
+                    }
+                }
+                5 => {
+                    if self.is_64bit {
+                        222
+                    } else {
+                        223
+                    }
+                }
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("Zbb f7=30 f3={}", funct3),
+                    });
+                }
+            };
+            self.emit_inst(opc);
+            self.emit_data(pvm_rs1 | (pvm_rs2 << 4));
+            self.emit_data(pvm_rd);
+            return Ok(());
         } else if funct7 == 0 {
             match funct3 {
-                0 => if self.is_64bit { 200 } else { 190 }, // ADD
-                1 => if self.is_64bit { 207 } else { 197 }, // SLL
-                2 => 217, 3 => 216, 4 => 211, 5 => if self.is_64bit { 208 } else { 198 },
-                6 => 212, 7 => 210,
+                0 => {
+                    if self.is_64bit {
+                        200
+                    } else {
+                        190
+                    }
+                } // ADD
+                1 => {
+                    if self.is_64bit {
+                        207
+                    } else {
+                        197
+                    }
+                } // SLL
+                2 => 217,
+                3 => 216,
+                4 => 211,
+                5 => {
+                    if self.is_64bit {
+                        208
+                    } else {
+                        198
+                    }
+                }
+                6 => 212,
+                7 => 210,
                 _ => unreachable!(),
             }
         } else {
             return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("OP funct7={:#x} funct3={}", funct7, funct3),
+                offset: 0,
+                detail: format!("OP funct7={:#x} funct3={}", funct7, funct3),
             });
         };
 
@@ -1008,50 +1295,95 @@ impl TranslationContext {
         Ok(())
     }
 
-    fn translate_op_imm_32(&mut self, funct3: u32, funct7: u32, rd: u8, rs1: u8, imm: i32) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); }
+    fn translate_op_imm_32(
+        &mut self,
+        funct3: u32,
+        funct7: u32,
+        rd: u8,
+        rs1: u8,
+        imm: i32,
+    ) -> Result<(), TranspileError> {
+        if rd == 0 {
+            return Ok(());
+        }
         let pvm_rd = self.require_reg(rd)?;
         let pvm_rs1 = self.require_reg(rs1)?;
 
         match funct3 {
-            0 => { // ADDIW → add_imm_32
+            0 => {
+                // ADDIW → add_imm_32
                 self.emit_inst(131);
                 self.emit_data(pvm_rd | (pvm_rs1 << 4));
                 self.emit_var_imm(imm);
             }
             1 => {
-                if funct7 == 0x30 { // Zbb: clzw(rs2=0), ctzw(rs2=1), cpopw(rs2=2)
+                if funct7 == 0x30 {
+                    // Zbb: clzw(rs2=0), ctzw(rs2=1), cpopw(rs2=2)
                     let rs2 = (imm & 0x1F) as u8;
-                    let opc = match rs2 { 0 => 105, 1 => 107, 2 => 103,
-                        _ => return Err(TranspileError::UnsupportedInstruction { offset: 0, detail: format!("Zbb-W rs2={}", rs2) }) };
-                    self.emit_inst(opc); self.emit_data(pvm_rd | (pvm_rs1 << 4));
-                } else { // SLLIW (funct7=0x00)
+                    let opc = match rs2 {
+                        0 => 105,
+                        1 => 107,
+                        2 => 103,
+                        _ => {
+                            return Err(TranspileError::UnsupportedInstruction {
+                                offset: 0,
+                                detail: format!("Zbb-W rs2={}", rs2),
+                            });
+                        }
+                    };
+                    self.emit_inst(opc);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                } else {
+                    // SLLIW (funct7=0x00)
                     let shamt = imm & 0x1F;
-                    self.emit_inst(138); self.emit_data(pvm_rd | (pvm_rs1 << 4)); self.emit_var_imm(shamt);
+                    self.emit_inst(138);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    self.emit_var_imm(shamt);
                 }
             }
             5 => {
-                if funct7 == 0x30 { // Zbb roriw
+                if funct7 == 0x30 {
+                    // Zbb roriw
                     let shamt = imm & 0x1F;
-                    self.emit_inst(160); self.emit_data(pvm_rd | (pvm_rs1 << 4)); self.emit_var_imm(shamt);
-                } else if funct7 & 0x20 != 0 { // SRAIW (funct7=0x20)
+                    self.emit_inst(160);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    self.emit_var_imm(shamt);
+                } else if funct7 & 0x20 != 0 {
+                    // SRAIW (funct7=0x20)
                     let shamt = imm & 0x1F;
-                    self.emit_inst(140); self.emit_data(pvm_rd | (pvm_rs1 << 4)); self.emit_var_imm(shamt);
-                } else { // SRLIW (funct7=0x00)
+                    self.emit_inst(140);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    self.emit_var_imm(shamt);
+                } else {
+                    // SRLIW (funct7=0x00)
                     let shamt = imm & 0x1F;
-                    self.emit_inst(139); self.emit_data(pvm_rd | (pvm_rs1 << 4)); self.emit_var_imm(shamt);
+                    self.emit_inst(139);
+                    self.emit_data(pvm_rd | (pvm_rs1 << 4));
+                    self.emit_var_imm(shamt);
                 }
             }
-            _ => return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("OP-IMM-32 funct3={}", funct3),
-            }),
+            _ => {
+                return Err(TranspileError::UnsupportedInstruction {
+                    offset: 0,
+                    detail: format!("OP-IMM-32 funct3={}", funct3),
+                });
+            }
         }
 
         Ok(())
     }
 
-    fn translate_op_32(&mut self, funct3: u32, funct7: u32, rd: u8, rs1: u8, rs2: u8) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); }
+    fn translate_op_32(
+        &mut self,
+        funct3: u32,
+        funct7: u32,
+        rd: u8,
+        rs1: u8,
+        rs2: u8,
+    ) -> Result<(), TranspileError> {
+        if rd == 0 {
+            return Ok(());
+        }
 
         // Fuse load_imm + 32-bit ALU op: ADDW, MULW, SUB as negated ADD.
         if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take() {
@@ -1067,8 +1399,8 @@ impl TranslationContext {
 
                 if let Some(base) = fuse_base {
                     let pvm_imm_opcode = match (funct7, funct3) {
-                        (0, 0) => Some(131),  // ADDW → add_imm_32
-                        (1, 0) => Some(135),  // MULW → mul_imm_32
+                        (0, 0) => Some(131), // ADDW → add_imm_32
+                        (1, 0) => Some(135), // MULW → mul_imm_32
                         _ => None,
                     };
                     if let Some(pvm_opcode) = pvm_imm_opcode {
@@ -1138,7 +1470,8 @@ impl TranslationContext {
                 }
                 _ => {
                     return Err(TranspileError::UnsupportedInstruction {
-                        offset: 0, detail: format!("OP-32 x0-as-rs1: funct7={:#x} funct3={}", funct7, funct3),
+                        offset: 0,
+                        detail: format!("OP-32 x0-as-rs1: funct7={:#x} funct3={}", funct7, funct3),
                     });
                 }
             }
@@ -1163,7 +1496,8 @@ impl TranslationContext {
                 }
                 _ => {
                     return Err(TranspileError::UnsupportedInstruction {
-                        offset: 0, detail: format!("OP-32 x0-as-rs2: funct7={:#x} funct3={}", funct7, funct3),
+                        offset: 0,
+                        detail: format!("OP-32 x0-as-rs2: funct7={:#x} funct3={}", funct7, funct3),
                     });
                 }
             }
@@ -1180,36 +1514,61 @@ impl TranslationContext {
                 5 => 193, // DIVUW → div_u_32
                 6 => 196, // REMW → rem_s_32
                 7 => 195, // REMUW → rem_u_32
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("OP-32 M funct3={}", funct3),
-                }),
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("OP-32 M funct3={}", funct3),
+                    });
+                }
             }
         } else if funct7 == 0x20 {
             match funct3 {
                 0 => 191, // SUBW → sub_32
                 5 => 199, // SRAW → shar_r_32
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("OP-32 funct7=0x20 funct3={}", funct3),
-                }),
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("OP-32 funct7=0x20 funct3={}", funct3),
+                    });
+                }
             }
-        } else if funct7 == 0x30 { // Zbb rolw/rorw
-            let opc = match funct3 { 1 => 221, 5 => 223,
-                _ => return Err(TranspileError::UnsupportedInstruction { offset: 0, detail: format!("OP-32 f7=30 f3={}", funct3) }) };
-            self.emit_inst(opc); self.emit_data(pvm_rs1 | (pvm_rs2 << 4)); self.emit_data(pvm_rd); return Ok(());
-        } else if funct7 == 0x04 && funct3 == 4 { // Zbb zext.h
-            self.emit_inst(110); self.emit_data(pvm_rd | (pvm_rs1 << 4)); return Ok(());
+        } else if funct7 == 0x30 {
+            // Zbb rolw/rorw
+            let opc = match funct3 {
+                1 => 221,
+                5 => 223,
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("OP-32 f7=30 f3={}", funct3),
+                    });
+                }
+            };
+            self.emit_inst(opc);
+            self.emit_data(pvm_rs1 | (pvm_rs2 << 4));
+            self.emit_data(pvm_rd);
+            return Ok(());
+        } else if funct7 == 0x04 && funct3 == 4 {
+            // Zbb zext.h
+            self.emit_inst(110);
+            self.emit_data(pvm_rd | (pvm_rs1 << 4));
+            return Ok(());
         } else if funct7 == 0 {
             match funct3 {
                 0 => 190, // ADDW → add_32
                 1 => 197, // SLLW → shlo_l_32
                 5 => 198, // SRLW → shlo_r_32
-                _ => return Err(TranspileError::UnsupportedInstruction {
-                    offset: 0, detail: format!("OP-32 funct3={}", funct3),
-                }),
+                _ => {
+                    return Err(TranspileError::UnsupportedInstruction {
+                        offset: 0,
+                        detail: format!("OP-32 funct3={}", funct3),
+                    });
+                }
             }
         } else {
             return Err(TranspileError::UnsupportedInstruction {
-                offset: 0, detail: format!("OP-32 funct7={:#x} funct3={}", funct7, funct3),
+                offset: 0,
+                detail: format!("OP-32 funct7={:#x} funct3={}", funct7, funct3),
             });
         };
 
@@ -1253,10 +1612,15 @@ impl TranslationContext {
     /// encodings are automatically decoded correctly via sign extension.
     /// Compute the number of bytes needed for a variable-length immediate.
     fn var_imm_byte_count(imm: i32) -> usize {
-        if imm == 0 { 0 }
-        else if imm >= -128 && imm <= 127 { 1 }
-        else if imm >= -32768 && imm <= 32767 { 2 }
-        else { 4 }
+        if imm == 0 {
+            0
+        } else if imm >= -128 && imm <= 127 {
+            1
+        } else if imm >= -32768 && imm <= 32767 {
+            2
+        } else {
+            4
+        }
     }
 
     pub(crate) fn emit_var_imm(&mut self, imm: i32) {
@@ -1266,15 +1630,21 @@ impl TranslationContext {
             self.emit_data(imm as i8 as u8);
         } else if imm >= -32768 && imm <= 32767 {
             let bytes = (imm as i16).to_le_bytes();
-            for b in &bytes { self.emit_data(*b); }
+            for b in &bytes {
+                self.emit_data(*b);
+            }
         } else {
             let bytes = imm.to_le_bytes();
-            for b in &bytes { self.emit_data(*b); }
+            for b in &bytes {
+                self.emit_data(*b);
+            }
         }
     }
 
     pub(crate) fn emit_load_imm(&mut self, rd: u8, imm: i64) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); } // Write to zero register is nop
+        if rd == 0 {
+            return Ok(());
+        } // Write to zero register is nop
         let pvm_rd = self.require_reg(rd)?;
 
         if imm >= i32::MIN as i64 && imm <= i32::MAX as i64 {
@@ -1330,7 +1700,12 @@ impl TranslationContext {
     /// Emit a function call: load return address into rd and jump to target.
     /// Uses load_imm_jump (opcode 80) to fuse into a single PVM instruction,
     /// saving one instruction per call site.
-    pub(crate) fn emit_call(&mut self, rd: u8, rv_ret_addr: u64, target: u64) -> Result<(), TranspileError> {
+    pub(crate) fn emit_call(
+        &mut self,
+        rd: u8,
+        rv_ret_addr: u64,
+        target: u64,
+    ) -> Result<(), TranspileError> {
         if rd == 0 {
             // No return address needed — just jump
             self.emit_jump(target);
@@ -1345,8 +1720,14 @@ impl TranslationContext {
 
     /// Emit a return address via jump table entry (without jump).
     /// Used when the jump is emitted separately (e.g., for indirect calls).
-    pub(crate) fn emit_return_address_jt(&mut self, rd: u8, rv_ret_addr: u64) -> Result<(), TranspileError> {
-        if rd == 0 { return Ok(()); }
+    pub(crate) fn emit_return_address_jt(
+        &mut self,
+        rd: u8,
+        rv_ret_addr: u64,
+    ) -> Result<(), TranspileError> {
+        if rd == 0 {
+            return Ok(());
+        }
         let jt_idx = self.jump_table.len();
         self.jump_table.push(0); // placeholder
         self.return_fixups.push((jt_idx, rv_ret_addr));
@@ -1419,14 +1800,22 @@ impl TranslationContext {
         // PC-relative fixups (branches, jumps)
         for (pvm_offset, rv_target, size) in self.fixups.drain(..).collect::<Vec<_>>() {
             if let Some(&pvm_target) = self.address_map.get(&rv_target) {
-                let inst_pc = self.fixup_pcs.get(&pvm_offset).copied().unwrap_or(pvm_offset as u32 - 1);
+                let inst_pc = self
+                    .fixup_pcs
+                    .get(&pvm_offset)
+                    .copied()
+                    .unwrap_or(pvm_offset as u32 - 1);
                 let relative = (pvm_target as i64 - inst_pc as i64) as i32;
                 let bytes = relative.to_le_bytes();
                 for i in 0..size as usize {
                     self.code[pvm_offset + i] = bytes[i];
                 }
             } else {
-                tracing::warn!("unresolved fixup: rv_target={:#x}, pvm_offset={}", rv_target, pvm_offset);
+                tracing::warn!(
+                    "unresolved fixup: rv_target={:#x}, pvm_offset={}",
+                    rv_target,
+                    pvm_offset
+                );
             }
         }
 
@@ -1449,7 +1838,11 @@ fn decode_j_imm(inst: u32) -> i32 {
     let imm19_12 = (inst >> 12) & 0xFF;
     let imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
     // Sign extend from bit 20
-    if imm20 != 0 { (imm | 0xFFE00000) as i32 } else { imm as i32 }
+    if imm20 != 0 {
+        (imm | 0xFFE00000) as i32
+    } else {
+        imm as i32
+    }
 }
 
 fn decode_b_imm(inst: u32) -> i32 {
@@ -1458,14 +1851,22 @@ fn decode_b_imm(inst: u32) -> i32 {
     let imm4_1 = (inst >> 8) & 0xF;
     let imm11 = (inst >> 7) & 1;
     let imm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
-    if imm12 != 0 { (imm | 0xFFFFE000) as i32 } else { imm as i32 }
+    if imm12 != 0 {
+        (imm | 0xFFFFE000) as i32
+    } else {
+        imm as i32
+    }
 }
 
 fn decode_s_imm(inst: u32) -> i32 {
     let imm11_5 = (inst >> 25) & 0x7F;
     let imm4_0 = (inst >> 7) & 0x1F;
     let imm = (imm11_5 << 5) | imm4_0;
-    if imm11_5 & 0x40 != 0 { (imm | 0xFFFFF000) as i32 } else { imm as i32 }
+    if imm11_5 & 0x40 != 0 {
+        (imm | 0xFFFFF000) as i32
+    } else {
+        imm as i32
+    }
 }
 
 #[cfg(test)]

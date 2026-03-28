@@ -16,7 +16,7 @@
 //! The interpreter benchmarks also re-parse the blob each iteration for the same
 //! reason.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use grey_bench::*;
 
 const GAS_LIMIT: u64 = 100_000_000;
@@ -45,8 +45,7 @@ fn run_grey_interpreter(blob: &[u8]) -> (u64, u64) {
 // ---------------------------------------------------------------------------
 
 fn run_grey_recompiler(blob: &[u8]) -> (u64, u64) {
-    let mut pvm =
-        javm::recompiler::initialize_program_recompiled(blob, &[], GAS_LIMIT).unwrap();
+    let mut pvm = javm::recompiler::initialize_program_recompiled(blob, &[], GAS_LIMIT).unwrap();
     loop {
         match pvm.run() {
             javm::ExitReason::Halt => break,
@@ -63,7 +62,9 @@ fn run_grey_recompiler(blob: &[u8]) -> (u64, u64) {
 // PolkaVM runners
 // ---------------------------------------------------------------------------
 
-use polkavm::{BackendKind, Config, Engine, GasMeteringKind, InterruptKind, Module, ModuleConfig, SandboxKind};
+use polkavm::{
+    BackendKind, Config, Engine, GasMeteringKind, InterruptKind, Module, ModuleConfig, SandboxKind,
+};
 use polkavm_common::program::Reg as PReg;
 
 fn polkavm_config(backend: BackendKind) -> Config {
@@ -278,21 +279,17 @@ fn bench_ecrecover(c: &mut Criterion) {
     // Native baseline: run k256 ecrecover directly on the host CPU
     group.bench_function("native", |b| {
         b.iter(|| {
-            use k256::ecdsa::{Signature, RecoveryId, VerifyingKey};
+            use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
             let msg: [u8; 32] = [
-                0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-                0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
-                0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-                0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+                0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+                0x66, 0x77, 0x88, 0x99,
             ];
             let sig_bytes: [u8; 64] = [
-                0xff, 0x65, 0x1c, 0x65, 0xee, 0xde, 0xd4, 0x63,
-                0x83, 0xa4, 0xbd, 0xcd, 0x91, 0x70, 0xff, 0x65,
-                0x9a, 0x4f, 0x61, 0x7b, 0xb6, 0x58, 0xa4, 0x6d,
-                0xd4, 0x56, 0xc5, 0x1e, 0xc8, 0xcc, 0x21, 0x1a,
-                0x7d, 0xc4, 0xde, 0x91, 0xd0, 0xc8, 0x47, 0xbf,
-                0x5d, 0xef, 0x99, 0x5b, 0xd0, 0x43, 0x65, 0x81,
-                0x36, 0xfe, 0x21, 0x35, 0xaf, 0xe6, 0x92, 0x82,
+                0xff, 0x65, 0x1c, 0x65, 0xee, 0xde, 0xd4, 0x63, 0x83, 0xa4, 0xbd, 0xcd, 0x91, 0x70,
+                0xff, 0x65, 0x9a, 0x4f, 0x61, 0x7b, 0xb6, 0x58, 0xa4, 0x6d, 0xd4, 0x56, 0xc5, 0x1e,
+                0xc8, 0xcc, 0x21, 0x1a, 0x7d, 0xc4, 0xde, 0x91, 0xd0, 0xc8, 0x47, 0xbf, 0x5d, 0xef,
+                0x99, 0x5b, 0xd0, 0x43, 0x65, 0x81, 0x36, 0xfe, 0x21, 0x35, 0xaf, 0xe6, 0x92, 0x82,
                 0xf7, 0xde, 0x87, 0x39, 0x90, 0xda, 0xcb, 0x77,
             ];
             let sig = Signature::from_slice(&sig_bytes).unwrap();
@@ -304,9 +301,8 @@ fn bench_ecrecover(c: &mut Criterion) {
 
     group.bench_function("grey-interpreter", |b| {
         b.iter(|| {
-            let mut pvm = javm::program::initialize_program(
-                &grey_blob, &[], ecrecover_gas,
-            ).unwrap();
+            let mut pvm =
+                javm::program::initialize_program(&grey_blob, &[], ecrecover_gas).unwrap();
             loop {
                 let (exit, _) = pvm.run();
                 match exit {
@@ -321,9 +317,9 @@ fn bench_ecrecover(c: &mut Criterion) {
 
     group.bench_function("grey-recompiler", |b| {
         b.iter(|| {
-            let mut pvm = javm::recompiler::initialize_program_recompiled(
-                &grey_blob, &[], ecrecover_gas,
-            ).unwrap();
+            let mut pvm =
+                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                    .unwrap();
             loop {
                 match pvm.run() {
                     javm::ExitReason::Halt | javm::ExitReason::Panic => break,
@@ -339,9 +335,8 @@ fn bench_ecrecover(c: &mut Criterion) {
     group.bench_function("grey-recompiler-compile", |b| {
         b.iter(|| {
             std::hint::black_box(
-                javm::recompiler::initialize_program_recompiled(
-                    &grey_blob, &[], ecrecover_gas,
-                ).unwrap()
+                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                    .unwrap(),
             );
         })
     });
@@ -350,9 +345,10 @@ fn bench_ecrecover(c: &mut Criterion) {
     // Separates JIT compilation time from execution time.
     group.bench_function("grey-recompiler-exec", |b| {
         b.iter_batched(
-            || javm::recompiler::initialize_program_recompiled(
-                &grey_blob, &[], ecrecover_gas,
-            ).unwrap(),
+            || {
+                javm::recompiler::initialize_program_recompiled(&grey_blob, &[], ecrecover_gas)
+                    .unwrap()
+            },
             |mut pvm| {
                 loop {
                     match pvm.run() {
@@ -454,5 +450,11 @@ fn bench_ecrecover(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_fib, bench_hostcall, bench_sort, bench_ecrecover);
+criterion_group!(
+    benches,
+    bench_fib,
+    bench_hostcall,
+    bench_sort,
+    bench_ecrecover
+);
 criterion_main!(benches);

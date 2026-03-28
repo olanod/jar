@@ -122,13 +122,8 @@ impl BandersnatchKeypair {
 
         // Serialize: [32-byte output | ring proof]
         let mut result = Vec::new();
-        output
-            .0
-            .serialize_compressed(&mut result)
-            .ok()?;
-        proof
-            .serialize_compressed(&mut result)
-            .ok()?;
+        output.0.serialize_compressed(&mut result).ok()?;
+        proof.serialize_compressed(&mut result).ok()?;
 
         Some(result)
     }
@@ -364,12 +359,15 @@ mod tests {
         .collect();
 
         let commitment = compute_ring_commitment(&keys);
-        let expected = hex_to_bytes("af39b7de5fcfb9fb8a46b1645310529ce7d08af7301d9758249da4724ec698eb127f489b58e49ae9ab85027509116962a135fc4d97b66fbbed1d3df88cd7bf5cc6e5d7391d261a4b552246648defcb64ad440d61d69ec61b5473506a48d58e1992e630ae2b14e758ab0960e372172203f4c9a41777dadd529971d7ab9d23ab29fe0e9c85ec450505dde7f5ac038274cf");
+        let expected = hex_to_bytes(
+            "af39b7de5fcfb9fb8a46b1645310529ce7d08af7301d9758249da4724ec698eb127f489b58e49ae9ab85027509116962a135fc4d97b66fbbed1d3df88cd7bf5cc6e5d7391d261a4b552246648defcb64ad440d61d69ec61b5473506a48d58e1992e630ae2b14e758ab0960e372172203f4c9a41777dadd529971d7ab9d23ab29fe0e9c85ec450505dde7f5ac038274cf",
+        );
         let mut expected_arr = [0u8; 144];
         expected_arr.copy_from_slice(&expected);
 
         assert_eq!(
-            commitment, expected_arr,
+            commitment,
+            expected_arr,
             "Ring commitment mismatch.\nGot:      {}\nExpected: {}",
             hex::encode(&commitment),
             hex::encode(expected_arr)

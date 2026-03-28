@@ -130,13 +130,11 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
         return None;
     }
 
-    let page_round = |x: u32| -> u32 {
-        ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE
-    };
+    let page_round = |x: u32| -> u32 { ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
 
     // Linear layout: stack | args | roData | rwData | heap
-    let s = page_round(stack_size);              // stack: [0, s)
-    let arg_start = s;                            // args:  [s, s + P(|a|))
+    let s = page_round(stack_size); // stack: [0, s)
+    let arg_start = s; // args:  [s, s + P(|a|))
     let ro_start = arg_start + page_round(arguments.len() as u32);
     let rw_start = ro_start + page_round(ro_size);
     let heap_start = rw_start + page_round(rw_size);
@@ -151,7 +149,8 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
     // Build flat memory buffer
     let mut flat_mem = vec![0u8; mem_size as usize];
     if !arguments.is_empty() {
-        flat_mem[arg_start as usize..arg_start as usize + arguments.len()].copy_from_slice(arguments);
+        flat_mem[arg_start as usize..arg_start as usize + arguments.len()]
+            .copy_from_slice(arguments);
     }
     if !ro_data.is_empty() {
         flat_mem[ro_start as usize..ro_start as usize + ro_data.len()].copy_from_slice(ro_data);
@@ -163,14 +162,24 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
     // Registers (JAR v0.8.0 linear)
     let mut registers = [0u64; 13];
     let halt_addr: u64 = (1u64 << 32) - (1u64 << 16); // 0xFFFF0000
-    registers[0] = halt_addr;                 // φ[0]: RA (halt address for top-level return)
-    registers[1] = s as u64;                  // φ[1]: SP (top of stack)
-    registers[7] = arg_start as u64;          // φ[7]: argument base
-    registers[8] = arguments.len() as u64;    // φ[8]: argument length
+    registers[0] = halt_addr; // φ[0]: RA (halt address for top-level return)
+    registers[1] = s as u64; // φ[1]: SP (top of stack)
+    registers[7] = arg_start as u64; // φ[7]: argument base
+    registers[8] = arguments.len() as u64; // φ[8]: argument length
 
     tracing::info!(
         "PVM init (linear): stack=[0,{:#x}), args={:#x}+{}, ro={:#x}+{}, rw={:#x}+{}, heap={:#x}..{:#x}, SP={:#x}, RA={:#x}",
-        s, arg_start, arguments.len(), ro_start, ro_size, rw_start, rw_size, heap_start, heap_end, registers[1], registers[0]
+        s,
+        arg_start,
+        arguments.len(),
+        ro_start,
+        ro_size,
+        rw_start,
+        rw_size,
+        heap_start,
+        heap_end,
+        registers[1],
+        registers[0]
     );
 
     let mut pvm = Pvm::new(code.to_vec(), bitmask, jump_table, registers, flat_mem, gas);
@@ -205,7 +214,11 @@ pub struct ParsedProgram<'a> {
 }
 
 /// Parse a program blob into raw components without building a full Pvm.
-pub fn parse_program_blob<'a>(program_blob: &'a [u8], arguments: &[u8], _gas: Gas) -> Option<ParsedProgram<'a>> {
+pub fn parse_program_blob<'a>(
+    program_blob: &'a [u8],
+    arguments: &[u8],
+    _gas: Gas,
+) -> Option<ParsedProgram<'a>> {
     let blob = skip_metadata(program_blob);
 
     if blob.len() < 15 {
@@ -218,16 +231,22 @@ pub fn parse_program_blob<'a>(program_blob: &'a [u8], arguments: &[u8], _gas: Ga
     let heap_pages = read_le_u16(blob, &mut offset)? as u32;
     let stack_size = read_le_u24(blob, &mut offset)? as u32;
 
-    if offset + ro_size as usize > blob.len() { return None; }
+    if offset + ro_size as usize > blob.len() {
+        return None;
+    }
     let ro_data = &blob[offset..offset + ro_size as usize];
     offset += ro_size as usize;
 
-    if offset + rw_size as usize > blob.len() { return None; }
+    if offset + rw_size as usize > blob.len() {
+        return None;
+    }
     let rw_data = &blob[offset..offset + rw_size as usize];
     offset += rw_size as usize;
 
     let code_len = read_le_u32(blob, &mut offset)? as usize;
-    if offset + code_len > blob.len() { return None; }
+    if offset + code_len > blob.len() {
+        return None;
+    }
     let program_data = &blob[offset..offset + code_len];
     let (code, bitmask, jump_table) = deblob(program_data)?;
 
@@ -235,9 +254,7 @@ pub fn parse_program_blob<'a>(program_blob: &'a [u8], arguments: &[u8], _gas: Ga
         return None;
     }
 
-    let page_round = |x: u32| -> u32 {
-        ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE
-    };
+    let page_round = |x: u32| -> u32 { ((x + PVM_PAGE_SIZE - 1) / PVM_PAGE_SIZE) * PVM_PAGE_SIZE };
 
     let s = page_round(stack_size);
     let arg_start = s;
@@ -247,7 +264,9 @@ pub fn parse_program_blob<'a>(program_blob: &'a [u8], arguments: &[u8], _gas: Ga
     let heap_end = heap_start + heap_pages * PVM_PAGE_SIZE;
     let mem_size = heap_end;
 
-    if (mem_size as u64) > (1u64 << 32) { return None; }
+    if (mem_size as u64) > (1u64 << 32) {
+        return None;
+    }
 
     let layout = DataLayout {
         mem_size,
@@ -261,13 +280,16 @@ pub fn parse_program_blob<'a>(program_blob: &'a [u8], arguments: &[u8], _gas: Ga
 
     let mut registers = [0u64; crate::PVM_REGISTER_COUNT];
     let halt_addr: u64 = (1u64 << 32) - (1u64 << 16); // 0xFFFF0000
-    registers[0] = halt_addr;                 // φ[0]: RA
-    registers[1] = s as u64;                  // φ[1]: SP
+    registers[0] = halt_addr; // φ[0]: RA
+    registers[1] = s as u64; // φ[1]: SP
     registers[7] = arg_start as u64;
     registers[8] = arguments.len() as u64;
 
     Some(ParsedProgram {
-        code, bitmask, jump_table, registers,
+        code,
+        bitmask,
+        jump_table,
+        registers,
         heap_base: heap_start,
         heap_top: heap_end,
         layout: Some(layout),
@@ -303,7 +325,6 @@ fn validate_basic_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> boo
     }
     true
 }
-
 
 /// Decode a variable-length natural number (JAM codec format).
 /// Returns (value, bytes_consumed) or None.
@@ -344,8 +365,6 @@ fn decode_natural(data: &[u8], offset: usize) -> Option<(usize, usize)> {
         Some((val, 4))
     }
 }
-
-
 
 fn read_le_u16(data: &[u8], offset: &mut usize) -> Option<u16> {
     if *offset + 2 > data.len() {
@@ -396,7 +415,9 @@ fn read_le_u24(data: &[u8], offset: &mut usize) -> Option<u32> {
     if *offset + 3 > data.len() {
         return None;
     }
-    let val = data[*offset] as u32 | ((data[*offset + 1] as u32) << 8) | ((data[*offset + 2] as u32) << 16);
+    let val = data[*offset] as u32
+        | ((data[*offset + 1] as u32) << 8)
+        | ((data[*offset + 2] as u32) << 16);
     *offset += 3;
     Some(val)
 }

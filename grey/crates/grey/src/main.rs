@@ -100,7 +100,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Sequential test mode (no networking)
     if cli.test {
-        tracing::info!("Running sequential block production test with {} blocks", cli.test_blocks);
+        tracing::info!(
+            "Running sequential block production test with {} blocks",
+            cli.test_blocks
+        );
         match testnet::run_sequential_test(cli.test_blocks) {
             Ok(result) => {
                 println!();
@@ -108,9 +111,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("  Blocks produced: {}", result.blocks_produced);
                 println!("  Finalized up to slot: {}", result.finalized_slot);
                 println!("  Final state timeslot: {}", result.final_timeslot);
-                println!("  Work packages submitted: {}", result.work_packages_submitted);
-                println!("  Work packages accumulated: {}", result.work_packages_accumulated);
-                println!("  Authors: {:?}", result.slot_authors.iter().map(|(s, a)| format!("slot{}->v{}", s, a)).collect::<Vec<_>>());
+                println!(
+                    "  Work packages submitted: {}",
+                    result.work_packages_submitted
+                );
+                println!(
+                    "  Work packages accumulated: {}",
+                    result.work_packages_accumulated
+                );
+                println!(
+                    "  Authors: {:?}",
+                    result
+                        .slot_authors
+                        .iter()
+                        .map(|(s, a)| format!("slot{}->v{}", s, a))
+                        .collect::<Vec<_>>()
+                );
                 return Ok(());
             }
             Err(e) => {
@@ -166,7 +182,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     if cli.validator_index >= config.validators_count {
         tracing::error!(
             "Validator index {} >= V={}",
-            cli.validator_index, config.validators_count
+            cli.validator_index,
+            config.validators_count
         );
         std::process::exit(1);
     }

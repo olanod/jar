@@ -107,8 +107,13 @@ impl Pvm {
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
         let gas_block_starts = compute_gas_block_starts(&code, &bitmask);
         let block_gas_costs = compute_block_gas_costs(&code, &bitmask, &gas_block_starts);
-        let (decoded_insts, pc_to_idx) =
-            predecode_instructions(&code, &bitmask, &basic_block_starts, &gas_block_starts, &block_gas_costs);
+        let (decoded_insts, pc_to_idx) = predecode_instructions(
+            &code,
+            &bitmask,
+            &basic_block_starts,
+            &gas_block_starts,
+            &block_gas_costs,
+        );
         Self {
             gas,
             registers,
@@ -130,7 +135,12 @@ impl Pvm {
     }
 
     /// Create a simple PVM for testing (code only, trivial bitmask).
-    pub fn new_simple(code: Vec<u8>, registers: [u64; PVM_REGISTER_COUNT], flat_mem: Vec<u8>, gas: Gas) -> Self {
+    pub fn new_simple(
+        code: Vec<u8>,
+        registers: [u64; PVM_REGISTER_COUNT],
+        flat_mem: Vec<u8>,
+        gas: Gas,
+    ) -> Self {
         // Build a bitmask where every byte is marked as an instruction start
         // This is a simplified mode; real programs use deblob.
         let bitmask = vec![1u8; code.len()];
@@ -187,7 +197,9 @@ impl Pvm {
     pub fn write_u8(&mut self, addr: u32, val: u8) -> bool {
         let a = addr as usize;
         if a < self.flat_mem.len() {
-            unsafe { *self.flat_mem.get_unchecked_mut(a) = val; }
+            unsafe {
+                *self.flat_mem.get_unchecked_mut(a) = val;
+            }
             true
         } else {
             false
@@ -198,7 +210,13 @@ impl Pvm {
     fn write_u16_le(&mut self, addr: u32, val: u16) -> bool {
         let a = addr as usize;
         if a + 2 <= self.flat_mem.len() {
-            unsafe { self.flat_mem.as_mut_ptr().add(a).cast::<u16>().write_unaligned(val); }
+            unsafe {
+                self.flat_mem
+                    .as_mut_ptr()
+                    .add(a)
+                    .cast::<u16>()
+                    .write_unaligned(val);
+            }
             true
         } else {
             false
@@ -209,7 +227,13 @@ impl Pvm {
     fn write_u32_le(&mut self, addr: u32, val: u32) -> bool {
         let a = addr as usize;
         if a + 4 <= self.flat_mem.len() {
-            unsafe { self.flat_mem.as_mut_ptr().add(a).cast::<u32>().write_unaligned(val); }
+            unsafe {
+                self.flat_mem
+                    .as_mut_ptr()
+                    .add(a)
+                    .cast::<u32>()
+                    .write_unaligned(val);
+            }
             true
         } else {
             false
@@ -220,7 +244,13 @@ impl Pvm {
     fn write_u64_le(&mut self, addr: u32, val: u64) -> bool {
         let a = addr as usize;
         if a + 8 <= self.flat_mem.len() {
-            unsafe { self.flat_mem.as_mut_ptr().add(a).cast::<u64>().write_unaligned(val); }
+            unsafe {
+                self.flat_mem
+                    .as_mut_ptr()
+                    .add(a)
+                    .cast::<u64>()
+                    .write_unaligned(val);
+            }
             true
         } else {
             false
@@ -352,7 +382,9 @@ impl Pvm {
         match opcode {
             // === A.5.1: No arguments ===
             Opcode::Trap => return Some(ExitReason::Panic),
-            Opcode::Fallthrough | Opcode::Unlikely => { self.pc = next_pc; }
+            Opcode::Fallthrough | Opcode::Unlikely => {
+                self.pc = next_pc;
+            }
 
             // === A.5.2: One immediate ===
             Opcode::Ecalli => {
@@ -376,32 +408,44 @@ impl Pvm {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    if self.write_u8(addr, imm_y as u8) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u8(addr, imm_y as u8) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmU16 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    if self.write_u16_le(addr, imm_y as u16) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u16_le(addr, imm_y as u16) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmU32 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    if self.write_u32_le(addr, imm_y as u32) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u32_le(addr, imm_y as u32) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmU64 => {
                 if let Args::TwoImm { imm_x, imm_y } = args {
                     let addr = imm_x as u32;
 
-                    if self.write_u64_le(addr, imm_y) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u64_le(addr, imm_y) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
 
@@ -409,7 +453,9 @@ impl Pvm {
             Opcode::Jump => {
                 if let Args::Offset { offset } = args {
                     let (exit, new_pc) = self.branch(offset, true, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -419,7 +465,9 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = self.registers[ra].wrapping_add(imm) % (1u64 << 32);
                     let (exit, new_pc) = self.djump(addr);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -434,7 +482,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -444,7 +495,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i8 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -454,7 +508,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -464,7 +521,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i16 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -474,7 +534,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -484,7 +547,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i32 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -494,7 +560,10 @@ impl Pvm {
                     let addr = imm as u32;
 
                     match self.read_u64_le(addr) {
-                        Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -503,32 +572,44 @@ impl Pvm {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    if self.write_u8(addr, self.registers[ra] as u8) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u8(addr, self.registers[ra] as u8) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreU16 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    if self.write_u16_le(addr, self.registers[ra] as u16) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u16_le(addr, self.registers[ra] as u16) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreU32 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    if self.write_u32_le(addr, self.registers[ra] as u32) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u32_le(addr, self.registers[ra] as u32) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreU64 => {
                 if let Args::RegImm { ra, imm } = args {
                     let addr = imm as u32;
 
-                    if self.write_u64_le(addr, self.registers[ra]) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u64_le(addr, self.registers[ra]) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
 
@@ -537,32 +618,44 @@ impl Pvm {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    if self.write_u8(addr, imm_y as u8) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u8(addr, imm_y as u8) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmIndU16 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    if self.write_u16_le(addr, imm_y as u16) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u16_le(addr, imm_y as u16) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmIndU32 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    if self.write_u32_le(addr, imm_y as u32) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u32_le(addr, imm_y as u32) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreImmIndU64 => {
                 if let Args::RegTwoImm { ra, imm_x, imm_y } = args {
                     let addr = self.registers[ra].wrapping_add(imm_x) as u32;
 
-                    if self.write_u64_le(addr, imm_y) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u64_le(addr, imm_y) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
 
@@ -571,7 +664,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     self.registers[ra] = imm;
                     let (exit, new_pc) = self.branch(offset, true, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -579,7 +674,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] == imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -587,7 +684,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] != imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -595,7 +694,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] < imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -603,7 +704,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] <= imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -611,7 +714,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] >= imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -619,7 +724,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = self.registers[ra] > imm;
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -627,7 +734,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = (self.registers[ra] as i64) < (imm as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -635,7 +744,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = (self.registers[ra] as i64) <= (imm as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -643,7 +754,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = (self.registers[ra] as i64) >= (imm as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -651,7 +764,9 @@ impl Pvm {
                 if let Args::RegImmOffset { ra, imm, offset } = args {
                     let cond = (self.registers[ra] as i64) > (imm as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -733,32 +848,44 @@ impl Pvm {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    if self.write_u8(addr, self.registers[ra] as u8) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u8(addr, self.registers[ra] as u8) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreIndU16 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    if self.write_u16_le(addr, self.registers[ra] as u16) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u16_le(addr, self.registers[ra] as u16) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreIndU32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    if self.write_u32_le(addr, self.registers[ra] as u32) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u32_le(addr, self.registers[ra] as u32) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::StoreIndU64 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
-                    if self.write_u64_le(addr, self.registers[ra]) { self.pc = next_pc; }
-                    else { return Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if self.write_u64_le(addr, self.registers[ra]) {
+                        self.pc = next_pc;
+                    } else {
+                        return Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
             }
             Opcode::LoadIndU8 => {
@@ -766,7 +893,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -776,7 +906,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as i8 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i8 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -786,7 +919,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -796,7 +932,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i16 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i16 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -806,7 +945,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -816,7 +958,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i32 as i64 as u64; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v as i32 as i64 as u64;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -826,7 +971,10 @@ impl Pvm {
                     let addr = self.registers[rb].wrapping_add(imm) as u32;
 
                     match self.read_u64_le(addr) {
-                        Some(v) => { self.registers[ra] = v; self.pc = next_pc; }
+                        Some(v) => {
+                            self.registers[ra] = v;
+                            self.pc = next_pc;
+                        }
                         None => return Some(ExitReason::PageFault(addr & !0xFFF)),
                     }
                 }
@@ -876,14 +1024,18 @@ impl Pvm {
             Opcode::ShloLImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let shift = (imm % 32) as u32;
-                    self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).wrapping_shl(shift) as u64);
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).wrapping_shl(shift) as u64,
+                    );
                     self.pc = next_pc;
                 }
             }
             Opcode::ShloRImm32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let shift = (imm % 32) as u32;
-                    self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).wrapping_shr(shift) as u64);
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).wrapping_shr(shift) as u64,
+                    );
                     self.pc = next_pc;
                 }
             }
@@ -919,14 +1071,16 @@ impl Pvm {
             Opcode::ShloLImmAlt32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let shift = (self.registers[rb] % 32) as u32;
-                    self.registers[ra] = args::sign_extend_32((imm as u32).wrapping_shl(shift) as u64);
+                    self.registers[ra] =
+                        args::sign_extend_32((imm as u32).wrapping_shl(shift) as u64);
                     self.pc = next_pc;
                 }
             }
             Opcode::ShloRImmAlt32 => {
                 if let Args::TwoRegImm { ra, rb, imm } = args {
                     let shift = (self.registers[rb] % 32) as u32;
-                    self.registers[ra] = args::sign_extend_32((imm as u32).wrapping_shr(shift) as u64);
+                    self.registers[ra] =
+                        args::sign_extend_32((imm as u32).wrapping_shr(shift) as u64);
                     self.pc = next_pc;
                 }
             }
@@ -1048,7 +1202,9 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = self.registers[ra] == self.registers[rb];
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1056,7 +1212,9 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = self.registers[ra] != self.registers[rb];
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1064,7 +1222,9 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = self.registers[ra] < self.registers[rb];
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1072,7 +1232,9 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = (self.registers[ra] as i64) < (self.registers[rb] as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1080,7 +1242,9 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = self.registers[ra] >= self.registers[rb];
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1088,18 +1252,28 @@ impl Pvm {
                 if let Args::TwoRegOffset { ra, rb, offset } = args {
                     let cond = (self.registers[ra] as i64) >= (self.registers[rb] as i64);
                     let (exit, new_pc) = self.branch(offset, cond, next_pc);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
 
             // === A.5.12: Two registers + two immediates ===
             Opcode::LoadImmJumpInd => {
-                if let Args::TwoRegTwoImm { ra, rb, imm_x, imm_y } = args {
+                if let Args::TwoRegTwoImm {
+                    ra,
+                    rb,
+                    imm_x,
+                    imm_y,
+                } = args
+                {
                     self.registers[ra] = imm_x;
                     let addr = self.registers[rb].wrapping_add(imm_y) % (1u64 << 32);
                     let (exit, new_pc) = self.djump(addr);
-                    if let Some(e) = exit { return Some(e); }
+                    if let Some(e) = exit {
+                        return Some(e);
+                    }
                     self.pc = new_pc;
                 }
             }
@@ -1107,7 +1281,8 @@ impl Pvm {
             // === A.5.13: Three registers ===
             Opcode::Add32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-                    self.registers[rd] = args::sign_extend_32(self.registers[ra].wrapping_add(self.registers[rb]));
+                    self.registers[rd] =
+                        args::sign_extend_32(self.registers[ra].wrapping_add(self.registers[rb]));
                     self.pc = next_pc;
                 }
             }
@@ -1121,7 +1296,8 @@ impl Pvm {
             }
             Opcode::Mul32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-                    self.registers[rd] = args::sign_extend_32(self.registers[ra].wrapping_mul(self.registers[rb]));
+                    self.registers[rd] =
+                        args::sign_extend_32(self.registers[ra].wrapping_mul(self.registers[rb]));
                     self.pc = next_pc;
                 }
             }
@@ -1187,14 +1363,18 @@ impl Pvm {
             Opcode::ShloL32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
                     let shift = (self.registers[rb] % 32) as u32;
-                    self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).wrapping_shl(shift) as u64);
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).wrapping_shl(shift) as u64,
+                    );
                     self.pc = next_pc;
                 }
             }
             Opcode::ShloR32 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
                     let shift = (self.registers[rb] % 32) as u32;
-                    self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).wrapping_shr(shift) as u64);
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).wrapping_shr(shift) as u64,
+                    );
                     self.pc = next_pc;
                 }
             }
@@ -1345,7 +1525,8 @@ impl Pvm {
             }
             Opcode::SetLtS => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-                    self.registers[rd] = ((self.registers[ra] as i64) < (self.registers[rb] as i64)) as u64;
+                    self.registers[rd] =
+                        ((self.registers[ra] as i64) < (self.registers[rb] as i64)) as u64;
                     self.pc = next_pc;
                 }
             }
@@ -1367,7 +1548,8 @@ impl Pvm {
             }
             Opcode::RotL64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-                    self.registers[rd] = self.registers[ra].rotate_left((self.registers[rb] % 64) as u32);
+                    self.registers[rd] =
+                        self.registers[ra].rotate_left((self.registers[rb] % 64) as u32);
                     self.pc = next_pc;
                 }
             }
@@ -1381,7 +1563,8 @@ impl Pvm {
             }
             Opcode::RotR64 => {
                 if let Args::ThreeReg { ra, rb, rd } = args {
-                    self.registers[rd] = self.registers[ra].rotate_right((self.registers[rb] % 64) as u32);
+                    self.registers[rd] =
+                        self.registers[ra].rotate_right((self.registers[rb] % 64) as u32);
                     self.pc = next_pc;
                 }
             }
@@ -1503,7 +1686,9 @@ impl Pvm {
 
             match inst.opcode {
                 // === No arguments ===
-                Opcode::Trap => { exit = Some(ExitReason::Panic); }
+                Opcode::Trap => {
+                    exit = Some(ExitReason::Panic);
+                }
                 Opcode::Fallthrough | Opcode::Unlikely => {}
 
                 // === One immediate ===
@@ -1513,7 +1698,9 @@ impl Pvm {
                 }
 
                 // === One register + extended immediate ===
-                Opcode::LoadImm64 => { self.registers[ra] = imm1; }
+                Opcode::LoadImm64 => {
+                    self.registers[ra] = imm1;
+                }
 
                 // === One offset (jump) ===
                 Opcode::Jump => {
@@ -1534,183 +1721,453 @@ impl Pvm {
                         let t = target_pc as usize;
                         if t < self.pc_to_idx.len() {
                             let tidx = self.pc_to_idx[t];
-                            if tidx != u32::MAX { branch_idx = tidx; }
-                            else { exit = Some(ExitReason::Panic); }
-                        } else { exit = Some(ExitReason::Panic); }
+                            if tidx != u32::MAX {
+                                branch_idx = tidx;
+                            } else {
+                                exit = Some(ExitReason::Panic);
+                            }
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
-                Opcode::LoadImm => { self.registers[ra] = imm1; }
+                Opcode::LoadImm => {
+                    self.registers[ra] = imm1;
+                }
 
                 // === Two registers ===
-                Opcode::MoveReg => { self.registers[rd] = self.registers[ra]; }
+                Opcode::MoveReg => {
+                    self.registers[rd] = self.registers[ra];
+                }
                 Opcode::Sbrk => {
                     // JAR v0.8.0: sbrk removed
                     exit = Some(ExitReason::Panic);
                 }
-                Opcode::CountSetBits64 => { self.registers[rd] = self.registers[ra].count_ones() as u64; }
-                Opcode::CountSetBits32 => { self.registers[rd] = (self.registers[ra] as u32).count_ones() as u64; }
-                Opcode::LeadingZeroBits64 => { self.registers[rd] = self.registers[ra].leading_zeros() as u64; }
-                Opcode::LeadingZeroBits32 => { self.registers[rd] = (self.registers[ra] as u32).leading_zeros() as u64; }
-                Opcode::TrailingZeroBits64 => { self.registers[rd] = self.registers[ra].trailing_zeros() as u64; }
-                Opcode::TrailingZeroBits32 => { self.registers[rd] = (self.registers[ra] as u32).trailing_zeros() as u64; }
-                Opcode::SignExtend8 => { self.registers[rd] = self.registers[ra] as u8 as i8 as i64 as u64; }
-                Opcode::SignExtend16 => { self.registers[rd] = self.registers[ra] as u16 as i16 as i64 as u64; }
-                Opcode::ZeroExtend16 => { self.registers[rd] = self.registers[ra] as u16 as u64; }
-                Opcode::ReverseBytes => { self.registers[rd] = self.registers[ra].swap_bytes(); }
+                Opcode::CountSetBits64 => {
+                    self.registers[rd] = self.registers[ra].count_ones() as u64;
+                }
+                Opcode::CountSetBits32 => {
+                    self.registers[rd] = (self.registers[ra] as u32).count_ones() as u64;
+                }
+                Opcode::LeadingZeroBits64 => {
+                    self.registers[rd] = self.registers[ra].leading_zeros() as u64;
+                }
+                Opcode::LeadingZeroBits32 => {
+                    self.registers[rd] = (self.registers[ra] as u32).leading_zeros() as u64;
+                }
+                Opcode::TrailingZeroBits64 => {
+                    self.registers[rd] = self.registers[ra].trailing_zeros() as u64;
+                }
+                Opcode::TrailingZeroBits32 => {
+                    self.registers[rd] = (self.registers[ra] as u32).trailing_zeros() as u64;
+                }
+                Opcode::SignExtend8 => {
+                    self.registers[rd] = self.registers[ra] as u8 as i8 as i64 as u64;
+                }
+                Opcode::SignExtend16 => {
+                    self.registers[rd] = self.registers[ra] as u16 as i16 as i64 as u64;
+                }
+                Opcode::ZeroExtend16 => {
+                    self.registers[rd] = self.registers[ra] as u16 as u64;
+                }
+                Opcode::ReverseBytes => {
+                    self.registers[rd] = self.registers[ra].swap_bytes();
+                }
 
                 // === Two registers + one immediate ===
-                Opcode::AddImm32 => { self.registers[ra] = args::sign_extend_32(self.registers[rb].wrapping_add(imm1)); }
-                Opcode::AddImm64 => { self.registers[ra] = self.registers[rb].wrapping_add(imm1); }
-                Opcode::MulImm32 => { self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).wrapping_mul(imm1 as u32) as u64); }
-                Opcode::MulImm64 => { self.registers[ra] = self.registers[rb].wrapping_mul(imm1); }
-                Opcode::AndImm => { self.registers[ra] = self.registers[rb] & imm1; }
-                Opcode::XorImm => { self.registers[ra] = self.registers[rb] ^ imm1; }
-                Opcode::OrImm => { self.registers[ra] = self.registers[rb] | imm1; }
-                Opcode::SetLtUImm => { self.registers[ra] = if self.registers[rb] < imm1 { 1 } else { 0 }; }
-                Opcode::SetLtSImm => { self.registers[ra] = if (self.registers[rb] as i64) < (imm1 as i64) { 1 } else { 0 }; }
-                Opcode::SetGtUImm => { self.registers[ra] = if self.registers[rb] > imm1 { 1 } else { 0 }; }
-                Opcode::SetGtSImm => { self.registers[ra] = if (self.registers[rb] as i64) > (imm1 as i64) { 1 } else { 0 }; }
-                Opcode::ShloLImm32 => { self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).wrapping_shl((imm1 % 32) as u32) as u64); }
-                Opcode::ShloRImm32 => { self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).wrapping_shr((imm1 % 32) as u32) as u64); }
-                Opcode::SharRImm32 => { self.registers[ra] = (self.registers[rb] as u32 as i32).wrapping_shr((imm1 % 32) as u32) as i64 as u64; }
-                Opcode::ShloLImm64 => { self.registers[ra] = self.registers[rb].wrapping_shl((imm1 % 64) as u32); }
-                Opcode::ShloRImm64 => { self.registers[ra] = self.registers[rb].wrapping_shr((imm1 % 64) as u32); }
-                Opcode::SharRImm64 => { self.registers[ra] = (self.registers[rb] as i64).wrapping_shr((imm1 % 64) as u32) as u64; }
-                Opcode::NegAddImm32 => { self.registers[ra] = args::sign_extend_32(imm1.wrapping_sub(self.registers[rb]) as u32 as u64); }
-                Opcode::NegAddImm64 => { self.registers[ra] = imm1.wrapping_sub(self.registers[rb]); }
-                Opcode::CmovIzImm => { if self.registers[rb] == 0 { self.registers[ra] = imm1; } }
-                Opcode::CmovNzImm => { if self.registers[rb] != 0 { self.registers[ra] = imm1; } }
-                Opcode::RotR64Imm => { self.registers[ra] = self.registers[rb].rotate_right((imm1 % 64) as u32); }
-                Opcode::RotR32Imm => { self.registers[ra] = args::sign_extend_32((self.registers[rb] as u32).rotate_right((imm1 % 32) as u32) as u64); }
+                Opcode::AddImm32 => {
+                    self.registers[ra] =
+                        args::sign_extend_32(self.registers[rb].wrapping_add(imm1));
+                }
+                Opcode::AddImm64 => {
+                    self.registers[ra] = self.registers[rb].wrapping_add(imm1);
+                }
+                Opcode::MulImm32 => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).wrapping_mul(imm1 as u32) as u64,
+                    );
+                }
+                Opcode::MulImm64 => {
+                    self.registers[ra] = self.registers[rb].wrapping_mul(imm1);
+                }
+                Opcode::AndImm => {
+                    self.registers[ra] = self.registers[rb] & imm1;
+                }
+                Opcode::XorImm => {
+                    self.registers[ra] = self.registers[rb] ^ imm1;
+                }
+                Opcode::OrImm => {
+                    self.registers[ra] = self.registers[rb] | imm1;
+                }
+                Opcode::SetLtUImm => {
+                    self.registers[ra] = if self.registers[rb] < imm1 { 1 } else { 0 };
+                }
+                Opcode::SetLtSImm => {
+                    self.registers[ra] = if (self.registers[rb] as i64) < (imm1 as i64) {
+                        1
+                    } else {
+                        0
+                    };
+                }
+                Opcode::SetGtUImm => {
+                    self.registers[ra] = if self.registers[rb] > imm1 { 1 } else { 0 };
+                }
+                Opcode::SetGtSImm => {
+                    self.registers[ra] = if (self.registers[rb] as i64) > (imm1 as i64) {
+                        1
+                    } else {
+                        0
+                    };
+                }
+                Opcode::ShloLImm32 => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).wrapping_shl((imm1 % 32) as u32) as u64,
+                    );
+                }
+                Opcode::ShloRImm32 => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).wrapping_shr((imm1 % 32) as u32) as u64,
+                    );
+                }
+                Opcode::SharRImm32 => {
+                    self.registers[ra] = (self.registers[rb] as u32 as i32)
+                        .wrapping_shr((imm1 % 32) as u32)
+                        as i64 as u64;
+                }
+                Opcode::ShloLImm64 => {
+                    self.registers[ra] = self.registers[rb].wrapping_shl((imm1 % 64) as u32);
+                }
+                Opcode::ShloRImm64 => {
+                    self.registers[ra] = self.registers[rb].wrapping_shr((imm1 % 64) as u32);
+                }
+                Opcode::SharRImm64 => {
+                    self.registers[ra] =
+                        (self.registers[rb] as i64).wrapping_shr((imm1 % 64) as u32) as u64;
+                }
+                Opcode::NegAddImm32 => {
+                    self.registers[ra] =
+                        args::sign_extend_32(imm1.wrapping_sub(self.registers[rb]) as u32 as u64);
+                }
+                Opcode::NegAddImm64 => {
+                    self.registers[ra] = imm1.wrapping_sub(self.registers[rb]);
+                }
+                Opcode::CmovIzImm => {
+                    if self.registers[rb] == 0 {
+                        self.registers[ra] = imm1;
+                    }
+                }
+                Opcode::CmovNzImm => {
+                    if self.registers[rb] != 0 {
+                        self.registers[ra] = imm1;
+                    }
+                }
+                Opcode::RotR64Imm => {
+                    self.registers[ra] = self.registers[rb].rotate_right((imm1 % 64) as u32);
+                }
+                Opcode::RotR32Imm => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (self.registers[rb] as u32).rotate_right((imm1 % 32) as u32) as u64,
+                    );
+                }
 
                 // ImmAlt variants: op ra, imm, rb (imm is the "left" operand)
-                Opcode::ShloLImmAlt32 => { self.registers[ra] = args::sign_extend_32((imm1 as u32).wrapping_shl((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::ShloRImmAlt32 => { self.registers[ra] = args::sign_extend_32((imm1 as u32).wrapping_shr((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::SharRImmAlt32 => { self.registers[ra] = ((imm1 as u32) as i32).wrapping_shr((self.registers[rb] % 32) as u32) as i64 as u64; }
-                Opcode::ShloLImmAlt64 => { self.registers[ra] = imm1.wrapping_shl((self.registers[rb] % 64) as u32); }
-                Opcode::ShloRImmAlt64 => { self.registers[ra] = imm1.wrapping_shr((self.registers[rb] % 64) as u32); }
-                Opcode::SharRImmAlt64 => { self.registers[ra] = (imm1 as i64).wrapping_shr((self.registers[rb] % 64) as u32) as u64; }
-                Opcode::RotR64ImmAlt => { self.registers[ra] = imm1.rotate_right((self.registers[rb] % 64) as u32); }
-                Opcode::RotR32ImmAlt => { self.registers[ra] = args::sign_extend_32((imm1 as u32).rotate_right((self.registers[rb] % 32) as u32) as u64); }
+                Opcode::ShloLImmAlt32 => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (imm1 as u32).wrapping_shl((self.registers[rb] % 32) as u32) as u64,
+                    );
+                }
+                Opcode::ShloRImmAlt32 => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (imm1 as u32).wrapping_shr((self.registers[rb] % 32) as u32) as u64,
+                    );
+                }
+                Opcode::SharRImmAlt32 => {
+                    self.registers[ra] = ((imm1 as u32) as i32)
+                        .wrapping_shr((self.registers[rb] % 32) as u32)
+                        as i64 as u64;
+                }
+                Opcode::ShloLImmAlt64 => {
+                    self.registers[ra] = imm1.wrapping_shl((self.registers[rb] % 64) as u32);
+                }
+                Opcode::ShloRImmAlt64 => {
+                    self.registers[ra] = imm1.wrapping_shr((self.registers[rb] % 64) as u32);
+                }
+                Opcode::SharRImmAlt64 => {
+                    self.registers[ra] =
+                        (imm1 as i64).wrapping_shr((self.registers[rb] % 64) as u32) as u64;
+                }
+                Opcode::RotR64ImmAlt => {
+                    self.registers[ra] = imm1.rotate_right((self.registers[rb] % 64) as u32);
+                }
+                Opcode::RotR32ImmAlt => {
+                    self.registers[ra] = args::sign_extend_32(
+                        (imm1 as u32).rotate_right((self.registers[rb] % 32) as u32) as u64,
+                    );
+                }
 
                 // === Two registers + one offset (branches) ===
                 Opcode::BranchEq => {
                     if self.registers[ra] == self.registers[rb] {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchNe => {
                     if self.registers[ra] != self.registers[rb] {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLtU => {
                     if self.registers[ra] < self.registers[rb] {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLtS => {
                     if (self.registers[ra] as i64) < (self.registers[rb] as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGeU => {
                     if self.registers[ra] >= self.registers[rb] {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGeS => {
                     if (self.registers[ra] as i64) >= (self.registers[rb] as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
 
                 // === Three register ALU ===
-                Opcode::Add32 => { self.registers[rd] = args::sign_extend_32(self.registers[ra].wrapping_add(self.registers[rb])); }
-                Opcode::Sub32 => { self.registers[rd] = args::sign_extend_32(self.registers[ra].wrapping_sub(self.registers[rb])); }
-                Opcode::Add64 => { self.registers[rd] = self.registers[ra].wrapping_add(self.registers[rb]); }
-                Opcode::Sub64 => { self.registers[rd] = self.registers[ra].wrapping_sub(self.registers[rb]); }
-                Opcode::Mul32 => { self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).wrapping_mul(self.registers[rb] as u32) as u64); }
-                Opcode::Mul64 => { self.registers[rd] = self.registers[ra].wrapping_mul(self.registers[rb]); }
-                Opcode::And => { self.registers[rd] = self.registers[ra] & self.registers[rb]; }
-                Opcode::Or => { self.registers[rd] = self.registers[ra] | self.registers[rb]; }
-                Opcode::Xor => { self.registers[rd] = self.registers[ra] ^ self.registers[rb]; }
-                Opcode::SetLtU => { self.registers[rd] = if self.registers[ra] < self.registers[rb] { 1 } else { 0 }; }
-                Opcode::SetLtS => { self.registers[rd] = if (self.registers[ra] as i64) < (self.registers[rb] as i64) { 1 } else { 0 }; }
-                Opcode::CmovIz => { if self.registers[rb] == 0 { self.registers[rd] = self.registers[ra]; } }
-                Opcode::CmovNz => { if self.registers[rb] != 0 { self.registers[rd] = self.registers[ra]; } }
-                Opcode::ShloL32 => { self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).wrapping_shl((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::ShloR32 => { self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).wrapping_shr((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::SharR32 => { self.registers[rd] = (self.registers[ra] as u32 as i32).wrapping_shr((self.registers[rb] % 32) as u32) as i64 as u64; }
-                Opcode::ShloL64 => { self.registers[rd] = self.registers[ra].wrapping_shl((self.registers[rb] % 64) as u32); }
-                Opcode::ShloR64 => { self.registers[rd] = self.registers[ra].wrapping_shr((self.registers[rb] % 64) as u32); }
-                Opcode::SharR64 => { self.registers[rd] = (self.registers[ra] as i64).wrapping_shr((self.registers[rb] % 64) as u32) as u64; }
-                Opcode::RotL64 => { self.registers[rd] = self.registers[ra].rotate_left((self.registers[rb] % 64) as u32); }
-                Opcode::RotR64 => { self.registers[rd] = self.registers[ra].rotate_right((self.registers[rb] % 64) as u32); }
-                Opcode::RotL32 => { self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).rotate_left((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::RotR32 => { self.registers[rd] = args::sign_extend_32((self.registers[ra] as u32).rotate_right((self.registers[rb] % 32) as u32) as u64); }
-                Opcode::AndInv => { self.registers[rd] = self.registers[ra] & !self.registers[rb]; }
-                Opcode::OrInv => { self.registers[rd] = self.registers[ra] | !self.registers[rb]; }
-                Opcode::Xnor => { self.registers[rd] = !(self.registers[ra] ^ self.registers[rb]); }
-                Opcode::Max => { self.registers[rd] = core::cmp::max(self.registers[ra] as i64, self.registers[rb] as i64) as u64; }
-                Opcode::MaxU => { self.registers[rd] = core::cmp::max(self.registers[ra], self.registers[rb]); }
-                Opcode::Min => { self.registers[rd] = core::cmp::min(self.registers[ra] as i64, self.registers[rb] as i64) as u64; }
-                Opcode::MinU => { self.registers[rd] = core::cmp::min(self.registers[ra], self.registers[rb]); }
+                Opcode::Add32 => {
+                    self.registers[rd] =
+                        args::sign_extend_32(self.registers[ra].wrapping_add(self.registers[rb]));
+                }
+                Opcode::Sub32 => {
+                    self.registers[rd] =
+                        args::sign_extend_32(self.registers[ra].wrapping_sub(self.registers[rb]));
+                }
+                Opcode::Add64 => {
+                    self.registers[rd] = self.registers[ra].wrapping_add(self.registers[rb]);
+                }
+                Opcode::Sub64 => {
+                    self.registers[rd] = self.registers[ra].wrapping_sub(self.registers[rb]);
+                }
+                Opcode::Mul32 => {
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).wrapping_mul(self.registers[rb] as u32) as u64,
+                    );
+                }
+                Opcode::Mul64 => {
+                    self.registers[rd] = self.registers[ra].wrapping_mul(self.registers[rb]);
+                }
+                Opcode::And => {
+                    self.registers[rd] = self.registers[ra] & self.registers[rb];
+                }
+                Opcode::Or => {
+                    self.registers[rd] = self.registers[ra] | self.registers[rb];
+                }
+                Opcode::Xor => {
+                    self.registers[rd] = self.registers[ra] ^ self.registers[rb];
+                }
+                Opcode::SetLtU => {
+                    self.registers[rd] = if self.registers[ra] < self.registers[rb] {
+                        1
+                    } else {
+                        0
+                    };
+                }
+                Opcode::SetLtS => {
+                    self.registers[rd] =
+                        if (self.registers[ra] as i64) < (self.registers[rb] as i64) {
+                            1
+                        } else {
+                            0
+                        };
+                }
+                Opcode::CmovIz => {
+                    if self.registers[rb] == 0 {
+                        self.registers[rd] = self.registers[ra];
+                    }
+                }
+                Opcode::CmovNz => {
+                    if self.registers[rb] != 0 {
+                        self.registers[rd] = self.registers[ra];
+                    }
+                }
+                Opcode::ShloL32 => {
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).wrapping_shl((self.registers[rb] % 32) as u32)
+                            as u64,
+                    );
+                }
+                Opcode::ShloR32 => {
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).wrapping_shr((self.registers[rb] % 32) as u32)
+                            as u64,
+                    );
+                }
+                Opcode::SharR32 => {
+                    self.registers[rd] = (self.registers[ra] as u32 as i32)
+                        .wrapping_shr((self.registers[rb] % 32) as u32)
+                        as i64 as u64;
+                }
+                Opcode::ShloL64 => {
+                    self.registers[rd] =
+                        self.registers[ra].wrapping_shl((self.registers[rb] % 64) as u32);
+                }
+                Opcode::ShloR64 => {
+                    self.registers[rd] =
+                        self.registers[ra].wrapping_shr((self.registers[rb] % 64) as u32);
+                }
+                Opcode::SharR64 => {
+                    self.registers[rd] = (self.registers[ra] as i64)
+                        .wrapping_shr((self.registers[rb] % 64) as u32)
+                        as u64;
+                }
+                Opcode::RotL64 => {
+                    self.registers[rd] =
+                        self.registers[ra].rotate_left((self.registers[rb] % 64) as u32);
+                }
+                Opcode::RotR64 => {
+                    self.registers[rd] =
+                        self.registers[ra].rotate_right((self.registers[rb] % 64) as u32);
+                }
+                Opcode::RotL32 => {
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).rotate_left((self.registers[rb] % 32) as u32)
+                            as u64,
+                    );
+                }
+                Opcode::RotR32 => {
+                    self.registers[rd] = args::sign_extend_32(
+                        (self.registers[ra] as u32).rotate_right((self.registers[rb] % 32) as u32)
+                            as u64,
+                    );
+                }
+                Opcode::AndInv => {
+                    self.registers[rd] = self.registers[ra] & !self.registers[rb];
+                }
+                Opcode::OrInv => {
+                    self.registers[rd] = self.registers[ra] | !self.registers[rb];
+                }
+                Opcode::Xnor => {
+                    self.registers[rd] = !(self.registers[ra] ^ self.registers[rb]);
+                }
+                Opcode::Max => {
+                    self.registers[rd] =
+                        core::cmp::max(self.registers[ra] as i64, self.registers[rb] as i64) as u64;
+                }
+                Opcode::MaxU => {
+                    self.registers[rd] = core::cmp::max(self.registers[ra], self.registers[rb]);
+                }
+                Opcode::Min => {
+                    self.registers[rd] =
+                        core::cmp::min(self.registers[ra] as i64, self.registers[rb] as i64) as u64;
+                }
+                Opcode::MinU => {
+                    self.registers[rd] = core::cmp::min(self.registers[ra], self.registers[rb]);
+                }
 
                 // === Indirect loads (two reg + imm) ===
                 Opcode::LoadIndU8 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndI8 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as i8 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i8 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndU16 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndI16 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i16 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i16 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndU32 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndI32 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i32 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i32 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadIndU64 => {
                     let addr = self.registers[rb].wrapping_add(imm1) as u32;
                     match self.read_u64_le(addr) {
-                        Some(v) => { self.registers[ra] = v; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
 
@@ -1743,221 +2200,352 @@ impl Pvm {
                 // === Div/Rem (three reg, common in crypto) ===
                 Opcode::DivU32 => {
                     let b = self.registers[rb] as u32;
-                    self.registers[rd] = if b == 0 { u64::MAX } else { args::sign_extend_32((self.registers[ra] as u32 / b) as u64) };
+                    self.registers[rd] = if b == 0 {
+                        u64::MAX
+                    } else {
+                        args::sign_extend_32((self.registers[ra] as u32 / b) as u64)
+                    };
                 }
                 Opcode::DivU64 => {
                     let b = self.registers[rb];
-                    self.registers[rd] = if b == 0 { u64::MAX } else { self.registers[ra] / b };
+                    self.registers[rd] = if b == 0 {
+                        u64::MAX
+                    } else {
+                        self.registers[ra] / b
+                    };
                 }
                 Opcode::DivS32 => {
                     let a = self.registers[ra] as i32;
                     let b = self.registers[rb] as i32;
-                    self.registers[rd] = if b == 0 { u64::MAX } else if a == i32::MIN && b == -1 { a as u64 } else { args::sign_extend_32((a / b) as i64 as u64) };
+                    self.registers[rd] = if b == 0 {
+                        u64::MAX
+                    } else if a == i32::MIN && b == -1 {
+                        a as u64
+                    } else {
+                        args::sign_extend_32((a / b) as i64 as u64)
+                    };
                 }
                 Opcode::DivS64 => {
                     let a = self.registers[ra] as i64;
                     let b = self.registers[rb] as i64;
-                    self.registers[rd] = if b == 0 { u64::MAX } else if a == i64::MIN && b == -1 { a as u64 } else { (a / b) as u64 };
+                    self.registers[rd] = if b == 0 {
+                        u64::MAX
+                    } else if a == i64::MIN && b == -1 {
+                        a as u64
+                    } else {
+                        (a / b) as u64
+                    };
                 }
                 Opcode::RemU32 => {
                     let b = self.registers[rb] as u32;
-                    self.registers[rd] = if b == 0 { args::sign_extend_32(self.registers[ra] as u32 as u64) } else { args::sign_extend_32((self.registers[ra] as u32 % b) as u64) };
+                    self.registers[rd] = if b == 0 {
+                        args::sign_extend_32(self.registers[ra] as u32 as u64)
+                    } else {
+                        args::sign_extend_32((self.registers[ra] as u32 % b) as u64)
+                    };
                 }
                 Opcode::RemU64 => {
                     let b = self.registers[rb];
-                    self.registers[rd] = if b == 0 { self.registers[ra] } else { self.registers[ra] % b };
+                    self.registers[rd] = if b == 0 {
+                        self.registers[ra]
+                    } else {
+                        self.registers[ra] % b
+                    };
                 }
                 Opcode::RemS32 => {
                     let a = self.registers[ra] as i32;
                     let b = self.registers[rb] as i32;
-                    self.registers[rd] = if b == 0 { a as u64 } else if a == i32::MIN && b == -1 { 0 } else { args::sign_extend_32((a % b) as i64 as u64) };
+                    self.registers[rd] = if b == 0 {
+                        a as u64
+                    } else if a == i32::MIN && b == -1 {
+                        0
+                    } else {
+                        args::sign_extend_32((a % b) as i64 as u64)
+                    };
                 }
                 Opcode::RemS64 => {
                     let a = self.registers[ra] as i64;
                     let b = self.registers[rb] as i64;
-                    self.registers[rd] = if b == 0 { a as u64 } else if a == i64::MIN && b == -1 { 0 } else { (a % b) as u64 };
+                    self.registers[rd] = if b == 0 {
+                        a as u64
+                    } else if a == i64::MIN && b == -1 {
+                        0
+                    } else {
+                        (a % b) as u64
+                    };
                 }
                 Opcode::MulUpperSS => {
-                    self.registers[rd] = ((self.registers[ra] as i64 as i128).wrapping_mul(self.registers[rb] as i64 as i128) >> 64) as u64;
+                    self.registers[rd] = ((self.registers[ra] as i64 as i128)
+                        .wrapping_mul(self.registers[rb] as i64 as i128)
+                        >> 64) as u64;
                 }
                 Opcode::MulUpperUU => {
-                    self.registers[rd] = ((self.registers[ra] as u128).wrapping_mul(self.registers[rb] as u128) >> 64) as u64;
+                    self.registers[rd] = ((self.registers[ra] as u128)
+                        .wrapping_mul(self.registers[rb] as u128)
+                        >> 64) as u64;
                 }
                 Opcode::MulUpperSU => {
-                    self.registers[rd] = ((self.registers[ra] as i64 as i128).wrapping_mul(self.registers[rb] as u128 as i128) >> 64) as u64;
+                    self.registers[rd] = ((self.registers[ra] as i64 as i128)
+                        .wrapping_mul(self.registers[rb] as u128 as i128)
+                        >> 64) as u64;
                 }
 
                 // === Two immediates (store_imm: addr = imm1, value = imm2) ===
                 Opcode::StoreImmU8 => {
                     let addr = imm1 as u32;
-                    if !self.write_u8(addr, inst.imm2 as u8) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u8(addr, inst.imm2 as u8) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmU16 => {
                     let addr = imm1 as u32;
-                    if !self.write_u16_le(addr, inst.imm2 as u16) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u16_le(addr, inst.imm2 as u16) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmU32 => {
                     let addr = imm1 as u32;
-                    if !self.write_u32_le(addr, inst.imm2 as u32) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u32_le(addr, inst.imm2 as u32) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmU64 => {
                     let addr = imm1 as u32;
-                    if !self.write_u64_le(addr, inst.imm2) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u64_le(addr, inst.imm2) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
 
                 // === Absolute address loads (addr = imm1) ===
                 Opcode::LoadU8 => {
                     let addr = imm1 as u32;
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadI8 => {
                     let addr = imm1 as u32;
                     match self.read_u8(addr) {
-                        Some(v) => { self.registers[ra] = v as i8 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i8 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadU16 => {
                     let addr = imm1 as u32;
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadI16 => {
                     let addr = imm1 as u32;
                     match self.read_u16_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i16 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i16 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadU32 => {
                     let addr = imm1 as u32;
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadI32 => {
                     let addr = imm1 as u32;
                     match self.read_u32_le(addr) {
-                        Some(v) => { self.registers[ra] = v as i32 as i64 as u64; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v as i32 as i64 as u64;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
                 Opcode::LoadU64 => {
                     let addr = imm1 as u32;
                     match self.read_u64_le(addr) {
-                        Some(v) => { self.registers[ra] = v; }
-                        None => { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                        Some(v) => {
+                            self.registers[ra] = v;
+                        }
+                        None => {
+                            exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                        }
                     }
                 }
 
                 // === Absolute address stores (addr = imm1, value = reg[ra]) ===
                 Opcode::StoreU8 => {
                     let addr = imm1 as u32;
-                    if !self.write_u8(addr, self.registers[ra] as u8) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u8(addr, self.registers[ra] as u8) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreU16 => {
                     let addr = imm1 as u32;
-                    if !self.write_u16_le(addr, self.registers[ra] as u16) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u16_le(addr, self.registers[ra] as u16) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreU32 => {
                     let addr = imm1 as u32;
-                    if !self.write_u32_le(addr, self.registers[ra] as u32) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u32_le(addr, self.registers[ra] as u32) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreU64 => {
                     let addr = imm1 as u32;
-                    if !self.write_u64_le(addr, self.registers[ra]) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u64_le(addr, self.registers[ra]) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
 
                 // === Store imm indirect (addr = reg[ra] + imm1, value = imm2) ===
                 Opcode::StoreImmIndU8 => {
                     let addr = self.registers[ra].wrapping_add(imm1) as u32;
-                    if !self.write_u8(addr, inst.imm2 as u8) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u8(addr, inst.imm2 as u8) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmIndU16 => {
                     let addr = self.registers[ra].wrapping_add(imm1) as u32;
-                    if !self.write_u16_le(addr, inst.imm2 as u16) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u16_le(addr, inst.imm2 as u16) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmIndU32 => {
                     let addr = self.registers[ra].wrapping_add(imm1) as u32;
-                    if !self.write_u32_le(addr, inst.imm2 as u32) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u32_le(addr, inst.imm2 as u32) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
                 Opcode::StoreImmIndU64 => {
                     let addr = self.registers[ra].wrapping_add(imm1) as u32;
-                    if !self.write_u64_le(addr, inst.imm2) { exit = Some(ExitReason::PageFault(addr & !0xFFF)); }
+                    if !self.write_u64_le(addr, inst.imm2) {
+                        exit = Some(ExitReason::PageFault(addr & !0xFFF));
+                    }
                 }
 
                 // === LoadImmJump (reg[ra] = imm1, branch to target) ===
                 Opcode::LoadImmJump => {
                     self.registers[ra] = imm1;
-                    if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                    else { exit = Some(ExitReason::Panic); }
+                    if inst.target_idx != u32::MAX {
+                        branch_idx = inst.target_idx;
+                    } else {
+                        exit = Some(ExitReason::Panic);
+                    }
                 }
 
                 // === BranchImm variants (cond on reg[ra] vs imm1, target = target_idx) ===
                 Opcode::BranchEqImm => {
                     if self.registers[ra] == imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchNeImm => {
                     if self.registers[ra] != imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLtUImm => {
                     if self.registers[ra] < imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLeUImm => {
                     if self.registers[ra] <= imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGeUImm => {
                     if self.registers[ra] >= imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGtUImm => {
                     if self.registers[ra] > imm1 {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLtSImm => {
                     if (self.registers[ra] as i64) < (imm1 as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchLeSImm => {
                     if (self.registers[ra] as i64) <= (imm1 as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGeSImm => {
                     if (self.registers[ra] as i64) >= (imm1 as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
                 Opcode::BranchGtSImm => {
                     if (self.registers[ra] as i64) > (imm1 as i64) {
-                        if inst.target_idx != u32::MAX { branch_idx = inst.target_idx; }
-                        else { exit = Some(ExitReason::Panic); }
+                        if inst.target_idx != u32::MAX {
+                            branch_idx = inst.target_idx;
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
 
@@ -1972,9 +2560,14 @@ impl Pvm {
                         let t = target_pc as usize;
                         if t < self.pc_to_idx.len() {
                             let tidx = self.pc_to_idx[t];
-                            if tidx != u32::MAX { branch_idx = tidx; }
-                            else { exit = Some(ExitReason::Panic); }
-                        } else { exit = Some(ExitReason::Panic); }
+                            if tidx != u32::MAX {
+                                branch_idx = tidx;
+                            } else {
+                                exit = Some(ExitReason::Panic);
+                            }
+                        } else {
+                            exit = Some(ExitReason::Panic);
+                        }
                     }
                 }
             }
@@ -2027,7 +2620,9 @@ pub struct BitSet {
 impl BitSet {
     /// Create a bitset with `n` bits, all cleared.
     pub fn new(n: usize) -> Self {
-        Self { words: vec![0u64; (n + 63) / 64] }
+        Self {
+            words: vec![0u64; (n + 63) / 64],
+        }
     }
 
     /// Set bit at index `i`.
@@ -2061,7 +2656,11 @@ impl BitSet {
         let word_idx = pos / 64;
         let bit_idx = pos % 64;
         let prefix = rank_index[word_idx] as usize;
-        let mask = if bit_idx == 0 { 0 } else { (1u64 << bit_idx) - 1 };
+        let mask = if bit_idx == 0 {
+            0
+        } else {
+            (1u64 << bit_idx) - 1
+        };
         prefix + (self.words[word_idx] & mask).count_ones() as usize
     }
 
@@ -2097,9 +2696,7 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
     // Fast path: if we have at least 8 bytes, use a u64 scan.
     // Most instructions are 1-6 bytes, so the first word usually suffices.
     if start + 8 <= bm_len {
-        let word = unsafe {
-            std::ptr::read_unaligned(bitmask.as_ptr().add(start) as *const u64)
-        };
+        let word = unsafe { std::ptr::read_unaligned(bitmask.as_ptr().add(start) as *const u64) };
         // Each byte is 0 or 1. A byte with value 1 means "instruction start".
         // We want the position of the first non-zero byte.
         if word != 0 {
@@ -2110,7 +2707,9 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
         let mut j = 8;
         while j < 25 {
             let idx = start + j;
-            if idx >= bm_len || bitmask[idx] == 1 { return j; }
+            if idx >= bm_len || bitmask[idx] == 1 {
+                return j;
+            }
             j += 1;
         }
         return 0;
@@ -2121,7 +2720,10 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
     for j in 0..25 {
         let idx = start + j;
         let bit = if idx < bm_len { bitmask[idx] } else { 1 };
-        if bit == 1 { s = j; break; }
+        if bit == 1 {
+            s = j;
+            break;
+        }
     }
     s
 }
@@ -2160,15 +2762,24 @@ pub fn compute_gas_block_starts(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
 
     let mut i = 0;
     while i < len {
-        if i >= bitmask.len() || bitmask[i] != 1 { i += 1; continue; }
-        let Some(op) = Opcode::from_byte(code[i]) else { i += 1; continue; };
+        if i >= bitmask.len() || bitmask[i] != 1 {
+            i += 1;
+            continue;
+        }
+        let Some(op) = Opcode::from_byte(code[i]) else {
+            i += 1;
+            continue;
+        };
 
         let skip = {
             let mut s = 0;
             for j in 0..25 {
                 let idx = i + 1 + j;
                 let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-                if bit == 1 { s = j; break; }
+                if bit == 1 {
+                    s = j;
+                    break;
+                }
             }
             s
         };
@@ -2207,15 +2818,24 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
     // Iterate only over instruction starts (skip non-instruction bytes).
     let mut i = 0;
     while i < len {
-        if i >= bitmask.len() || bitmask[i] != 1 { i += 1; continue; }
-        let Some(op) = Opcode::from_byte(code[i]) else { i += 1; continue; };
+        if i >= bitmask.len() || bitmask[i] != 1 {
+            i += 1;
+            continue;
+        }
+        let Some(op) = Opcode::from_byte(code[i]) else {
+            i += 1;
+            continue;
+        };
 
         let skip = {
             let mut s = 0;
             for j in 0..25 {
                 let idx = i + 1 + j;
                 let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-                if bit == 1 { s = j; break; }
+                if bit == 1 {
+                    s = j;
+                    break;
+                }
             }
             s
         };
@@ -2235,7 +2855,8 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
             crate::instruction::InstructionCategory::OneOffset => {
                 // Jump: opcode + 4-byte offset
                 if i + 5 <= len {
-                    let off = i32::from_le_bytes([code[i+1], code[i+2], code[i+3], code[i+4]]);
+                    let off =
+                        i32::from_le_bytes([code[i + 1], code[i + 2], code[i + 3], code[i + 4]]);
                     let target = (i as i64 + off as i64) as usize;
                     if target < len && target < bitmask.len() && bitmask[target] == 1 {
                         starts[target] = true;
@@ -2245,7 +2866,8 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
             crate::instruction::InstructionCategory::TwoRegOneOffset => {
                 // Branch: opcode + 1-byte regs + 4-byte offset
                 if i + 6 <= len {
-                    let off = i32::from_le_bytes([code[i+2], code[i+3], code[i+4], code[i+5]]);
+                    let off =
+                        i32::from_le_bytes([code[i + 2], code[i + 3], code[i + 4], code[i + 5]]);
                     let target = (i as i64 + off as i64) as usize;
                     if target < len && target < bitmask.len() && bitmask[target] == 1 {
                         starts[target] = true;
@@ -2258,14 +2880,20 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
                 if i + 2 <= len {
                     let reg_byte = code[i + 1];
                     let lx = ((reg_byte as usize / 16) % 8).min(4);
-                    let ly = if skip > lx + 1 { (skip - lx - 1).min(4) } else { 0 };
+                    let ly = if skip > lx + 1 {
+                        (skip - lx - 1).min(4)
+                    } else {
+                        0
+                    };
                     let off_start = i + 2 + lx;
                     if ly > 0 && off_start + ly <= len {
                         let mut buf = [0u8; 4];
                         buf[..ly].copy_from_slice(&code[off_start..off_start + ly]);
                         // Sign-extend from ly bytes
                         if ly < 4 && buf[ly - 1] & 0x80 != 0 {
-                            for b in &mut buf[ly..4] { *b = 0xFF; }
+                            for b in &mut buf[ly..4] {
+                                *b = 0xFF;
+                            }
                         }
                         let off = i32::from_le_bytes(buf);
                         let target = (i as i64 + off as i64) as usize;
@@ -2317,11 +2945,31 @@ fn compute_block_gas_costs(code: &[u8], bitmask: &[u8], basic_block_starts: &[bo
 
         // Extract raw register nibbles (same as codegen.rs)
         let opcode_byte = code[pc];
-        let raw_ra = if pc + 1 < len { code[pc + 1] & 0x0F } else { 0xFF };
-        let raw_rb = if pc + 1 < len { (code[pc + 1] >> 4) & 0x0F } else { 0xFF };
-        let raw_rd = if pc + 2 < len { code[pc + 2] & 0x0F } else { 0xFF };
+        let raw_ra = if pc + 1 < len {
+            code[pc + 1] & 0x0F
+        } else {
+            0xFF
+        };
+        let raw_rb = if pc + 1 < len {
+            (code[pc + 1] >> 4) & 0x0F
+        } else {
+            0xFF
+        };
+        let raw_rd = if pc + 2 < len {
+            code[pc + 2] & 0x0F
+        } else {
+            0xFF
+        };
 
-        let fc = fast_cost_from_raw(opcode_byte, raw_ra, raw_rb, raw_rd, pc as u32, code, bitmask);
+        let fc = fast_cost_from_raw(
+            opcode_byte,
+            raw_ra,
+            raw_rb,
+            raw_rd,
+            pc as u32,
+            code,
+            bitmask,
+        );
         sim.feed(&fc);
 
         // Advance to next instruction
@@ -2351,7 +2999,12 @@ fn flatten_args(args: &Args) -> (u8, u8, u8, u64, u64) {
         Args::TwoReg { rd, ra } => (ra as u8, 0, rd as u8, 0, 0),
         Args::TwoRegImm { ra, rb, imm } => (ra as u8, rb as u8, 0, imm, 0),
         Args::TwoRegOffset { ra, rb, offset } => (ra as u8, rb as u8, 0, offset, 0),
-        Args::TwoRegTwoImm { ra, rb, imm_x, imm_y } => (ra as u8, rb as u8, 0, imm_x, imm_y),
+        Args::TwoRegTwoImm {
+            ra,
+            rb,
+            imm_x,
+            imm_y,
+        } => (ra as u8, rb as u8, 0, imm_x, imm_y),
         Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8, 0, 0),
     }
 }
@@ -2404,10 +3057,14 @@ fn predecode_instructions(
                 pc_to_idx[pc] = idx;
                 insts.push(DecodedInst {
                     opcode,
-                    ra, rb, rd, imm1, imm2,
+                    ra,
+                    rb,
+                    rd,
+                    imm1,
+                    imm2,
                     pc: pc as u32,
                     next_pc,
-                    next_idx: u32::MAX, // resolved in second pass
+                    next_idx: u32::MAX,   // resolved in second pass
                     target_idx: u32::MAX, // resolved in second pass
                     bb_gas_cost,
                 });
@@ -2425,7 +3082,11 @@ fn predecode_instructions(
     // the last instruction doesn't index out of bounds.
     insts.push(DecodedInst {
         opcode: Opcode::Trap,
-        ra: 0, rb: 0, rd: 0, imm1: 0, imm2: 0,
+        ra: 0,
+        rb: 0,
+        rd: 0,
+        imm1: 0,
+        imm2: 0,
         pc: len as u32,
         next_pc: len as u32 + 1,
         next_idx: sentinel_idx, // self-loop (will trap anyway)
@@ -2450,17 +3111,29 @@ fn predecode_instructions(
         // For BranchEqImm/NeImm/.../GtSImm and LoadImmJump: target PC is in imm2.
         let target_idx = {
             let op = inst.opcode;
-            let target_from_imm1 = matches!(op,
-                Opcode::Jump | Opcode::BranchEq | Opcode::BranchNe |
-                Opcode::BranchLtU | Opcode::BranchLtS | Opcode::BranchGeU | Opcode::BranchGeS
+            let target_from_imm1 = matches!(
+                op,
+                Opcode::Jump
+                    | Opcode::BranchEq
+                    | Opcode::BranchNe
+                    | Opcode::BranchLtU
+                    | Opcode::BranchLtS
+                    | Opcode::BranchGeU
+                    | Opcode::BranchGeS
             );
-            let target_from_imm2 = matches!(op,
-                Opcode::LoadImmJump |
-                Opcode::BranchEqImm | Opcode::BranchNeImm |
-                Opcode::BranchLtUImm | Opcode::BranchLeUImm |
-                Opcode::BranchGeUImm | Opcode::BranchGtUImm |
-                Opcode::BranchLtSImm | Opcode::BranchLeSImm |
-                Opcode::BranchGeSImm | Opcode::BranchGtSImm
+            let target_from_imm2 = matches!(
+                op,
+                Opcode::LoadImmJump
+                    | Opcode::BranchEqImm
+                    | Opcode::BranchNeImm
+                    | Opcode::BranchLtUImm
+                    | Opcode::BranchLeUImm
+                    | Opcode::BranchGeUImm
+                    | Opcode::BranchGtUImm
+                    | Opcode::BranchLtSImm
+                    | Opcode::BranchLeSImm
+                    | Opcode::BranchGeSImm
+                    | Opcode::BranchGtSImm
             );
             let target_pc_opt = if target_from_imm1 {
                 Some(inst.imm1 as usize)
@@ -2470,7 +3143,8 @@ fn predecode_instructions(
                 None
             };
             if let Some(target_pc) = target_pc_opt {
-                if target_pc < basic_block_starts.len() && basic_block_starts[target_pc]
+                if target_pc < basic_block_starts.len()
+                    && basic_block_starts[target_pc]
                     && target_pc < pc_to_idx.len()
                 {
                     pc_to_idx[target_pc]
@@ -2708,19 +3382,18 @@ mod tests {
         // basic_block_starts (old):        PC 0, 1, 3, 10
         // gas_block_starts (new):          PC 0, 1, 10
         let code = vec![
-            1,          // PC 0: Fallthrough
-            100, 0x10,  // PC 1: MoveReg rD=0, rA=1 (2 bytes)
-            100, 0x10,  // PC 3: MoveReg rD=0, rA=1 (2 bytes)
+            1, // PC 0: Fallthrough
+            100, 0x10, // PC 1: MoveReg rD=0, rA=1 (2 bytes)
+            100, 0x10, // PC 3: MoveReg rD=0, rA=1 (2 bytes)
             // PC 5: Jump, offset = -2 as i32 LE = [0xFE, 0xFF, 0xFF, 0xFF]
-            40, 0xFE, 0xFF, 0xFF, 0xFF,
-            0,          // PC 10: Trap
+            40, 0xFE, 0xFF, 0xFF, 0xFF, 0, // PC 10: Trap
         ];
         let bitmask = vec![
-            1,    // PC 0: Fallthrough
+            1, // PC 0: Fallthrough
             1, 0, // PC 1-2: MoveReg (skip=1)
             1, 0, // PC 3-4: MoveReg (skip=1)
             1, 0, 0, 0, 0, // PC 5-9: Jump (skip=4)
-            1,    // PC 10: Trap
+            1, // PC 10: Trap
         ];
         (code, bitmask)
     }
@@ -2732,16 +3405,34 @@ mod tests {
         let gas_starts = compute_gas_block_starts(&code, &bitmask);
 
         // basic_block_starts includes branch targets
-        assert!(bb_starts[0],  "PC 0 should be a basic block start");
-        assert!(bb_starts[1],  "PC 1 should be a basic block start (post-Fallthrough)");
-        assert!(bb_starts[3],  "PC 3 should be a basic block start (branch target)");
-        assert!(bb_starts[10], "PC 10 should be a basic block start (post-Jump)");
+        assert!(bb_starts[0], "PC 0 should be a basic block start");
+        assert!(
+            bb_starts[1],
+            "PC 1 should be a basic block start (post-Fallthrough)"
+        );
+        assert!(
+            bb_starts[3],
+            "PC 3 should be a basic block start (branch target)"
+        );
+        assert!(
+            bb_starts[10],
+            "PC 10 should be a basic block start (post-Jump)"
+        );
 
         // gas_block_starts does NOT include branch targets
-        assert!(gas_starts[0],  "PC 0 should be a gas block start");
-        assert!(gas_starts[1],  "PC 1 should be a gas block start (post-Fallthrough)");
-        assert!(!gas_starts[3], "PC 3 should NOT be a gas block start (branch target only)");
-        assert!(gas_starts[10], "PC 10 should be a gas block start (post-Jump)");
+        assert!(gas_starts[0], "PC 0 should be a gas block start");
+        assert!(
+            gas_starts[1],
+            "PC 1 should be a gas block start (post-Fallthrough)"
+        );
+        assert!(
+            !gas_starts[3],
+            "PC 3 should NOT be a gas block start (branch target only)"
+        );
+        assert!(
+            gas_starts[10],
+            "PC 10 should be a gas block start (post-Jump)"
+        );
     }
 
     #[test]
@@ -2751,10 +3442,22 @@ mod tests {
         let costs = compute_block_gas_costs(&code, &bitmask, &gas_starts);
 
         // Gas costs should be nonzero only at gas block starts
-        assert!(costs[0] > 0,  "PC 0 (gas block start) should have nonzero cost");
-        assert!(costs[1] > 0,  "PC 1 (gas block start) should have nonzero cost");
-        assert_eq!(costs[3], 0, "PC 3 (branch target, NOT gas start) should have zero cost");
-        assert!(costs[10] > 0, "PC 10 (gas block start) should have nonzero cost");
+        assert!(
+            costs[0] > 0,
+            "PC 0 (gas block start) should have nonzero cost"
+        );
+        assert!(
+            costs[1] > 0,
+            "PC 1 (gas block start) should have nonzero cost"
+        );
+        assert_eq!(
+            costs[3], 0,
+            "PC 3 (branch target, NOT gas start) should have zero cost"
+        );
+        assert!(
+            costs[10] > 0,
+            "PC 10 (gas block start) should have nonzero cost"
+        );
     }
 
     #[test]
@@ -2771,10 +3474,19 @@ mod tests {
         let bitmask = vec![1, 1, 0, 1];
 
         // Run via step()
-        let mut vm_step = Pvm::new(code.clone(), bitmask.clone(), vec![], [0; 13], Vec::new(), 1000);
+        let mut vm_step = Pvm::new(
+            code.clone(),
+            bitmask.clone(),
+            vec![],
+            [0; 13],
+            Vec::new(),
+            1000,
+        );
         let initial_gas = vm_step.gas;
         loop {
-            if vm_step.step().is_some() { break; }
+            if vm_step.step().is_some() {
+                break;
+            }
         }
         let gas_used_step = initial_gas - vm_step.gas;
 
@@ -2782,8 +3494,10 @@ mod tests {
         let mut vm_run = Pvm::new(code, bitmask, vec![], [0; 13], Vec::new(), 1000);
         let (_, gas_used_run) = vm_run.run();
 
-        assert_eq!(gas_used_step, gas_used_run,
-            "step() and run() must consume the same gas");
+        assert_eq!(
+            gas_used_step, gas_used_run,
+            "step() and run() must consume the same gas"
+        );
     }
 
     #[test]
@@ -2795,11 +3509,15 @@ mod tests {
         // PC 3 is a branch target but NOT a gas start.
         // Verify is_basic_block_start accepts it (branch validation).
         let vm = Pvm::new(code, bitmask, vec![], [0; 13], Vec::new(), 1000);
-        assert!(vm.is_basic_block_start(3),
-            "branch target at PC 3 must be a valid basic block start for validation");
+        assert!(
+            vm.is_basic_block_start(3),
+            "branch target at PC 3 must be a valid basic block start for validation"
+        );
 
         // But the gas cost at PC 3 should be zero (it's not a gas block start).
-        assert_eq!(vm.block_gas_costs[3], 0,
-            "PC 3 should not carry gas cost (not a gas block start)");
+        assert_eq!(
+            vm.block_gas_costs[3], 0,
+            "PC 3 should not carry gas cost (not a gas block start)"
+        );
     }
 }

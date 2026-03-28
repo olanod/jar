@@ -57,7 +57,9 @@ pub enum RefineError {
 impl std::fmt::Display for RefineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RefineError::CodeNotFound(h) => write!(f, "code not found: 0x{}", hex::encode(&h.0[..8])),
+            RefineError::CodeNotFound(h) => {
+                write!(f, "code not found: 0x{}", hex::encode(&h.0[..8]))
+            }
             RefineError::AuthorizationFailed(msg) => write!(f, "authorization failed: {}", msg),
             RefineError::PvmInitFailed => write!(f, "PVM initialization failed"),
         }
@@ -112,8 +114,8 @@ pub fn invoke_is_authorized(
     args.extend_from_slice(authorization);
     args.extend_from_slice(work_package_encoding);
 
-    let mut pvm = PvmInstance::initialize(code_blob, &args, gas_limit)
-        .ok_or(RefineError::PvmInitFailed)?;
+    let mut pvm =
+        PvmInstance::initialize(code_blob, &args, gas_limit).ok_or(RefineError::PvmInitFailed)?;
 
     // Entry point for is-authorized: PC=0 (default after initialize)
     let initial_gas = pvm.gas();
@@ -124,7 +126,11 @@ pub fn invoke_is_authorized(
             ExitReason::Halt => {
                 let gas_used = initial_gas - pvm.gas();
                 let output = read_pvm_output(&pvm);
-                tracing::debug!("is_authorized HALT: gas_used={}, output_len={}", gas_used, output.len());
+                tracing::debug!(
+                    "is_authorized HALT: gas_used={}, output_len={}",
+                    gas_used,
+                    output.len()
+                );
                 return Ok((output, gas_used));
             }
             ExitReason::Panic => {
@@ -134,9 +140,10 @@ pub fn invoke_is_authorized(
                 return Err(RefineError::AuthorizationFailed("out of gas".into()));
             }
             ExitReason::PageFault(addr) => {
-                return Err(RefineError::AuthorizationFailed(
-                    format!("page fault at 0x{:08x}", addr),
-                ));
+                return Err(RefineError::AuthorizationFailed(format!(
+                    "page fault at 0x{:08x}",
+                    addr
+                )));
             }
             ExitReason::HostCall(id) => {
                 // Ψ_I has limited host calls: only gas(0) and info(5)
@@ -186,7 +193,9 @@ pub fn invoke_refine(
                 };
                 tracing::debug!(
                     "refine HALT: service={}, gas_used={}, exports={}",
-                    item.service_id, gas_used, exports_count
+                    item.service_id,
+                    gas_used,
+                    exports_count
                 );
                 return RefineResult {
                     digest: WorkDigest {
@@ -206,7 +215,11 @@ pub fn invoke_refine(
             }
             ExitReason::Panic => {
                 let gas_used = initial_gas - pvm.gas();
-                tracing::debug!("refine PANIC: service={}, gas_used={}", item.service_id, gas_used);
+                tracing::debug!(
+                    "refine PANIC: service={}, gas_used={}",
+                    item.service_id,
+                    gas_used
+                );
                 return error_refine_result(item, WorkResult::Panic, gas_used);
             }
             ExitReason::OutOfGas => {
@@ -275,10 +288,7 @@ pub fn process_work_package(
     let exports_root = if all_exported_segments.is_empty() {
         Hash::ZERO
     } else {
-        let segment_refs: Vec<&[u8]> = all_exported_segments
-            .iter()
-            .map(|s| s.as_slice())
-            .collect();
+        let segment_refs: Vec<&[u8]> = all_exported_segments.iter().map(|s| s.as_slice()).collect();
         grey_merkle::constant_depth_merkle_root(&segment_refs, grey_crypto::blake2b_256)
     };
 

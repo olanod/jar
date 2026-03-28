@@ -20,9 +20,7 @@ pub fn build(manifest_dir: &str, bin_name: &str) -> PathBuf {
     // Pass LLVM flags to encourage aggressive inlining and unrolling.
     // More inlining → fewer function calls → fewer jump table entries →
     // fewer gas block transitions in the recompiler → faster compile+exec.
-    let extra_rustflags = vec![
-        "-Cllvm-args=--inline-threshold=275".to_string(),
-    ];
+    let extra_rustflags = vec!["-Cllvm-args=--inline-threshold=275".to_string()];
     let guest = GuestBuild {
         manifest_dir: resolved,
         target_json_path,
@@ -51,9 +49,7 @@ pub fn build_service(manifest_dir: &str, bin_name: &str) -> PathBuf {
     let resolved = build_crate::resolve_manifest_dir(manifest_dir);
     let target_json_path = build_crate::write_target_json("riscv64em-javm.json", TARGET_JSON);
 
-    let extra_rustflags = vec![
-        "-Cllvm-args=--inline-threshold=275".to_string(),
-    ];
+    let extra_rustflags = vec!["-Cllvm-args=--inline-threshold=275".to_string()];
     let guest = GuestBuild {
         manifest_dir: resolved,
         target_json_path,

@@ -142,7 +142,9 @@ pub fn collect_operands_for_service(
                     gas_limit: digest.accumulate_gas,
                     auth_trace: report.auth_output.clone(),
                     work_result: match &digest.result {
-                        grey_types::work::WorkResult::Ok(data) => AccumulationWorkResult::Ok(data.clone()),
+                        grey_types::work::WorkResult::Ok(data) => {
+                            AccumulationWorkResult::Ok(data.clone())
+                        }
                         _ => AccumulationWorkResult::Error,
                     },
                 });
@@ -345,10 +347,7 @@ pub fn accumulate_all(
 }
 
 /// Check if a preimage is solicited but not yet provided for a service (eq 12.36: Y).
-pub fn is_preimage_solicited(
-    account: &ServiceAccount,
-    data: &[u8],
-) -> bool {
+pub fn is_preimage_solicited(account: &ServiceAccount, data: &[u8]) -> bool {
     let hash = grey_crypto::blake2b_256(data);
     let len = data.len() as u32;
     // Solicited means: entry exists in preimage_info but NOT in preimage_lookup

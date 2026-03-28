@@ -2,7 +2,10 @@
 
 mod common;
 
-use common::{decode_hex, discover_test_stems, ed25519_from_hex, hash_from_hex, parse_work_report, sig_from_hex};
+use common::{
+    decode_hex, discover_test_stems, ed25519_from_hex, hash_from_hex, parse_work_report,
+    sig_from_hex,
+};
 use grey_state::statistics;
 use grey_types::header::*;
 use grey_types::state::{ValidatorRecord, ValidatorStatistics};
@@ -153,8 +156,19 @@ fn run_statistics_test(dir: &str, stem: &str) {
 
     // Apply transition using tiny config
     let config = grey_types::config::Config::tiny();
-    let incoming_reports: Vec<&grey_types::work::WorkReport> = extrinsic.guarantees.iter().map(|g| &g.report).collect();
-    statistics::update_statistics(&config, &mut stats, prior_slot, new_slot, author_index, &extrinsic, &incoming_reports, &[], &std::collections::BTreeMap::new());
+    let incoming_reports: Vec<&grey_types::work::WorkReport> =
+        extrinsic.guarantees.iter().map(|g| &g.report).collect();
+    statistics::update_statistics(
+        &config,
+        &mut stats,
+        prior_slot,
+        new_slot,
+        author_index,
+        &extrinsic,
+        &incoming_reports,
+        &[],
+        &std::collections::BTreeMap::new(),
+    );
 
     // Parse expected post-state
     let expected_curr: Vec<ValidatorRecord> = post["vals_curr_stats"]
@@ -176,11 +190,7 @@ fn run_statistics_test(dir: &str, stem: &str) {
         "current stats mismatch in {}",
         path
     );
-    assert_eq!(
-        stats.last, expected_last,
-        "last stats mismatch in {}",
-        path
-    );
+    assert_eq!(stats.last, expected_last, "last stats mismatch in {}", path);
 }
 
 const DIR: &str = "../../../spec/tests/vectors/statistics";

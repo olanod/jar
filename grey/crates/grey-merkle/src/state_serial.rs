@@ -115,13 +115,22 @@ pub fn serialize_state(state: &State, config: &Config) -> Vec<([u8; 31], Vec<u8>
     let mut kvs = Vec::new();
 
     // C(1) → α auth_pool
-    kvs.push((key_from_index(1), serialize_auth_pool(&state.auth_pool, config)));
+    kvs.push((
+        key_from_index(1),
+        serialize_auth_pool(&state.auth_pool, config),
+    ));
 
     // C(2) → ϕ auth_queue
-    kvs.push((key_from_index(2), serialize_auth_queue(&state.auth_queue, config)));
+    kvs.push((
+        key_from_index(2),
+        serialize_auth_queue(&state.auth_queue, config),
+    ));
 
     // C(3) → β recent_blocks
-    kvs.push((key_from_index(3), serialize_recent_blocks(&state.recent_blocks)));
+    kvs.push((
+        key_from_index(3),
+        serialize_recent_blocks(&state.recent_blocks),
+    ));
 
     // C(4) → γ safrole
     kvs.push((key_from_index(4), serialize_safrole(&state.safrole, config)));
@@ -133,13 +142,22 @@ pub fn serialize_state(state: &State, config: &Config) -> Vec<([u8; 31], Vec<u8>
     kvs.push((key_from_index(6), serialize_entropy(&state.entropy)));
 
     // C(7) → ι pending_validators
-    kvs.push((key_from_index(7), serialize_validators(&state.pending_validators)));
+    kvs.push((
+        key_from_index(7),
+        serialize_validators(&state.pending_validators),
+    ));
 
     // C(8) → κ current_validators
-    kvs.push((key_from_index(8), serialize_validators(&state.current_validators)));
+    kvs.push((
+        key_from_index(8),
+        serialize_validators(&state.current_validators),
+    ));
 
     // C(9) → λ previous_validators
-    kvs.push((key_from_index(9), serialize_validators(&state.previous_validators)));
+    kvs.push((
+        key_from_index(9),
+        serialize_validators(&state.previous_validators),
+    ));
 
     // C(10) → ρ pending_reports
     kvs.push((
@@ -226,8 +244,7 @@ pub fn serialize_state_with_opaque(
 ) -> Vec<([u8; 31], Vec<u8>)> {
     let mut kvs = serialize_state(state, config);
     // Collect state-generated keys for deduplication
-    let state_keys: std::collections::HashSet<[u8; 31]> =
-        kvs.iter().map(|(k, _)| *k).collect();
+    let state_keys: std::collections::HashSet<[u8; 31]> = kvs.iter().map(|(k, _)| *k).collect();
     // Only add opaque entries whose keys don't collide with state entries
     for (k, v) in opaque {
         if !state_keys.contains(k) {
@@ -261,7 +278,10 @@ fn serialize_auth_queue(auth_queue: &[Vec<Hash>], config: &Config) -> Vec<u8> {
     let mut buf = Vec::with_capacity(q * c * 32);
     // auth_queue is indexed [queue_slot][core], each entry is a Hash
     for slot_idx in 0..q {
-        let slot = auth_queue.get(slot_idx).map(|v| v.as_slice()).unwrap_or(&[]);
+        let slot = auth_queue
+            .get(slot_idx)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         for core_idx in 0..c {
             let hash = slot.get(core_idx).unwrap_or(&Hash::ZERO);
             buf.extend_from_slice(&hash.0);
@@ -461,11 +481,7 @@ fn serialize_statistics(stats: &ValidatorStatistics, config: &Config) -> Vec<u8>
 
     // π_C: C core records, compact-encoded fields (GP field order: d, p, i, x, z, e, l, u)
     for core_idx in 0..config.core_count as usize {
-        let cs = stats
-            .core_stats
-            .get(core_idx)
-            .cloned()
-            .unwrap_or_default();
+        let cs = stats.core_stats.get(core_idx).cloned().unwrap_or_default();
         encode_compact(cs.da_load, &mut buf);
         encode_compact(cs.popularity, &mut buf);
         encode_compact(cs.imports, &mut buf);
@@ -500,11 +516,7 @@ fn serialize_statistics(stats: &ValidatorStatistics, config: &Config) -> Vec<u8>
 }
 
 /// Serialize V validator records with E_4 (all fields as 4-byte LE).
-fn serialize_validator_records_e4(
-    records: &[ValidatorRecord],
-    count: usize,
-    buf: &mut Vec<u8>,
-) {
+fn serialize_validator_records_e4(records: &[ValidatorRecord], count: usize, buf: &mut Vec<u8>) {
     for i in 0..count {
         let r = records.get(i).cloned().unwrap_or_default();
         buf.extend_from_slice(&r.blocks_produced.to_le_bytes());
@@ -574,25 +586,38 @@ fn serialize_service_account_with_id(account: &ServiceAccount, sid: u32) -> Vec<
     // a_i = 2·|a_l| + |a_s|
     let computed_i = 2 * account.preimage_info.len() as u32 + account.storage.len() as u32;
     // a_o = Σ_{(h,z) ∈ K(a_l)} (81 + z) + Σ_{(x,y) ∈ a_s} (34 + |y| + |x|)
-    let computed_o: u64 = account.preimage_info.keys()
+    let computed_o: u64 = account
+        .preimage_info
+        .keys()
         .map(|&(_hash, length)| 81u64 + length as u64)
         .sum::<u64>()
-        + account.storage.iter()
+        + account
+            .storage
+            .iter()
             .map(|(k, v)| 34u64 + k.len() as u64 + v.len() as u64)
             .sum::<u64>();
 
     if computed_i != account.accumulation_counter {
         eprintln!(
             "SERVICE ACCOUNT i mismatch for svc {}: stored={}, computed={} (storage={}, preimage_info={})",
-            sid, account.accumulation_counter, computed_i,
-            account.storage.len(), account.preimage_info.len()
+            sid,
+            account.accumulation_counter,
+            computed_i,
+            account.storage.len(),
+            account.preimage_info.len()
         );
     }
     if computed_o != account.total_footprint {
         eprintln!(
             "SERVICE ACCOUNT o mismatch for svc {}: stored={}, computed={} (storage entries: {:?})",
-            sid, account.total_footprint, computed_o,
-            account.storage.iter().map(|(k, v)| (k.len(), v.len())).collect::<Vec<_>>()
+            sid,
+            account.total_footprint,
+            computed_o,
+            account
+                .storage
+                .iter()
+                .map(|(k, v)| (k.len(), v.len()))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -677,18 +702,15 @@ pub fn deserialize_state(
                     if value.len() < 4 {
                         return Err("timeslot too short".into());
                     }
-                    state.timeslot =
-                        u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+                    state.timeslot = u32::from_le_bytes([value[0], value[1], value[2], value[3]]);
                 }
                 12 => state.privileged_services = deserialize_privileged(value, config)?,
                 13 => state.statistics = deserialize_statistics(value, config)?,
                 14 => {
-                    state.accumulation_queue =
-                        deserialize_accumulation_queue(value, config)?;
+                    state.accumulation_queue = deserialize_accumulation_queue(value, config)?;
                 }
                 15 => {
-                    state.accumulation_history =
-                        deserialize_accumulation_history(value, config)?;
+                    state.accumulation_history = deserialize_accumulation_history(value, config)?;
                 }
                 16 => state.accumulation_outputs = deserialize_accumulation_outputs(value)?,
                 _ => {} // unknown component index, ignore
@@ -759,7 +781,11 @@ fn classify_key(key: &[u8; 31]) -> KeyType {
     }
 
     // Check for C(i, s) pattern: key[2], key[4], key[6] = 0, rest = 0
-    if key[0] >= 1 && key[0] <= 16 && key[2] == 0 && key[4] == 0 && key[6] == 0
+    if key[0] >= 1
+        && key[0] <= 16
+        && key[2] == 0
+        && key[4] == 0
+        && key[6] == 0
         && key[8..].iter().all(|&b| b == 0)
     {
         return KeyType::Component(key[0]);
@@ -785,17 +811,11 @@ fn read_hash(data: &[u8], pos: &mut usize) -> Result<Hash, String> {
     Ok(Hash(h))
 }
 
-
 fn read_u32(data: &[u8], pos: &mut usize) -> Result<u32, String> {
     if *pos + 4 > data.len() {
         return Err("unexpected end reading u32".into());
     }
-    let v = u32::from_le_bytes([
-        data[*pos],
-        data[*pos + 1],
-        data[*pos + 2],
-        data[*pos + 3],
-    ]);
+    let v = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
     Ok(v)
 }
@@ -1035,9 +1055,7 @@ fn deserialize_entropy(data: &[u8]) -> Result<[Hash; 4], String> {
     Ok(entropy)
 }
 
-fn deserialize_validators(
-    data: &[u8],
-) -> Result<Vec<grey_types::validator::ValidatorKey>, String> {
+fn deserialize_validators(data: &[u8]) -> Result<Vec<grey_types::validator::ValidatorKey>, String> {
     if data.len() % 336 != 0 {
         return Err(format!(
             "validator data length {} not a multiple of 336",
@@ -1131,10 +1149,7 @@ fn deserialize_privileged(data: &[u8], config: &Config) -> Result<PrivilegedServ
     })
 }
 
-fn deserialize_statistics(
-    data: &[u8],
-    config: &Config,
-) -> Result<ValidatorStatistics, String> {
+fn deserialize_statistics(data: &[u8], config: &Config) -> Result<ValidatorStatistics, String> {
     let mut pos = 0;
     let v = config.validators_count as usize;
     let c = config.core_count as usize;
@@ -1183,18 +1198,21 @@ fn deserialize_statistics(
         let exports = decode_compact(data, &mut pos)?;
         let accumulate_count = decode_compact(data, &mut pos)?;
         let accumulate_gas_used = decode_compact(data, &mut pos)?;
-        service_stats.insert(service_id, ServiceStatistics {
-            provided_count,
-            provided_size,
-            refinement_count,
-            refinement_gas_used,
-            imports,
-            extrinsic_count,
-            extrinsic_size,
-            exports,
-            accumulate_count,
-            accumulate_gas_used,
-        });
+        service_stats.insert(
+            service_id,
+            ServiceStatistics {
+                provided_count,
+                provided_size,
+                refinement_count,
+                refinement_gas_used,
+                imports,
+                extrinsic_count,
+                extrinsic_size,
+                exports,
+                accumulate_count,
+                accumulate_gas_used,
+            },
+        );
     }
 
     Ok(ValidatorStatistics {

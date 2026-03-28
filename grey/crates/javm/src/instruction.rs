@@ -175,27 +175,18 @@ pub enum Opcode {
     MinU = 230,
 }
 
-
 /// Lookup table for O(1) opcode validation. OPCODE_TABLE[byte] = 1 if valid.
 static OPCODE_TABLE: [u8; 256] = {
     let mut t = [0u8; 256];
     let valid: &[u8] = &[
-        0, 1, 2, 10, 20,
-        30, 31, 32, 33, 40,
-        50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
-        70, 71, 72, 73,
-        80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
-        100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
-        120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130,
-        131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141,
-        142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152,
-        153, 154, 155, 156, 157, 158, 159, 160, 161,
-        170, 171, 172, 173, 174, 175,
-        180,
-        190, 191, 192, 193, 194, 195, 196, 197, 198, 199,
-        200, 201, 202, 203, 204, 205, 206, 207, 208, 209,
-        210, 211, 212, 213, 214, 215, 216, 217, 218, 219,
-        220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230,
+        0, 1, 2, 10, 20, 30, 31, 32, 33, 40, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
+        70, 71, 72, 73, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 100, 101, 102, 103, 104, 105,
+        106, 107, 108, 109, 110, 111, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131,
+        132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149,
+        150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 170, 171, 172, 173, 174, 175,
+        180, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206,
+        207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224,
+        225, 226, 227, 228, 229, 230,
     ];
     let mut i = 0;
     while i < valid.len() {
@@ -324,27 +315,48 @@ static CATEGORY_LUT: [InstructionCategory; 256] = {
     t[40] = InstructionCategory::OneOffset;
     // OneRegOneImm
     let mut i = 50;
-    while i <= 62 { t[i] = InstructionCategory::OneRegOneImm; i += 1; }
+    while i <= 62 {
+        t[i] = InstructionCategory::OneRegOneImm;
+        i += 1;
+    }
     // OneRegTwoImm
     i = 70;
-    while i <= 73 { t[i] = InstructionCategory::OneRegTwoImm; i += 1; }
+    while i <= 73 {
+        t[i] = InstructionCategory::OneRegTwoImm;
+        i += 1;
+    }
     // OneRegImmOffset
     i = 80;
-    while i <= 90 { t[i] = InstructionCategory::OneRegImmOffset; i += 1; }
+    while i <= 90 {
+        t[i] = InstructionCategory::OneRegImmOffset;
+        i += 1;
+    }
     // TwoReg
     i = 100;
-    while i <= 111 { t[i] = InstructionCategory::TwoReg; i += 1; }
+    while i <= 111 {
+        t[i] = InstructionCategory::TwoReg;
+        i += 1;
+    }
     // TwoRegOneImm
     i = 120;
-    while i <= 161 { t[i] = InstructionCategory::TwoRegOneImm; i += 1; }
+    while i <= 161 {
+        t[i] = InstructionCategory::TwoRegOneImm;
+        i += 1;
+    }
     // TwoRegOneOffset
     i = 170;
-    while i <= 175 { t[i] = InstructionCategory::TwoRegOneOffset; i += 1; }
+    while i <= 175 {
+        t[i] = InstructionCategory::TwoRegOneOffset;
+        i += 1;
+    }
     // TwoRegTwoImm
     t[180] = InstructionCategory::TwoRegTwoImm;
     // ThreeReg
     i = 190;
-    while i <= 230 { t[i] = InstructionCategory::ThreeReg; i += 1; }
+    while i <= 230 {
+        t[i] = InstructionCategory::ThreeReg;
+        i += 1;
+    }
     t
 };
 
@@ -410,16 +422,37 @@ mod tests {
     fn test_categories() {
         assert_eq!(Opcode::Trap.category(), InstructionCategory::NoArgs);
         assert_eq!(Opcode::Ecalli.category(), InstructionCategory::OneImm);
-        assert_eq!(Opcode::LoadImm64.category(), InstructionCategory::OneRegExtImm);
+        assert_eq!(
+            Opcode::LoadImm64.category(),
+            InstructionCategory::OneRegExtImm
+        );
         assert_eq!(Opcode::StoreImmU8.category(), InstructionCategory::TwoImm);
         assert_eq!(Opcode::Jump.category(), InstructionCategory::OneOffset);
-        assert_eq!(Opcode::LoadImm.category(), InstructionCategory::OneRegOneImm);
-        assert_eq!(Opcode::StoreImmIndU8.category(), InstructionCategory::OneRegTwoImm);
-        assert_eq!(Opcode::LoadImmJump.category(), InstructionCategory::OneRegImmOffset);
+        assert_eq!(
+            Opcode::LoadImm.category(),
+            InstructionCategory::OneRegOneImm
+        );
+        assert_eq!(
+            Opcode::StoreImmIndU8.category(),
+            InstructionCategory::OneRegTwoImm
+        );
+        assert_eq!(
+            Opcode::LoadImmJump.category(),
+            InstructionCategory::OneRegImmOffset
+        );
         assert_eq!(Opcode::MoveReg.category(), InstructionCategory::TwoReg);
-        assert_eq!(Opcode::AddImm32.category(), InstructionCategory::TwoRegOneImm);
-        assert_eq!(Opcode::BranchEq.category(), InstructionCategory::TwoRegOneOffset);
-        assert_eq!(Opcode::LoadImmJumpInd.category(), InstructionCategory::TwoRegTwoImm);
+        assert_eq!(
+            Opcode::AddImm32.category(),
+            InstructionCategory::TwoRegOneImm
+        );
+        assert_eq!(
+            Opcode::BranchEq.category(),
+            InstructionCategory::TwoRegOneOffset
+        );
+        assert_eq!(
+            Opcode::LoadImmJumpInd.category(),
+            InstructionCategory::TwoRegTwoImm
+        );
         assert_eq!(Opcode::Add64.category(), InstructionCategory::ThreeReg);
     }
 }

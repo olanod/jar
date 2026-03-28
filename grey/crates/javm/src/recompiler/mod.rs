@@ -17,8 +17,8 @@ pub mod predecode;
 pub mod signal;
 
 use crate::vm::ExitReason;
-use codegen::{Compiler, HelperFns};
 use crate::{Gas, PVM_REGISTER_COUNT};
+use codegen::{Compiler, HelperFns};
 
 /// JIT execution context passed to compiled code via R15.
 /// Must be #[repr(C)] with exact field ordering matching codegen offsets.
@@ -96,12 +96,21 @@ impl NativeCode {
         unsafe {
             std::ptr::copy_nonoverlapping(code.as_ptr(), ptr, len);
             // Make executable (and read-only)
-            if libc::mprotect(ptr as *mut libc::c_void, len, libc::PROT_READ | libc::PROT_EXEC) != 0 {
+            if libc::mprotect(
+                ptr as *mut libc::c_void,
+                len,
+                libc::PROT_READ | libc::PROT_EXEC,
+            ) != 0
+            {
                 libc::munmap(ptr as *mut libc::c_void, len);
                 return Err("mprotect failed".into());
             }
         }
-        Ok(Self { ptr, len, mmap_cap: len })
+        Ok(Self {
+            ptr,
+            len,
+            mmap_cap: len,
+        })
     }
 
     /// Get the function pointer for the compiled code entry.
@@ -141,8 +150,8 @@ struct FlatMemory {
 }
 
 const FLAT_BUF_SIZE: usize = 1 << 32; // 4GB virtual
-const NUM_PAGES: usize = 1 << 20;     // 2^20 = 1M pages
-const CTX_PAGE: usize = 4096;         // JitContext page
+const NUM_PAGES: usize = 1 << 20; // 2^20 = 1M pages
+const CTX_PAGE: usize = 4096; // JitContext page
 const HEADER_SIZE: usize = NUM_PAGES + CTX_PAGE; // perms + ctx page before guest mem
 
 impl FlatMemory {
@@ -179,17 +188,34 @@ impl FlatMemory {
         // Copy data directly into flat buffer
         unsafe {
             if !layout.arg_data.is_empty() {
-                std::ptr::copy_nonoverlapping(layout.arg_data.as_ptr(), buf.add(layout.arg_start as usize), layout.arg_data.len());
+                std::ptr::copy_nonoverlapping(
+                    layout.arg_data.as_ptr(),
+                    buf.add(layout.arg_start as usize),
+                    layout.arg_data.len(),
+                );
             }
             if !layout.ro_data.is_empty() {
-                std::ptr::copy_nonoverlapping(layout.ro_data.as_ptr(), buf.add(layout.ro_start as usize), layout.ro_data.len());
+                std::ptr::copy_nonoverlapping(
+                    layout.ro_data.as_ptr(),
+                    buf.add(layout.ro_start as usize),
+                    layout.ro_data.len(),
+                );
             }
             if !layout.rw_data.is_empty() {
-                std::ptr::copy_nonoverlapping(layout.rw_data.as_ptr(), buf.add(layout.rw_start as usize), layout.rw_data.len());
+                std::ptr::copy_nonoverlapping(
+                    layout.rw_data.as_ptr(),
+                    buf.add(layout.rw_start as usize),
+                    layout.rw_data.len(),
+                );
             }
         }
 
-        Some(Self { region, region_size, buf, perms })
+        Some(Self {
+            region,
+            region_size,
+            buf,
+            perms,
+        })
     }
 
     /// Get the pointer where JitContext should be placed (buf - CTX_PAGE).
@@ -197,7 +223,7 @@ impl FlatMemory {
         unsafe { self.buf.sub(CTX_PAGE) }
     }
 
-/// Mark pages beyond heap_top as PROT_NONE (guard pages).
+    /// Mark pages beyond heap_top as PROT_NONE (guard pages).
     /// Pages [0, heap_top) remain PROT_READ|PROT_WRITE.
     #[cfg(feature = "signals")]
     fn install_guard_pages(&self, heap_top: u32) {
@@ -206,11 +232,7 @@ impl FlatMemory {
         let guard_len = FLAT_BUF_SIZE - heap_top_page * 4096;
         if guard_len > 0 {
             unsafe {
-                libc::mprotect(
-                    guard_start as *mut libc::c_void,
-                    guard_len,
-                    libc::PROT_NONE,
-                );
+                libc::mprotect(guard_start as *mut libc::c_void, guard_len, libc::PROT_NONE);
             }
         }
     }
@@ -298,7 +320,9 @@ extern "sysv64" fn mem_read_u8(ctx: *mut JitContext, addr: u32) -> u64 {
     if flat_check_perm(ctx, addr, 1, 1) {
         return unsafe { flat_read(ctx, addr, 1) };
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 0
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    0
 }
 
 extern "sysv64" fn mem_read_u16(ctx: *mut JitContext, addr: u32) -> u64 {
@@ -306,7 +330,9 @@ extern "sysv64" fn mem_read_u16(ctx: *mut JitContext, addr: u32) -> u64 {
     if flat_check_perm(ctx, addr, 2, 1) {
         return unsafe { flat_read(ctx, addr, 2) };
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 0
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    0
 }
 
 extern "sysv64" fn mem_read_u32(ctx: *mut JitContext, addr: u32) -> u64 {
@@ -314,7 +340,9 @@ extern "sysv64" fn mem_read_u32(ctx: *mut JitContext, addr: u32) -> u64 {
     if flat_check_perm(ctx, addr, 4, 1) {
         return unsafe { flat_read(ctx, addr, 4) };
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 0
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    0
 }
 
 extern "sysv64" fn mem_read_u64_fn(ctx: *mut JitContext, addr: u32) -> u64 {
@@ -322,44 +350,62 @@ extern "sysv64" fn mem_read_u64_fn(ctx: *mut JitContext, addr: u32) -> u64 {
     if flat_check_perm(ctx, addr, 8, 1) {
         return unsafe { flat_read(ctx, addr, 8) };
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 0
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    0
 }
 
 /// Memory write helpers — write to flat buffer.
 extern "sysv64" fn mem_write_u8(ctx: *mut JitContext, addr: u32, value: u64) -> u64 {
     let ctx = unsafe { &mut *ctx };
     if flat_check_perm(ctx, addr, 1, 2) {
-        unsafe { flat_write(ctx, addr, &[value as u8]); }
+        unsafe {
+            flat_write(ctx, addr, &[value as u8]);
+        }
         return 0;
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 1
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    1
 }
 
 extern "sysv64" fn mem_write_u16(ctx: *mut JitContext, addr: u32, value: u64) -> u64 {
     let ctx = unsafe { &mut *ctx };
     if flat_check_perm(ctx, addr, 2, 2) {
-        unsafe { flat_write(ctx, addr, &(value as u16).to_le_bytes()); }
+        unsafe {
+            flat_write(ctx, addr, &(value as u16).to_le_bytes());
+        }
         return 0;
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 1
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    1
 }
 
 extern "sysv64" fn mem_write_u32(ctx: *mut JitContext, addr: u32, value: u64) -> u64 {
     let ctx = unsafe { &mut *ctx };
     if flat_check_perm(ctx, addr, 4, 2) {
-        unsafe { flat_write(ctx, addr, &(value as u32).to_le_bytes()); }
+        unsafe {
+            flat_write(ctx, addr, &(value as u32).to_le_bytes());
+        }
         return 0;
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 1
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    1
 }
 
 extern "sysv64" fn mem_write_u64_fn(ctx: *mut JitContext, addr: u32, value: u64) -> u64 {
     let ctx = unsafe { &mut *ctx };
     if flat_check_perm(ctx, addr, 8, 2) {
-        unsafe { flat_write(ctx, addr, &value.to_le_bytes()); }
+        unsafe {
+            flat_write(ctx, addr, &value.to_le_bytes());
+        }
         return 0;
     }
-    ctx.exit_reason = 3; ctx.exit_arg = addr; 1
+    ctx.exit_reason = 3;
+    ctx.exit_arg = addr;
+    1
 }
 
 /// Sbrk helper. ctx: *mut JitContext, size: u64 → result in return.
@@ -386,7 +432,11 @@ extern "sysv64" fn sbrk_helper(ctx: *mut JitContext, size: u64) -> u64 {
     let new_top_u32 = new_top as u32;
     // Map any pages in [old_top, new_top) that aren't mapped yet
     let start_page = old_top / ps;
-    let end_page = if new_top_u32 == 0 { u32::MAX / ps } else { (new_top_u32 - 1) / ps };
+    let end_page = if new_top_u32 == 0 {
+        u32::MAX / ps
+    } else {
+        (new_top_u32 - 1) / ps
+    };
     let perms = ctx.flat_perms as *mut u8;
     for p in start_page..=end_page {
         unsafe {
@@ -405,7 +455,11 @@ extern "sysv64" fn sbrk_helper(ctx: *mut JitContext, size: u64) -> u64 {
             unsafe {
                 let start = ctx.flat_buf.add(old_page * 4096);
                 let len = (new_page - old_page) * 4096;
-                libc::mprotect(start as *mut libc::c_void, len, libc::PROT_READ | libc::PROT_WRITE);
+                libc::mprotect(
+                    start as *mut libc::c_void,
+                    len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                );
             }
         }
     }
@@ -468,8 +522,7 @@ impl RecompiledPvm {
 
         // Initialize flat memory — JitContext will live inside this region
         let _t1 = std::time::Instant::now();
-        let flat_memory = FlatMemory::new(&layout)
-            .ok_or("failed to mmap flat memory region")?;
+        let flat_memory = FlatMemory::new(&layout).ok_or("failed to mmap flat memory region")?;
         let _t_flat = _t1.elapsed();
 
         // Place JitContext inside the flat memory region (at buf - CTX_PAGE)
@@ -542,9 +595,14 @@ impl RecompiledPvm {
         let _t3 = std::time::Instant::now();
         let native_code = if let Some(mmap_ptr) = compile_result.mmap_ptr {
             // Code is already mmap'd and PROT_READ|PROT_EXEC — no copy needed.
-            let nc = NativeCode { ptr: mmap_ptr, len: compile_result.mmap_len, mmap_cap: compile_result.mmap_cap };
+            let nc = NativeCode {
+                ptr: mmap_ptr,
+                len: compile_result.mmap_len,
+                mmap_cap: compile_result.mmap_cap,
+            };
             if debug {
-                let code_slice = unsafe { std::slice::from_raw_parts(mmap_ptr, compile_result.mmap_len) };
+                let code_slice =
+                    unsafe { std::slice::from_raw_parts(mmap_ptr, compile_result.mmap_len) };
                 let _ = std::fs::write("/tmp/pvm_native.bin", code_slice);
                 tracing::debug!(
                     native_bytes = compile_result.mmap_len,
@@ -572,7 +630,8 @@ impl RecompiledPvm {
             let ss = Box::new(signal::SignalState {
                 code_start: native_code.ptr as usize,
                 code_end: native_code.ptr as usize + native_code.len,
-                exit_label_addr: native_code.ptr as usize + compile_result.exit_label_offset as usize,
+                exit_label_addr: native_code.ptr as usize
+                    + compile_result.exit_label_offset as usize,
                 ctx_ptr: ctx_raw,
                 trap_table: compile_result.trap_table,
             });
@@ -646,7 +705,9 @@ impl RecompiledPvm {
             }
 
             let entry = self.native_code.entry();
-            unsafe { entry(self.ctx); }
+            unsafe {
+                entry(self.ctx);
+            }
 
             #[cfg(feature = "signals")]
             signal::SIGNAL_STATE.with(|cell| cell.set(std::ptr::null_mut()));
@@ -696,9 +757,7 @@ impl RecompiledPvm {
             return None;
         }
         let target = self.jump_table[idx as usize];
-        if (target as usize) < self.bitmask.len()
-            && self.bitmask[target as usize] == 1
-        {
+        if (target as usize) < self.bitmask.len() && self.bitmask[target as usize] == 1 {
             Some(target)
         } else {
             None
@@ -709,19 +768,16 @@ impl RecompiledPvm {
 
     #[cold]
     fn handle_halt_exit(&mut self) -> ExitReason {
-
         ExitReason::Halt
     }
 
     #[cold]
     fn handle_panic_exit(&mut self) -> ExitReason {
-
         ExitReason::Panic
     }
 
     #[cold]
     fn handle_page_fault_exit(&mut self) -> ExitReason {
-
         ExitReason::PageFault(self.ctx().exit_arg)
     }
 
@@ -765,12 +821,17 @@ impl RecompiledPvm {
     /// Write a byte directly to the flat buffer.
     /// Returns true on success, false on page fault.
     pub fn write_byte(&mut self, addr: u32, value: u8) -> bool {
-        let fm = match self.flat_memory.as_ref() { Some(f) => f, None => return false };
+        let fm = match self.flat_memory.as_ref() {
+            Some(f) => f,
+            None => return false,
+        };
         let page = addr as usize / 4096;
         if page < NUM_PAGES {
             let perm = unsafe { *fm.perms.add(page) };
             if perm >= 2 {
-                unsafe { *fm.buf.add(addr as usize) = value; }
+                unsafe {
+                    *fm.buf.add(addr as usize) = value;
+                }
                 return true;
             }
         }
@@ -784,9 +845,13 @@ impl RecompiledPvm {
         for i in 0..len {
             let a = addr.wrapping_add(i);
             let page = a as usize / 4096;
-            if page >= NUM_PAGES { return None; }
+            if page >= NUM_PAGES {
+                return None;
+            }
             let perm = unsafe { *fm.perms.add(page) };
-            if perm < 1 { return None; }
+            if perm < 1 {
+                return None;
+            }
             result.push(unsafe { *fm.buf.add(a as usize) });
         }
         Some(result)
@@ -794,14 +859,23 @@ impl RecompiledPvm {
 
     /// Write bytes directly to flat buffer. Returns false on page fault.
     pub fn write_bytes(&mut self, addr: u32, data: &[u8]) -> bool {
-        let fm = match self.flat_memory.as_ref() { Some(f) => f, None => return false };
+        let fm = match self.flat_memory.as_ref() {
+            Some(f) => f,
+            None => return false,
+        };
         for (i, &byte) in data.iter().enumerate() {
             let a = addr.wrapping_add(i as u32);
             let page = a as usize / 4096;
-            if page >= NUM_PAGES { return false; }
+            if page >= NUM_PAGES {
+                return false;
+            }
             let perm = unsafe { *fm.perms.add(page) };
-            if perm < 2 { return false; }
-            unsafe { *fm.buf.add(a as usize) = byte; }
+            if perm < 2 {
+                return false;
+            }
+            unsafe {
+                *fm.buf.add(a as usize) = byte;
+            }
         }
         true
     }
@@ -847,7 +921,6 @@ impl RecompiledPvm {
     }
 }
 
-
 /// Initialize a recompiled PVM from a standard program blob.
 pub fn initialize_program_recompiled(
     blob: &[u8],
@@ -863,7 +936,8 @@ pub fn initialize_program_recompiled(
         parsed.registers,
         gas,
         parsed.layout,
-    ).ok()?;
+    )
+    .ok()?;
 
     rpvm.ctx_mut().heap_base = parsed.heap_base;
     rpvm.ctx_mut().heap_top = parsed.heap_top;
@@ -879,8 +953,10 @@ pub fn initialize_program_recompiled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codegen::{CTX_REGS, CTX_GAS, CTX_EXIT_REASON, CTX_EXIT_ARG, CTX_ENTRY_PC, CTX_PC,
-                  CTX_DISPATCH_TABLE, CTX_CODE_BASE, CTX_OFFSET};
+    use codegen::{
+        CTX_CODE_BASE, CTX_DISPATCH_TABLE, CTX_ENTRY_PC, CTX_EXIT_ARG, CTX_EXIT_REASON, CTX_GAS,
+        CTX_OFFSET, CTX_PC, CTX_REGS,
+    };
 
     #[test]
     fn test_jit_context_layout() {
@@ -917,12 +993,21 @@ mod tests {
 
         assert_eq!(&ctx.regs as *const _ as usize - base, so(CTX_REGS));
         assert_eq!(&ctx.gas as *const _ as usize - base, so(CTX_GAS));
-        assert_eq!(&ctx.exit_reason as *const _ as usize - base, so(CTX_EXIT_REASON));
+        assert_eq!(
+            &ctx.exit_reason as *const _ as usize - base,
+            so(CTX_EXIT_REASON)
+        );
         assert_eq!(&ctx.exit_arg as *const _ as usize - base, so(CTX_EXIT_ARG));
         assert_eq!(&ctx.entry_pc as *const _ as usize - base, so(CTX_ENTRY_PC));
         assert_eq!(&ctx.pc as *const _ as usize - base, so(CTX_PC));
-        assert_eq!(&ctx.dispatch_table as *const _ as usize - base, so(CTX_DISPATCH_TABLE));
-        assert_eq!(&ctx.code_base as *const _ as usize - base, so(CTX_CODE_BASE));
+        assert_eq!(
+            &ctx.dispatch_table as *const _ as usize - base,
+            so(CTX_DISPATCH_TABLE)
+        );
+        assert_eq!(
+            &ctx.code_base as *const _ as usize - base,
+            so(CTX_CODE_BASE)
+        );
     }
 
     fn test_layout() -> crate::program::DataLayout {
@@ -943,8 +1028,9 @@ mod tests {
         let bitmask = vec![1u8];
         let registers = [0u64; 13];
 
-        let mut pvm = RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm =
+            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
+                .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::Panic);
     }
@@ -955,8 +1041,9 @@ mod tests {
         let bitmask = vec![1, 0];
         let registers = [0u64; 13];
 
-        let mut pvm = RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm =
+            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
+                .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::HostCall(42));
     }
@@ -967,8 +1054,9 @@ mod tests {
         let bitmask = vec![1, 0, 0, 1];
         let registers = [0u64; 13];
 
-        let mut pvm = RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm =
+            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
+                .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(pvm.registers()[0], 123);
         assert_eq!(exit, ExitReason::Panic);
@@ -977,16 +1065,17 @@ mod tests {
     #[test]
     fn test_recompile_add64() {
         let code = vec![
-            51, 0, 10,     // load_imm φ[0], 10
-            51, 1, 20,     // load_imm φ[1], 20
-            200, 0x10, 2,  // add64 φ[2] = φ[0] + φ[1]
-            10, 0,         // ecalli 0
+            51, 0, 10, // load_imm φ[0], 10
+            51, 1, 20, // load_imm φ[1], 20
+            200, 0x10, 2, // add64 φ[2] = φ[0] + φ[1]
+            10, 0, // ecalli 0
         ];
         let bitmask = vec![1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
         let registers = [0u64; 13];
 
-        let mut pvm = RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm =
+            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
+                .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(pvm.registers()[2], 30);
         assert_eq!(exit, ExitReason::HostCall(0));
@@ -1011,17 +1100,24 @@ mod tests {
         // r3 = (r2 < r1) ? 1 : 0  (should be 1 because of overflow)
         // Then ecalli 0 to exit
         let code = vec![
-            200, 0x01, 2,   // add64: rd=2, ra=0, rb=1 (r2 = r0 + r1)
-            216, 0x12, 3,   // setLtU: rd=3, ra=2, rb=1 (r3 = r2 < r1)
-            10, 0,          // ecalli 0
+            200, 0x01, 2, // add64: rd=2, ra=0, rb=1 (r2 = r0 + r1)
+            216, 0x12, 3, // setLtU: rd=3, ra=2, rb=1 (r3 = r2 < r1)
+            10, 0, // ecalli 0
         ];
         let mk_bitmask = || vec![1u8, 0, 0, 1, 0, 0, 1, 0];
         let mut registers = [0u64; 13];
-        registers[0] = u64::MAX;  // r0 = MAX
-        registers[1] = 1;         // r1 = 1
+        registers[0] = u64::MAX; // r0 = MAX
+        registers[1] = 1; // r1 = 1
 
-        let mut pvm = RecompiledPvm::new(&code, mk_bitmask(), vec![], registers, 10000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            mk_bitmask(),
+            vec![],
+            registers,
+            10000,
+            Some(test_layout()),
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::HostCall(0));
         assert_eq!(pvm.registers()[2], 0); // MAX + 1 = 0 (overflow)
@@ -1031,8 +1127,15 @@ mod tests {
         let mut registers2 = [0u64; 13];
         registers2[0] = 5;
         registers2[1] = 3;
-        let mut pvm2 = RecompiledPvm::new(&code, mk_bitmask(), vec![], registers2, 10000, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm2 = RecompiledPvm::new(
+            &code,
+            mk_bitmask(),
+            vec![],
+            registers2,
+            10000,
+            Some(test_layout()),
+        )
+        .expect("compilation should succeed");
         let exit2 = pvm2.run();
         assert_eq!(exit2, ExitReason::HostCall(0));
         assert_eq!(pvm2.registers()[2], 8); // 5 + 3 = 8
@@ -1054,13 +1157,13 @@ mod tests {
         let gas = 900_000u64;
 
         // Initialize interpreter
-        let mut interp = crate::program::initialize_program(&blob, args, gas)
-            .expect("interpreter init failed");
+        let mut interp =
+            crate::program::initialize_program(&blob, args, gas).expect("interpreter init failed");
         interp.pc = 5;
 
         // Initialize recompiler
-        let mut recomp = initialize_program_recompiled(&blob, args, gas)
-            .expect("recompiler init failed");
+        let mut recomp =
+            initialize_program_recompiled(&blob, args, gas).expect("recompiler init failed");
         recomp.set_pc(5);
 
         // Run both until first host call and compare
@@ -1074,9 +1177,20 @@ mod tests {
             let recomp_gas = recomp.gas();
             let interp_gas = interp.gas;
 
-            eprintln!("Step {}: interp_exit={:?} recomp_exit={:?}", step, interp_exit_clone, recomp_exit);
-            eprintln!("  interp: gas={} pc={} regs={:?}", interp_gas, interp.pc, &interp.registers);
-            eprintln!("  recomp: gas={} pc={} regs={:?}", recomp_gas, recomp.pc(), recomp.registers());
+            eprintln!(
+                "Step {}: interp_exit={:?} recomp_exit={:?}",
+                step, interp_exit_clone, recomp_exit
+            );
+            eprintln!(
+                "  interp: gas={} pc={} regs={:?}",
+                interp_gas, interp.pc, &interp.registers
+            );
+            eprintln!(
+                "  recomp: gas={} pc={} regs={:?}",
+                recomp_gas,
+                recomp.pc(),
+                recomp.registers()
+            );
 
             // Check for mismatch and print trace if found
             let gas_match = interp_gas == recomp_gas;
@@ -1094,15 +1208,26 @@ mod tests {
                     eprintln!("  [{:3}] pc={:5} op={}", i, pc, opname);
                 }
                 if !gas_match {
-                    panic!("Gas mismatch at step {}: interp={} recomp={}", step, interp_gas, recomp_gas);
+                    panic!(
+                        "Gas mismatch at step {}: interp={} recomp={}",
+                        step, interp_gas, recomp_gas
+                    );
                 }
                 if !exit_match {
-                    panic!("Exit mismatch at step {}: interp={:?} recomp={:?}", step, interp_exit_clone, recomp_exit);
+                    panic!(
+                        "Exit mismatch at step {}: interp={:?} recomp={:?}",
+                        step, interp_exit_clone, recomp_exit
+                    );
                 }
                 for i in 0..13 {
                     if interp.registers[i] != recomp.registers()[i] {
-                        panic!("Register φ[{}] mismatch at step {}: interp=0x{:x} recomp=0x{:x}",
-                            i, step, interp.registers[i], recomp.registers()[i]);
+                        panic!(
+                            "Register φ[{}] mismatch at step {}: interp=0x{:x} recomp=0x{:x}",
+                            i,
+                            step,
+                            interp.registers[i],
+                            recomp.registers()[i]
+                        );
                     }
                 }
             }
@@ -1120,8 +1245,14 @@ mod tests {
             }
 
             match interp_exit_clone {
-                ExitReason::Halt | ExitReason::Panic | ExitReason::OutOfGas | ExitReason::PageFault(_) => {
-                    eprintln!("Both exited with {:?} after {} steps", interp_exit_clone, step);
+                ExitReason::Halt
+                | ExitReason::Panic
+                | ExitReason::OutOfGas
+                | ExitReason::PageFault(_) => {
+                    eprintln!(
+                        "Both exited with {:?} after {} steps",
+                        interp_exit_clone, step
+                    );
                     break;
                 }
                 ExitReason::HostCall(id) => {

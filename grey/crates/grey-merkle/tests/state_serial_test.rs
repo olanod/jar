@@ -85,17 +85,17 @@ fn test_roundtrip_initial_state() {
         kvs.len()
     );
 
-    for (i, ((re_key, re_val), (orig_key, orig_val))) in
-        re_kvs.iter().zip(kvs.iter()).enumerate()
-    {
+    for (i, ((re_key, re_val), (orig_key, orig_val))) in re_kvs.iter().zip(kvs.iter()).enumerate() {
         assert_eq!(
-            re_key, orig_key,
+            re_key,
+            orig_key,
             "Key mismatch at entry {i}: got {} expected {}",
             hex::encode(re_key),
             hex::encode(orig_key)
         );
         assert_eq!(
-            re_val, orig_val,
+            re_val,
+            orig_val,
             "Value mismatch at entry {i} (key {}): got {} bytes expected {} bytes\n  got: {}\n  exp: {}",
             hex::encode(re_key),
             re_val.len(),
@@ -119,7 +119,8 @@ fn test_state_root_matches_expected() {
     let root = compute_state_root_from_kvs(&kvs);
 
     assert_eq!(
-        root.0, expected,
+        root.0,
+        expected,
         "State root mismatch:\n  computed: {}\n  expected: {}",
         hex::encode(root.0),
         hex::encode(expected)

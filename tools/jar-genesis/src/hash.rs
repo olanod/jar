@@ -23,7 +23,9 @@ pub fn normalize_commit_ref(s: &str) -> String {
 
 /// Check if a string is a valid 40-character lowercase hex hash.
 pub fn is_valid_hex_hash(s: &str) -> bool {
-    s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    s.len() == 40
+        && s.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 /// Strip carriage returns from a string.

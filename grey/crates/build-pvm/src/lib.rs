@@ -19,8 +19,7 @@ pub fn build(manifest_dir: &str) -> PathBuf {
 /// Build a PolkaVM blob with a custom minimum stack size.
 pub fn build_with_options(manifest_dir: &str, min_stack_size: u32) -> PathBuf {
     let resolved = build_crate::resolve_manifest_dir(manifest_dir);
-    let target_json_path =
-        build_crate::write_target_json("riscv64emac-polkavm.json", TARGET_JSON);
+    let target_json_path = build_crate::write_target_json("riscv64emac-polkavm.json", TARGET_JSON);
 
     let guest = GuestBuild {
         manifest_dir: resolved.clone(),
@@ -52,12 +51,7 @@ pub fn build_with_options(manifest_dir: &str, min_stack_size: u32) -> PathBuf {
     .expect("failed to link ELF to PolkaVM blob");
 
     // Derive blob name from the crate directory name
-    let crate_name = resolved
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .to_string();
+    let crate_name = resolved.file_name().unwrap().to_str().unwrap().to_string();
 
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let blob_path = PathBuf::from(&out_dir).join(format!("{crate_name}.polkavm"));

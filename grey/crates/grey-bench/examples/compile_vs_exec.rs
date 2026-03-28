@@ -1,6 +1,5 @@
 /// Measure compile time vs execution time for sort benchmark.
 /// Helps identify whether compilation or execution is the bottleneck.
-
 use grey_bench::*;
 use std::time::Instant;
 
@@ -20,7 +19,8 @@ fn main() {
     let mut exec_us = Vec::new();
     for _ in 0..ITERS {
         let t0 = Instant::now();
-        let mut pvm = javm::recompiler::initialize_program_recompiled(&sort_blob, &[], GAS_LIMIT).unwrap();
+        let mut pvm =
+            javm::recompiler::initialize_program_recompiled(&sort_blob, &[], GAS_LIMIT).unwrap();
         compile_us.push(t0.elapsed().as_micros());
 
         let t1 = Instant::now();
@@ -35,7 +35,10 @@ fn main() {
     }
     let gc = median(&mut compile_us);
     let ge = median(&mut exec_us);
-    eprintln!("grey-recompiler  compile={gc:>6}µs  exec={ge:>6}µs  total={:>6}µs", gc + ge);
+    eprintln!(
+        "grey-recompiler  compile={gc:>6}µs  exec={ge:>6}µs  total={:>6}µs",
+        gc + ge
+    );
 
     // --- PolkaVM compiler ---
     let pvm_blob = polkavm_sort_blob(500);
@@ -73,5 +76,8 @@ fn main() {
     }
     let pc = median(&mut compile_us);
     let pe = median(&mut exec_us);
-    eprintln!("polkavm-compiler compile={pc:>6}µs  exec={pe:>6}µs  total={:>6}µs", pc + pe);
+    eprintln!(
+        "polkavm-compiler compile={pc:>6}µs  exec={pe:>6}µs  total={:>6}µs",
+        pc + pe
+    );
 }

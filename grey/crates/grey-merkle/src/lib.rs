@@ -12,9 +12,9 @@ pub mod mmr;
 pub mod state_serial;
 pub mod trie;
 
+use grey_types::Hash;
 use grey_types::config::Config;
 use grey_types::state::State;
-use grey_types::Hash;
 
 /// Compute the state Merklization Mσ(σ) — compose T(σ) with merkle_root.
 pub fn compute_state_root(state: &State, config: &Config) -> Hash {
@@ -24,7 +24,10 @@ pub fn compute_state_root(state: &State, config: &Config) -> Hash {
 
 /// Compute the state root from pre-serialized KV pairs.
 pub fn compute_state_root_from_kvs(kvs: &[([u8; 31], Vec<u8>)]) -> Hash {
-    let refs: Vec<(&[u8], &[u8])> = kvs.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+    let refs: Vec<(&[u8], &[u8])> = kvs
+        .iter()
+        .map(|(k, v)| (k.as_slice(), v.as_slice()))
+        .collect();
     trie::merkle_root(&refs)
 }
 
@@ -201,10 +204,8 @@ mod tests {
     fn test_constant_depth_merkle_root_two() {
         let a = b"seg_a";
         let b_data = b"seg_b";
-        let root = constant_depth_merkle_root(
-            &[a.as_ref(), b_data.as_ref()],
-            grey_crypto::blake2b_256,
-        );
+        let root =
+            constant_depth_merkle_root(&[a.as_ref(), b_data.as_ref()], grey_crypto::blake2b_256);
 
         // C([a,b]) = [H("leaf"⌢a), H("leaf"⌢b)] (already power of 2)
         // N of 2 items = H("node" ⌢ N([left]) ⌢ N([right]))

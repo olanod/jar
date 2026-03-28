@@ -23,7 +23,12 @@ pub fn parse_review_comment(
         let line = line.trim();
         if let Some(rest) = line.strip_prefix("difficulty:") {
             difficulty = Some(parse_ranking(
-                rest, reviewer, "difficulty", head_sha, targets, warnings,
+                rest,
+                reviewer,
+                "difficulty",
+                head_sha,
+                targets,
+                warnings,
             ));
         } else if let Some(rest) = line.strip_prefix("novelty:") {
             novelty = Some(parse_ranking(
@@ -122,8 +127,15 @@ pub fn collect(
 
     // Fetch all comments on the PR
     let repo = std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| {
-        let output = github::gh(&["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-            .expect("failed to get repo name");
+        let output = github::gh(&[
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "--jq",
+            ".nameWithOwner",
+        ])
+        .expect("failed to get repo name");
         output.trim().to_string()
     });
 
@@ -146,8 +158,7 @@ pub fn collect(
         let author = comment["author"].as_str().unwrap_or("");
         let body = comment["body"].as_str().unwrap_or("");
 
-        if let Some(review) = parse_review_comment(body, author, head_sha, targets, &mut warnings)
-        {
+        if let Some(review) = parse_review_comment(body, author, head_sha, targets, &mut warnings) {
             // Remove existing review from same reviewer
             reviews.retain(|r| r.reviewer != author);
             review_comment_ids.retain(|(r, _)| r != author);
@@ -232,10 +243,7 @@ mod tests {
             review.difficulty_ranking,
             vec![TARGET_A, HEAD_SHA, TARGET_B]
         );
-        assert_eq!(
-            review.novelty_ranking,
-            vec![HEAD_SHA, TARGET_A, TARGET_B]
-        );
+        assert_eq!(review.novelty_ranking, vec![HEAD_SHA, TARGET_A, TARGET_B]);
         assert_eq!(review.verdict, Verdict::Merge);
     }
 
@@ -258,10 +266,7 @@ mod tests {
         let mut warnings = vec![];
         let review =
             parse_review_comment(&body, "carol", HEAD_SHA, &targets(), &mut warnings).unwrap();
-        assert!(
-            warnings.is_empty(),
-            "unexpected warnings: {warnings:?}"
-        );
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
         assert_eq!(
             review.difficulty_ranking,
             vec![TARGET_A, HEAD_SHA, TARGET_B]
@@ -294,13 +299,11 @@ mod tests {
         let mut warnings = vec![];
         let mut reviews: Vec<EmbeddedReview> = Vec::new();
 
-        if let Some(r) = parse_review_comment(body1, "alice", HEAD_SHA, &targets(), &mut warnings)
-        {
+        if let Some(r) = parse_review_comment(body1, "alice", HEAD_SHA, &targets(), &mut warnings) {
             reviews.retain(|r| r.reviewer != "alice");
             reviews.push(r);
         }
-        if let Some(r) = parse_review_comment(body2, "alice", HEAD_SHA, &targets(), &mut warnings)
-        {
+        if let Some(r) = parse_review_comment(body2, "alice", HEAD_SHA, &targets(), &mut warnings) {
             reviews.retain(|r| r.reviewer != "alice");
             reviews.push(r);
         }
@@ -337,7 +340,10 @@ mod tests {
         let mut warnings = vec![];
         let review =
             parse_review_comment(body, "alice", HEAD_SHA, &targets(), &mut warnings).unwrap();
-        assert!(warnings.is_empty(), "prose should not interfere: {warnings:?}");
+        assert!(
+            warnings.is_empty(),
+            "prose should not interfere: {warnings:?}"
+        );
         assert_eq!(review.verdict, Verdict::Merge);
     }
 
@@ -372,7 +378,10 @@ mod tests {
         let review =
             parse_review_comment(&body, "carol", HEAD_SHA, &targets(), &mut warnings).unwrap();
         assert!(warnings.is_empty(), "URLs should normalize: {warnings:?}");
-        assert_eq!(review.difficulty_ranking, vec![TARGET_A, HEAD_SHA, TARGET_B]);
+        assert_eq!(
+            review.difficulty_ranking,
+            vec![TARGET_A, HEAD_SHA, TARGET_B]
+        );
         assert_eq!(review.novelty_ranking, vec![HEAD_SHA, TARGET_A, TARGET_B]);
     }
 
@@ -425,7 +434,10 @@ mod tests {
         let trailer = r#"{"commitHash":"c395102ceab5cdbf22b88f9a3d80175c2d76ce14","contributor":"sorpaas","epoch":1774080150,"founderOverride":false,"mergeVotes":["sorpaas"],"metaReviews":[],"rejectVotes":[],"reviewers":["sorpaas"],"score":{"designQuality":100,"difficulty":100,"novelty":100},"weightDelta":100}"#;
 
         let index: crate::types::CommitIndex = serde_json::from_str(trailer).unwrap();
-        assert_eq!(index.commit_hash, "c395102ceab5cdbf22b88f9a3d80175c2d76ce14");
+        assert_eq!(
+            index.commit_hash,
+            "c395102ceab5cdbf22b88f9a3d80175c2d76ce14"
+        );
         assert_eq!(index.contributor, "sorpaas");
         assert_eq!(index.score.difficulty, 100);
         assert_eq!(index.weight_delta, 100);

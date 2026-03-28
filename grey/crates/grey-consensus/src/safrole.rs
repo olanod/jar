@@ -90,11 +90,7 @@ pub fn fallback_key_sequence(
 /// Merge new tickets into the ticket accumulator, keeping only the lowest E entries (eq 6.34).
 ///
 /// `gamma_a' = lowest E entries from (n ∪ existing)` sorted by ticket identifier.
-pub fn merge_tickets(
-    existing: &[Ticket],
-    new_tickets: &[Ticket],
-    max_size: usize,
-) -> Vec<Ticket> {
+pub fn merge_tickets(existing: &[Ticket], new_tickets: &[Ticket], max_size: usize) -> Vec<Ticket> {
     let mut all: Vec<Ticket> = existing.to_vec();
     all.extend(new_tickets.iter().cloned());
 
@@ -109,10 +105,7 @@ pub fn merge_tickets(
 /// Filter offending validators from a key set (eq 6.14: Φ).
 ///
 /// Replaces any validator whose Ed25519 key is in the offenders set with the null key.
-pub fn filter_offenders(
-    keys: &[ValidatorKey],
-    offenders: &Judgments,
-) -> Vec<ValidatorKey> {
+pub fn filter_offenders(keys: &[ValidatorKey], offenders: &Judgments) -> Vec<ValidatorKey> {
     keys.iter()
         .map(|k| {
             if offenders.offenders.contains(&k.ed25519) {
@@ -183,9 +176,9 @@ pub fn apply_safrole(
 
             (
                 filtered,                           // γP' = Φ(ι)
-                state.safrole.pending_keys.clone(),  // κ' = γP
-                state.current_validators.clone(),    // λ' = κ
-                ring_root,                           // γZ' = O([k_b | k ← γP])
+                state.safrole.pending_keys.clone(), // κ' = γP
+                state.current_validators.clone(),   // λ' = κ
+                ring_root,                          // γZ' = O([k_b | k ← γP])
             )
         } else {
             (
@@ -201,8 +194,7 @@ pub fn apply_safrole(
     let new_seal_key_series = if is_epoch_change {
         let single_epoch_advance = new_epoch == old_epoch + 1;
         let was_in_closing = old_slot >= TICKET_SUBMISSION_END;
-        let accumulator_full =
-            state.safrole.ticket_accumulator.len() == EPOCH_LENGTH as usize;
+        let accumulator_full = state.safrole.ticket_accumulator.len() == EPOCH_LENGTH as usize;
 
         if single_epoch_advance && was_in_closing && accumulator_full {
             // Case 1: Use tickets — Z(γA)
@@ -359,9 +351,9 @@ pub struct SafroleOutput {
 /// Compute ring root from validator Bandersnatch keys (eq 6.13: γZ' = O([k_b | k ← γP'])).
 fn compute_ring_root(keys: &[ValidatorKey]) -> grey_types::BandersnatchRingRoot {
     let bandersnatch_keys: Vec<[u8; 32]> = keys.iter().map(|k| k.bandersnatch.0).collect();
-    grey_types::BandersnatchRingRoot(
-        grey_crypto::bandersnatch::compute_ring_commitment(&bandersnatch_keys),
-    )
+    grey_types::BandersnatchRingRoot(grey_crypto::bandersnatch::compute_ring_commitment(
+        &bandersnatch_keys,
+    ))
 }
 
 /// Check if the current seal-key series uses tickets (T = 1) or fallback (T = 0).
@@ -574,7 +566,10 @@ mod tests {
         let vrf = [0u8; 32];
         let output = apply_safrole(&state, 600, &vrf, &[]).unwrap();
 
-        assert!(matches!(output.safrole.seal_key_series, SealKeySeries::Fallback(_)));
+        assert!(matches!(
+            output.safrole.seal_key_series,
+            SealKeySeries::Fallback(_)
+        ));
     }
 
     #[test]
@@ -599,7 +594,10 @@ mod tests {
         let output = apply_safrole(&state, 600, &vrf, &[]).unwrap();
 
         // Should use tickets (single epoch advance, was in closing period, full accumulator)
-        assert!(matches!(output.safrole.seal_key_series, SealKeySeries::Tickets(_)));
+        assert!(matches!(
+            output.safrole.seal_key_series,
+            SealKeySeries::Tickets(_)
+        ));
     }
 
     #[test]
@@ -679,7 +677,7 @@ mod tests {
 
         // Sort proofs by their derived ticket IDs
         let mut proofs = vec![(id1, proof1), (id2, proof2)];
-        proofs.sort_by(|a, b| a.0 .0.cmp(&b.0 .0));
+        proofs.sort_by(|a, b| a.0.0.cmp(&b.0.0));
         let sorted_proofs: Vec<TicketProof> = proofs.into_iter().map(|(_, p)| p).collect();
 
         let output = apply_safrole(&state, 1, &[0u8; 32], &sorted_proofs).unwrap();
@@ -711,12 +709,24 @@ mod tests {
     #[test]
     fn test_merge_tickets_keeps_lowest() {
         let existing = vec![
-            Ticket { id: Hash([1u8; 32]), attempt: 0 },
-            Ticket { id: Hash([3u8; 32]), attempt: 0 },
+            Ticket {
+                id: Hash([1u8; 32]),
+                attempt: 0,
+            },
+            Ticket {
+                id: Hash([3u8; 32]),
+                attempt: 0,
+            },
         ];
         let new = vec![
-            Ticket { id: Hash([2u8; 32]), attempt: 0 },
-            Ticket { id: Hash([4u8; 32]), attempt: 0 },
+            Ticket {
+                id: Hash([2u8; 32]),
+                attempt: 0,
+            },
+            Ticket {
+                id: Hash([4u8; 32]),
+                attempt: 0,
+            },
         ];
 
         let result = merge_tickets(&existing, &new, 3);

@@ -2,10 +2,13 @@
 
 mod common;
 
-use common::{discover_test_stems, ed25519_from_hex, hash_from_hex, parse_validator, parse_work_report, sig_from_hex};
+use common::{
+    discover_test_stems, ed25519_from_hex, hash_from_hex, parse_validator, parse_work_report,
+    sig_from_hex,
+};
 use grey_state::reports::{
-    process_reports, AvailAssignment, CoreStats, GuaranteeInput, RecentBlockEntry, ReportsState,
-    ServiceInfo, ServiceStats,
+    AvailAssignment, CoreStats, GuaranteeInput, RecentBlockEntry, ReportsState, ServiceInfo,
+    ServiceStats, process_reports,
 };
 use grey_types::config::Config;
 use grey_types::validator::ValidatorKey;
@@ -218,7 +221,13 @@ fn run_reports_test(dir: &str, stem: &str) {
     };
 
     let config = Config::tiny();
-    let result = process_reports(&config, &mut state, &guarantees, current_slot, &known_packages);
+    let result = process_reports(
+        &config,
+        &mut state,
+        &guarantees,
+        current_slot,
+        &known_packages,
+    );
 
     // Check output
     if let Some(err_str) = output.get("err") {
@@ -327,16 +336,10 @@ fn run_reports_test(dir: &str, stem: &str) {
                     );
                 }
                 (None, Some(_)) => {
-                    panic!(
-                        "{}: avail_assignments[{}] expected None, got Some",
-                        path, i
-                    );
+                    panic!("{}: avail_assignments[{}] expected None, got Some", path, i);
                 }
                 (Some(_), None) => {
-                    panic!(
-                        "{}: avail_assignments[{}] expected Some, got None",
-                        path, i
-                    );
+                    panic!("{}: avail_assignments[{}] expected Some, got None", path, i);
                 }
             }
         }
@@ -355,11 +358,7 @@ fn run_reports_test(dir: &str, stem: &str) {
             .zip(expected_cores_stats.iter())
             .enumerate()
         {
-            assert_eq!(
-                got, exp,
-                "{}: cores_statistics[{}] mismatch",
-                path, i
-            );
+            assert_eq!(got, exp, "{}: cores_statistics[{}] mismatch", path, i);
         }
 
         // Check post_state services_statistics
@@ -424,20 +423,14 @@ report_test!(test_no_enough_guarantees, "no_enough_guarantees-1");
 report_test!(test_not_authorized, "not_authorized-1");
 report_test!(test_not_authorized_2, "not_authorized-2");
 report_test!(test_not_sorted_guarantor, "not_sorted_guarantor-1");
-report_test!(
-    test_out_of_order_guarantees,
-    "out_of_order_guarantees-1"
-);
+report_test!(test_out_of_order_guarantees, "out_of_order_guarantees-1");
 report_test!(
     test_report_before_last_rotation,
     "report_before_last_rotation-1"
 );
 report_test!(test_report_curr_rotation, "report_curr_rotation-1");
 report_test!(test_report_prev_rotation, "report_prev_rotation-1");
-report_test!(
-    test_report_with_no_results,
-    "report_with_no_results-1"
-);
+report_test!(test_report_with_no_results, "report_with_no_results-1");
 report_test!(
     test_reports_with_dependencies_1,
     "reports_with_dependencies-1"
@@ -470,23 +463,14 @@ report_test!(
     test_segment_root_lookup_invalid_2,
     "segment_root_lookup_invalid-2"
 );
-report_test!(
-    test_service_item_gas_too_low,
-    "service_item_gas_too_low-1"
-);
+report_test!(test_service_item_gas_too_low, "service_item_gas_too_low-1");
 report_test!(
     test_too_big_work_report_output,
     "too_big_work_report_output-1"
 );
-report_test!(
-    test_too_high_work_report_gas,
-    "too_high_work_report_gas-1"
-);
+report_test!(test_too_high_work_report_gas, "too_high_work_report_gas-1");
 report_test!(test_too_many_dependencies, "too_many_dependencies-1");
-report_test!(
-    test_with_avail_assignments,
-    "with_avail_assignments-1"
-);
+report_test!(test_with_avail_assignments, "with_avail_assignments-1");
 report_test!(test_wrong_assignment, "wrong_assignment-1");
 
 #[test]

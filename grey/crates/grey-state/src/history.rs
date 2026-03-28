@@ -2,9 +2,9 @@
 //!
 //! Maintains the sliding window of recent block information.
 
+use grey_types::Hash;
 use grey_types::constants::RECENT_HISTORY_SIZE;
 use grey_types::state::{RecentBlockInfo, RecentBlocks};
-use grey_types::Hash;
 use std::collections::BTreeMap;
 
 /// Input data for the history sub-transition.

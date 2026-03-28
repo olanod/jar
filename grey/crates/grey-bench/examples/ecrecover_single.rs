@@ -1,6 +1,5 @@
 /// Single-run ecrecover timing: native, grey interpreter, grey recompiler, polkavm.
 /// Each backend is run in a child thread and killed after 10s if it doesn't finish.
-
 use grey_bench::*;
 use std::time::{Duration, Instant};
 
@@ -15,7 +14,9 @@ fn run_with_timeout<F: FnOnce() + Send + 'static>(name: &str, f: F) {
         let _ = tx.send(());
     });
     match rx.recv_timeout(TIMEOUT) {
-        Ok(()) => { let _ = handle.join(); }
+        Ok(()) => {
+            let _ = handle.join();
+        }
         Err(_) => {
             eprintln!("{name:20} KILLED after {}s", TIMEOUT.as_secs());
             // Thread will be abandoned (no safe way to kill it)
@@ -26,21 +27,17 @@ fn run_with_timeout<F: FnOnce() + Send + 'static>(name: &str, f: F) {
 fn main() {
     // ---- Native baseline ----
     run_with_timeout("native", || {
-        use k256::ecdsa::{Signature, RecoveryId, VerifyingKey};
+        use k256::ecdsa::{RecoveryId, Signature, VerifyingKey};
         let msg: [u8; 32] = [
-            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-            0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
-            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11,
-            0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+            0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77, 0x88, 0x99,
         ];
         let sig_bytes: [u8; 64] = [
-            0xff, 0x65, 0x1c, 0x65, 0xee, 0xde, 0xd4, 0x63,
-            0x83, 0xa4, 0xbd, 0xcd, 0x91, 0x70, 0xff, 0x65,
-            0x9a, 0x4f, 0x61, 0x7b, 0xb6, 0x58, 0xa4, 0x6d,
-            0xd4, 0x56, 0xc5, 0x1e, 0xc8, 0xcc, 0x21, 0x1a,
-            0x7d, 0xc4, 0xde, 0x91, 0xd0, 0xc8, 0x47, 0xbf,
-            0x5d, 0xef, 0x99, 0x5b, 0xd0, 0x43, 0x65, 0x81,
-            0x36, 0xfe, 0x21, 0x35, 0xaf, 0xe6, 0x92, 0x82,
+            0xff, 0x65, 0x1c, 0x65, 0xee, 0xde, 0xd4, 0x63, 0x83, 0xa4, 0xbd, 0xcd, 0x91, 0x70,
+            0xff, 0x65, 0x9a, 0x4f, 0x61, 0x7b, 0xb6, 0x58, 0xa4, 0x6d, 0xd4, 0x56, 0xc5, 0x1e,
+            0xc8, 0xcc, 0x21, 0x1a, 0x7d, 0xc4, 0xde, 0x91, 0xd0, 0xc8, 0x47, 0xbf, 0x5d, 0xef,
+            0x99, 0x5b, 0xd0, 0x43, 0x65, 0x81, 0x36, 0xfe, 0x21, 0x35, 0xaf, 0xe6, 0x92, 0x82,
             0xf7, 0xde, 0x87, 0x39, 0x90, 0xda, 0xcb, 0x77,
         ];
         let t = Instant::now();
@@ -48,7 +45,11 @@ fn main() {
         let recid = RecoveryId::new(true, false);
         let key = VerifyingKey::recover_from_prehash(&msg, &sig, recid).unwrap();
         let _ = std::hint::black_box(key);
-        eprintln!("{:20} {:>10.3} ms", "native", t.elapsed().as_secs_f64() * 1000.0);
+        eprintln!(
+            "{:20} {:>10.3} ms",
+            "native",
+            t.elapsed().as_secs_f64() * 1000.0
+        );
     });
 
     // ---- Prepare blobs ----
@@ -67,13 +68,21 @@ fn main() {
                 match exit {
                     javm::ExitReason::Halt | javm::ExitReason::Panic => {
                         let gas_used = GAS - pvm.gas;
-                        eprintln!("{:20} {:>10.3} ms  a0={} gas_used={} ({:.1}M inst)",
-                            "grey-interpreter", t.elapsed().as_secs_f64() * 1000.0,
-                            pvm.registers[7], gas_used, gas_used as f64 / 1e6);
+                        eprintln!(
+                            "{:20} {:>10.3} ms  a0={} gas_used={} ({:.1}M inst)",
+                            "grey-interpreter",
+                            t.elapsed().as_secs_f64() * 1000.0,
+                            pvm.registers[7],
+                            gas_used,
+                            gas_used as f64 / 1e6
+                        );
                         return;
                     }
                     javm::ExitReason::HostCall(_) => continue,
-                    other => { eprintln!("grey-interpreter: {:?}", other); return; }
+                    other => {
+                        eprintln!("grey-interpreter: {:?}", other);
+                        return;
+                    }
                 }
             }
         });
@@ -92,13 +101,22 @@ fn main() {
                     javm::ExitReason::Halt | javm::ExitReason::Panic => {
                         let exec_us = t_exec.elapsed().as_micros();
                         let gas_used = GAS - pvm.gas() as u64;
-                        eprintln!("{:20} {:>10.3} ms  (compile={:.1}ms exec={}µs) a0={} gas={}",
-                            "grey-recompiler", t.elapsed().as_secs_f64() * 1000.0,
-                            compile_ms, exec_us, pvm.registers()[7], gas_used);
+                        eprintln!(
+                            "{:20} {:>10.3} ms  (compile={:.1}ms exec={}µs) a0={} gas={}",
+                            "grey-recompiler",
+                            t.elapsed().as_secs_f64() * 1000.0,
+                            compile_ms,
+                            exec_us,
+                            pvm.registers()[7],
+                            gas_used
+                        );
                         return;
                     }
                     javm::ExitReason::HostCall(_) => continue,
-                    other => { eprintln!("grey-recompiler: {:?}", other); return; }
+                    other => {
+                        eprintln!("grey-recompiler: {:?}", other);
+                        return;
+                    }
                 }
             }
         });
@@ -130,7 +148,8 @@ fn main() {
             if let Some(export) = module.exports().next() {
                 inst.set_next_program_counter(export.program_counter());
             } else {
-                eprintln!("polkavm: NO EXPORTS"); return;
+                eprintln!("polkavm: NO EXPORTS");
+                return;
             }
             inst.set_reg(PReg::SP, module.default_sp());
             let t_exec = Instant::now();
@@ -138,14 +157,25 @@ fn main() {
                 match inst.run().unwrap() {
                     InterruptKind::Finished | InterruptKind::Trap => {
                         let exec_us = t_exec.elapsed().as_micros();
-                        eprintln!("{:20} {:>10.3} ms  (compile={:.1}ms exec={}µs) a0={}",
-                            "polkavm", t.elapsed().as_secs_f64() * 1000.0,
-                            compile_ms, exec_us, inst.reg(PReg::A0));
+                        eprintln!(
+                            "{:20} {:>10.3} ms  (compile={:.1}ms exec={}µs) a0={}",
+                            "polkavm",
+                            t.elapsed().as_secs_f64() * 1000.0,
+                            compile_ms,
+                            exec_us,
+                            inst.reg(PReg::A0)
+                        );
                         return;
                     }
                     InterruptKind::Ecalli(_) => continue,
-                    InterruptKind::NotEnoughGas => { eprintln!("polkavm: OOG"); return; }
-                    other => { eprintln!("polkavm: {:?}", other); return; }
+                    InterruptKind::NotEnoughGas => {
+                        eprintln!("polkavm: OOG");
+                        return;
+                    }
+                    other => {
+                        eprintln!("polkavm: {:?}", other);
+                        return;
+                    }
                 }
             }
         });

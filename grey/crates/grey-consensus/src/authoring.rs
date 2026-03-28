@@ -117,7 +117,17 @@ pub fn author_block(
     secrets: &ValidatorSecrets,
     state_root: Hash,
 ) -> Block {
-    author_block_with_extrinsics(state, config, timeslot, author_index, secrets, state_root, vec![], vec![], vec![])
+    author_block_with_extrinsics(
+        state,
+        config,
+        timeslot,
+        author_index,
+        secrets,
+        state_root,
+        vec![],
+        vec![],
+        vec![],
+    )
 }
 
 /// Author a new block with custom guarantee, assurance, and ticket extrinsics.
@@ -207,7 +217,11 @@ pub fn author_block_with_extrinsics(
     // In ticket mode: input = X_T ⌢ E4(timeslot) ⌢ unsigned_header_hash
     let unsigned_hash = compute_unsigned_header_hash_bytes(&header);
     let is_ticket_mode = matches!(&state.safrole.seal_key_series, SealKeySeries::Tickets(_));
-    let seal_context = if is_ticket_mode { TICKET_SEAL_CONTEXT } else { FALLBACK_SEAL_CONTEXT };
+    let seal_context = if is_ticket_mode {
+        TICKET_SEAL_CONTEXT
+    } else {
+        FALLBACK_SEAL_CONTEXT
+    };
     let seal_input = build_vrf_input(seal_context, timeslot, &unsigned_hash);
     let seal_bytes = secrets.bandersnatch.seal_sign(&seal_input, b"");
     header.seal = BandersnatchSignature(seal_bytes);
@@ -288,14 +302,7 @@ mod tests {
         for s in &secrets {
             let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
             if let Some(author_idx) = is_slot_author(&state, &config, timeslot, &pk) {
-                let block = author_block(
-                    &state,
-                    &config,
-                    timeslot,
-                    author_idx,
-                    s,
-                    Hash::ZERO,
-                );
+                let block = author_block(&state, &config, timeslot, author_idx, s, Hash::ZERO);
                 assert_eq!(block.header.timeslot, timeslot);
                 assert_eq!(block.header.author_index, author_idx);
                 assert_eq!(block.header.parent_hash, Hash::ZERO);
@@ -315,22 +322,11 @@ mod tests {
         for s in &secrets {
             let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
             if let Some(author_idx) = is_slot_author(&state, &config, timeslot, &pk) {
-                let block = author_block(
-                    &state,
-                    &config,
-                    timeslot,
-                    author_idx,
-                    s,
-                    Hash::ZERO,
-                );
+                let block = author_block(&state, &config, timeslot, author_idx, s, Hash::ZERO);
 
                 // Apply block to state
-                let result = grey_state::transition::apply_with_config(
-                    &state,
-                    &block,
-                    &config,
-                    &[],
-                );
+                let result =
+                    grey_state::transition::apply_with_config(&state, &block, &config, &[]);
                 assert!(
                     result.is_ok(),
                     "Authored block should pass state transition: {:?}",
@@ -346,11 +342,7 @@ mod tests {
     }
 
     /// Compute ticket-mode seal key series from secrets and switch state to ticket mode.
-    fn setup_ticket_mode(
-        config: &Config,
-        state: &mut State,
-        secrets: &[ValidatorSecrets],
-    ) {
+    fn setup_ticket_mode(config: &Config, state: &mut State, secrets: &[ValidatorSecrets]) {
         let eta2 = &state.entropy[2];
         let mut all_tickets: Vec<(Ticket, usize)> = Vec::new();
 
@@ -362,7 +354,13 @@ mod tests {
                 vrf_input.push(attempt);
 
                 if let Some(ticket_id) = s.bandersnatch.vrf_output_for_input(&vrf_input) {
-                    all_tickets.push((Ticket { id: Hash(ticket_id), attempt }, vi));
+                    all_tickets.push((
+                        Ticket {
+                            id: Hash(ticket_id),
+                            attempt,
+                        },
+                        vi,
+                    ));
                 }
             }
         }
@@ -390,7 +388,11 @@ mod tests {
             for s in &secrets {
                 let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
                 if let Some(idx) = is_slot_author_with_keypair(
-                    &state, &config, timeslot, &pk, Some(&s.bandersnatch),
+                    &state,
+                    &config,
+                    timeslot,
+                    &pk,
+                    Some(&s.bandersnatch),
                 ) {
                     found_any = true;
                     assert!(idx < config.validators_count);
@@ -410,9 +412,9 @@ mod tests {
         let timeslot = 1;
         for s in &secrets {
             let pk = BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
-            if let Some(author_idx) = is_slot_author_with_keypair(
-                &state, &config, timeslot, &pk, Some(&s.bandersnatch),
-            ) {
+            if let Some(author_idx) =
+                is_slot_author_with_keypair(&state, &config, timeslot, &pk, Some(&s.bandersnatch))
+            {
                 let block = author_block(&state, &config, timeslot, author_idx, s, Hash::ZERO);
                 assert_eq!(block.header.timeslot, timeslot);
                 assert_eq!(block.header.author_index, author_idx);

@@ -3,7 +3,7 @@
 mod common;
 
 use common::{decode_hex, discover_test_stems, hash_from_hex};
-use grey_state::preimages::{process_preimages, PreimageAccountData, PreimageServiceRecord};
+use grey_state::preimages::{PreimageAccountData, PreimageServiceRecord, process_preimages};
 use grey_types::{Hash, ServiceId, Timeslot};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -84,9 +84,9 @@ fn run_preimages_test(dir: &str, stem: &str) {
         for acct in post["accounts"].as_array().unwrap() {
             let id = acct["id"].as_u64().unwrap() as ServiceId;
             let data = &acct["data"];
-            let account = accounts.get(&id).unwrap_or_else(|| {
-                panic!("missing account {} in post-state of {}", id, path)
-            });
+            let account = accounts
+                .get(&id)
+                .unwrap_or_else(|| panic!("missing account {} in post-state of {}", id, path));
 
             // Check preimage_blobs (output may only have hashes, not full blob data)
             let expected_blob_hashes: BTreeSet<Hash> = data["preimage_blobs"]
@@ -104,8 +104,7 @@ fn run_preimages_test(dir: &str, stem: &str) {
             );
 
             // Check preimage_requests
-            let expected_requests: BTreeMap<(Hash, u32), Vec<Timeslot>> = data
-                ["preimage_requests"]
+            let expected_requests: BTreeMap<(Hash, u32), Vec<Timeslot>> = data["preimage_requests"]
                 .as_array()
                 .unwrap()
                 .iter()

@@ -201,17 +201,15 @@ fn run_accumulate_test(dir: &str, stem: &str) {
 
     // Compare output hash
     assert_eq!(
-        output_hash, expected_output,
+        output_hash,
+        expected_output,
         "output hash mismatch in {path}\n  got:      {}\n  expected: {}",
         hex::encode(output_hash.0),
         hex::encode(expected_output.0)
     );
 
     // Compare slot
-    assert_eq!(
-        state.slot, expected_state.slot,
-        "slot mismatch in {path}"
-    );
+    assert_eq!(state.slot, expected_state.slot, "slot mismatch in {path}");
 
     // Compare accumulated
     assert_eq!(
@@ -252,8 +250,7 @@ fn run_accumulate_test(dir: &str, stem: &str) {
         );
         for (j, (g, e)) in got.iter().zip(exp.iter()).enumerate() {
             assert_eq!(
-                g.report.package_spec.package_hash,
-                e.report.package_spec.package_hash,
+                g.report.package_spec.package_hash, e.report.package_spec.package_hash,
                 "ready_queue[{i}][{j}] report package_hash mismatch in {path}"
             );
             assert_eq!(
@@ -283,9 +280,11 @@ fn run_accumulate_test(dir: &str, stem: &str) {
     let mut exp_stats_sorted = expected_state.statistics.clone();
     exp_stats_sorted.sort_by_key(|(id, _)| *id);
     assert_eq!(
-        got_stats_sorted.len(), exp_stats_sorted.len(),
+        got_stats_sorted.len(),
+        exp_stats_sorted.len(),
         "statistics length mismatch in {path}: got {} expected {}",
-        got_stats_sorted.len(), exp_stats_sorted.len()
+        got_stats_sorted.len(),
+        exp_stats_sorted.len()
     );
     for ((got_id, got_stats), (exp_id, exp_stats)) in
         got_stats_sorted.iter().zip(exp_stats_sorted.iter())

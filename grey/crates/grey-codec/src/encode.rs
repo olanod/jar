@@ -39,7 +39,9 @@ pub fn encode_compact(value: u64, buf: &mut Vec<u8>) {
     }
     let x = value;
     // Find len: smallest L in 0..=7 such that x < 2^(7*(L+1))
-    let len = (0u32..8).find(|&l| x < (1u64 << (7 * (l + 1)))).unwrap_or(8);
+    let len = (0u32..8)
+        .find(|&l| x < (1u64 << (7 * (l + 1))))
+        .unwrap_or(8);
     if len <= 7 {
         // Header byte: top `len` bits set + high bits of value
         let threshold = 256u16 - (1u16 << (8 - len));
@@ -476,11 +478,12 @@ mod tests {
 
     #[test]
     fn test_codec_refine_context() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.bin");
 
         let ctx = RefinementContext {
             anchor: hash_from_hex(json["anchor"].as_str().unwrap()),
@@ -540,23 +543,29 @@ mod tests {
 
     #[test]
     fn test_codec_work_result_0() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/work_result_0.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/work_result_0.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/work_result_0.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/work_result_0.gp072_tiny.bin");
         let digest = work_digest_from_json(&json);
         let encoded = digest.encode();
-        assert_eq!(encoded, expected.as_slice(), "work_result_0 encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "work_result_0 encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_work_item() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/work_item.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/work_item.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/work_item.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/work_item.gp072_tiny.bin");
 
         let item = WorkItem {
             service_id: json["service"].as_u64().unwrap() as u32,
@@ -593,14 +602,19 @@ mod tests {
 
     #[test]
     fn test_codec_work_result_1() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/work_result_1.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/work_result_1.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/work_result_1.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/work_result_1.gp072_tiny.bin");
         let digest = work_digest_from_json(&json);
         let encoded = digest.encode();
-        assert_eq!(encoded, expected.as_slice(), "work_result_1 encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "work_result_1 encoding mismatch"
+        );
     }
 
     fn refine_context_from_json(json: &serde_json::Value) -> RefinementContext {
@@ -650,7 +664,12 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|e| (hash_from_hex(e["hash"].as_str().unwrap()), e["len"].as_u64().unwrap() as u32))
+                .map(|e| {
+                    (
+                        hash_from_hex(e["hash"].as_str().unwrap()),
+                        e["len"].as_u64().unwrap() as u32,
+                    )
+                })
                 .collect(),
         }
     }
@@ -699,11 +718,12 @@ mod tests {
 
     #[test]
     fn test_codec_work_package() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/work_package.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/work_package.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/work_package.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/work_package.gp072_tiny.bin");
 
         let pkg = WorkPackage {
             auth_code_host: json["auth_code_host"].as_u64().unwrap() as u32,
@@ -720,29 +740,39 @@ mod tests {
         };
 
         let encoded = pkg.encode();
-        assert_eq!(encoded, expected.as_slice(), "work_package encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "work_package encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_work_report() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/work_report.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/work_report.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/work_report.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/work_report.gp072_tiny.bin");
 
         let report = work_report_from_json(&json);
         let encoded = report.encode();
-        assert_eq!(encoded, expected.as_slice(), "work_report encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "work_report encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_tickets_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/tickets_extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/tickets_extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/tickets_extrinsic.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/tickets_extrinsic.gp072_tiny.bin");
 
         let tickets: Vec<TicketProof> = json
             .as_array()
@@ -755,16 +785,22 @@ mod tests {
             .collect();
 
         let encoded = tickets.encode();
-        assert_eq!(encoded, expected.as_slice(), "tickets_extrinsic encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "tickets_extrinsic encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_disputes_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/disputes_extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/disputes_extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/disputes_extrinsic.gp072_tiny.bin");
+        let expected = include_bytes!(
+            "../../../../spec/tests/vectors/codec/disputes_extrinsic.gp072_tiny.bin"
+        );
 
         let disputes = DisputesExtrinsic {
             verdicts: json["verdicts"]
@@ -810,16 +846,22 @@ mod tests {
         };
 
         let encoded = disputes.encode();
-        assert_eq!(encoded, expected.as_slice(), "disputes_extrinsic encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "disputes_extrinsic encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_preimages_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/preimages_extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/preimages_extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/preimages_extrinsic.gp072_tiny.bin");
+        let expected = include_bytes!(
+            "../../../../spec/tests/vectors/codec/preimages_extrinsic.gp072_tiny.bin"
+        );
 
         let preimages: Vec<(u32, Vec<u8>)> = json
             .as_array()
@@ -834,16 +876,22 @@ mod tests {
             .collect();
 
         let encoded = preimages.encode();
-        assert_eq!(encoded, expected.as_slice(), "preimages_extrinsic encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "preimages_extrinsic encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_assurances_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/assurances_extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/assurances_extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/assurances_extrinsic.gp072_tiny.bin");
+        let expected = include_bytes!(
+            "../../../../spec/tests/vectors/codec/assurances_extrinsic.gp072_tiny.bin"
+        );
 
         let assurances: Vec<Assurance> = json
             .as_array()
@@ -858,16 +906,22 @@ mod tests {
             .collect();
 
         let encoded = assurances.encode();
-        assert_eq!(encoded, expected.as_slice(), "assurances_extrinsic encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "assurances_extrinsic encoding mismatch"
+        );
     }
 
     #[test]
     fn test_codec_guarantees_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/guarantees_extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/guarantees_extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/guarantees_extrinsic.gp072_tiny.bin");
+        let expected = include_bytes!(
+            "../../../../spec/tests/vectors/codec/guarantees_extrinsic.gp072_tiny.bin"
+        );
 
         let guarantees: Vec<Guarantee> = json
             .as_array()
@@ -891,7 +945,11 @@ mod tests {
             .collect();
 
         let encoded = guarantees.encode();
-        assert_eq!(encoded, expected.as_slice(), "guarantees_extrinsic encoding mismatch");
+        assert_eq!(
+            encoded,
+            expected.as_slice(),
+            "guarantees_extrinsic encoding mismatch"
+        );
     }
 
     fn bandersnatch_key_from_hex(s: &str) -> grey_types::BandersnatchPublicKey {
@@ -1015,11 +1073,12 @@ mod tests {
 
     #[test]
     fn test_codec_header_0() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/header_0.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/header_0.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/header_0.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/header_0.gp072_tiny.bin");
 
         let header = header_from_json(&json);
         let encoded = header.encode();
@@ -1028,11 +1087,12 @@ mod tests {
 
     #[test]
     fn test_codec_header_1() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/header_1.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/header_1.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/header_1.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/header_1.gp072_tiny.bin");
 
         let header = header_from_json(&json);
         let encoded = header.encode();
@@ -1041,11 +1101,12 @@ mod tests {
 
     #[test]
     fn test_codec_extrinsic() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/extrinsic.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/extrinsic.gp072_tiny.json"
+        ))
         .unwrap();
-        let expected = include_bytes!("../../../../spec/tests/vectors/codec/extrinsic.gp072_tiny.bin");
+        let expected =
+            include_bytes!("../../../../spec/tests/vectors/codec/extrinsic.gp072_tiny.bin");
 
         let extrinsic = Extrinsic {
             tickets: json["tickets"]
@@ -1108,9 +1169,9 @@ mod tests {
 
     #[test]
     fn test_codec_block() {
-        let json: serde_json::Value = serde_json::from_str(
-            include_str!("../../../../spec/tests/vectors/codec/block.gp072_tiny.json"),
-        )
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../spec/tests/vectors/codec/block.gp072_tiny.json"
+        ))
         .unwrap();
         let expected = include_bytes!("../../../../spec/tests/vectors/codec/block.gp072_tiny.bin");
 

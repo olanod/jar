@@ -41,21 +41,24 @@ pub async fn run_testnet(
     let mut preimage_lookup = BTreeMap::new();
     preimage_lookup.insert(code_hash, pvm_blob);
 
-    genesis_state.services.insert(service_id, ServiceAccount {
-        code_hash,
-        balance: 1_000_000_000,
-        min_accumulate_gas: 100_000,
-        min_on_transfer_gas: 0,
-        storage: BTreeMap::new(),
-        preimage_lookup,
-        preimage_info: BTreeMap::new(),
-        free_storage_offset: 0,
-        total_footprint: 0,
-        accumulation_counter: 0,
-        last_accumulation: 0,
-        last_activity: 0,
-        preimage_count: 0,
-    });
+    genesis_state.services.insert(
+        service_id,
+        ServiceAccount {
+            code_hash,
+            balance: 1_000_000_000,
+            min_accumulate_gas: 100_000,
+            min_on_transfer_gas: 0,
+            storage: BTreeMap::new(),
+            preimage_lookup,
+            preimage_info: BTreeMap::new(),
+            free_storage_offset: 0,
+            total_footprint: 0,
+            accumulation_counter: 0,
+            last_accumulation: 0,
+            last_activity: 0,
+            preimage_count: 0,
+        },
+    );
 
     // Install pixels service (ID 2000)
     let pixels_service_id: ServiceId = 2000;
@@ -64,21 +67,24 @@ pub async fn run_testnet(
         let pixels_hash = grey_crypto::blake2b_256(&pixels_blob);
         let mut px_preimages = BTreeMap::new();
         px_preimages.insert(pixels_hash, pixels_blob);
-        genesis_state.services.insert(pixels_service_id, ServiceAccount {
-            code_hash: pixels_hash,
-            balance: 1_000_000_000,
-            min_accumulate_gas: 100_000,
-            min_on_transfer_gas: 0,
-            storage: BTreeMap::new(),
-            preimage_lookup: px_preimages,
-            preimage_info: BTreeMap::new(),
-            free_storage_offset: 0,
-            total_footprint: 0,
-            accumulation_counter: 0,
-            last_accumulation: 0,
-            last_activity: 0,
-            preimage_count: 0,
-        });
+        genesis_state.services.insert(
+            pixels_service_id,
+            ServiceAccount {
+                code_hash: pixels_hash,
+                balance: 1_000_000_000,
+                min_accumulate_gas: 100_000,
+                min_on_transfer_gas: 0,
+                storage: BTreeMap::new(),
+                preimage_lookup: px_preimages,
+                preimage_info: BTreeMap::new(),
+                free_storage_offset: 0,
+                total_footprint: 0,
+                accumulation_counter: 0,
+                last_accumulation: 0,
+                last_activity: 0,
+                preimage_count: 0,
+            },
+        );
         tracing::info!(
             "Testnet: installed pixels service {} (code_hash=0x{})",
             pixels_service_id,
@@ -104,7 +110,8 @@ pub async fn run_testnet(
         }
         // Fill auth_queue so rotation replenishes auth_pool after each guarantee
         for slot in 0..config.auth_queue_size {
-            if slot < genesis_state.auth_queue.len() && core < genesis_state.auth_queue[slot].len() {
+            if slot < genesis_state.auth_queue.len() && core < genesis_state.auth_queue[slot].len()
+            {
                 genesis_state.auth_queue[slot][core] = hash_for_core;
             }
         }
@@ -112,7 +119,11 @@ pub async fn run_testnet(
 
     tracing::info!(
         "Testnet: auth_pool configured — core 0: svc 1000, core 1: svc {}",
-        if pixels_code_hash.is_some() { "2000" } else { "1000 (pixels not available)" }
+        if pixels_code_hash.is_some() {
+            "2000"
+        } else {
+            "1000 (pixels not available)"
+        }
     );
 
     // Use a shared genesis time for all validators
@@ -126,7 +137,11 @@ pub async fn run_testnet(
         "Starting local testnet with {} validators, genesis_time={}, duration={}",
         v,
         genesis_time,
-        if unlimited { "unlimited (Ctrl+C to stop)".to_string() } else { format!("{}s", duration_secs) }
+        if unlimited {
+            "unlimited (Ctrl+C to stop)".to_string()
+        } else {
+            format!("{}s", duration_secs)
+        }
     );
 
     // Build boot peer list: each validator connects to the first validator
@@ -193,7 +208,11 @@ pub async fn run_testnet(
             }
         }
     } else {
-        tracing::info!("All {} validators started, waiting {}s for block production...", v, duration_secs);
+        tracing::info!(
+            "All {} validators started, waiting {}s for block production...",
+            v,
+            duration_secs
+        );
         tokio::time::sleep(Duration::from_secs(duration_secs)).await;
     }
 
@@ -236,21 +255,24 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
     let mut preimage_lookup = BTreeMap::new();
     preimage_lookup.insert(code_hash, pvm_blob);
 
-    state.services.insert(service_id, ServiceAccount {
-        code_hash,
-        balance: 1_000_000_000,
-        min_accumulate_gas: 100_000,
-        min_on_transfer_gas: 0,
-        storage: BTreeMap::new(),
-        preimage_lookup,
-        preimage_info: BTreeMap::new(),
-        free_storage_offset: 0,
-        total_footprint: 0,
-        accumulation_counter: 0,
-        last_accumulation: 0,
-        last_activity: 0,
-        preimage_count: 0,
-    });
+    state.services.insert(
+        service_id,
+        ServiceAccount {
+            code_hash,
+            balance: 1_000_000_000,
+            min_accumulate_gas: 100_000,
+            min_on_transfer_gas: 0,
+            storage: BTreeMap::new(),
+            preimage_lookup,
+            preimage_info: BTreeMap::new(),
+            free_storage_offset: 0,
+            total_footprint: 0,
+            accumulation_counter: 0,
+            last_accumulation: 0,
+            last_activity: 0,
+            preimage_count: 0,
+        },
+    );
     tracing::info!(
         "Installed PVM service {} with code_hash=0x{}",
         service_id,
@@ -266,21 +288,24 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
         let mut pixels_preimage_lookup = BTreeMap::new();
         pixels_preimage_lookup.insert(h, pixels_pvm_blob);
 
-        state.services.insert(pixels_service_id, ServiceAccount {
-            code_hash: h,
-            balance: 1_000_000_000,
-            min_accumulate_gas: 100_000,
-            min_on_transfer_gas: 0,
-            storage: BTreeMap::new(),
-            preimage_lookup: pixels_preimage_lookup,
-            preimage_info: BTreeMap::new(),
-            free_storage_offset: 0,
-            total_footprint: 0,
-            accumulation_counter: 0,
-            last_accumulation: 0,
-            last_activity: 0,
-            preimage_count: 0,
-        });
+        state.services.insert(
+            pixels_service_id,
+            ServiceAccount {
+                code_hash: h,
+                balance: 1_000_000_000,
+                min_accumulate_gas: 100_000,
+                min_on_transfer_gas: 0,
+                storage: BTreeMap::new(),
+                preimage_lookup: pixels_preimage_lookup,
+                preimage_info: BTreeMap::new(),
+                free_storage_offset: 0,
+                total_footprint: 0,
+                accumulation_counter: 0,
+                last_accumulation: 0,
+                last_activity: 0,
+                preimage_count: 0,
+            },
+        );
         tracing::info!(
             "Installed pixels service {} with code_hash=0x{}",
             pixels_service_id,
@@ -332,9 +357,13 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
         let mut authored = false;
         for s in &secrets {
             let pk = grey_types::BandersnatchPublicKey(s.bandersnatch.public_key_bytes());
-            if let Some(author_idx) =
-                grey_consensus::authoring::is_slot_author_with_keypair(&state, &config, slot, &pk, Some(&s.bandersnatch))
-            {
+            if let Some(author_idx) = grey_consensus::authoring::is_slot_author_with_keypair(
+                &state,
+                &config,
+                slot,
+                &pk,
+                Some(&s.bandersnatch),
+            ) {
                 // Compute state root
                 let state_root = {
                     let mut data = Vec::new();
@@ -345,26 +374,48 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
 
                 // Determine extrinsics based on pipeline state
                 let (guarantees, assurances) = match &wp_phase {
-                    WpPhase::Idle if blocks_produced >= 2 && !matches!(wp_target, WpTarget::AllDone) => {
+                    WpPhase::Idle
+                        if blocks_produced >= 2 && !matches!(wp_target, WpTarget::AllDone) =>
+                    {
                         // Pick service, code_hash, and payload based on current target
                         let (target_svc, target_code, target_label, payload) = match &wp_target {
-                            WpTarget::SampleService => (service_id, code_hash, "sample", b"test-payload".to_vec()),
+                            WpTarget::SampleService => {
+                                (service_id, code_hash, "sample", b"test-payload".to_vec())
+                            }
                             // Pixel (50,50) = red (255,0,0)
-                            WpTarget::PixelsService => (pixels_service_id, pixels_code_hash, "pixels", vec![50, 50, 255, 0, 0]),
+                            WpTarget::PixelsService => (
+                                pixels_service_id,
+                                pixels_code_hash,
+                                "pixels",
+                                vec![50, 50, 255, 0, 0],
+                            ),
                             WpTarget::AllDone => unreachable!(),
                         };
 
                         let (guarantee, pkg_hash) = build_test_guarantee_with_payload(
-                            &state, &config, &secrets, target_svc, target_code, slot, 0, payload,
+                            &state,
+                            &config,
+                            &secrets,
+                            target_svc,
+                            target_code,
+                            slot,
+                            0,
+                            payload,
                         );
                         tracing::info!(
                             "  [WP] Submitting {} guarantee at slot {}, core=0, pkg=0x{}",
-                            target_label, slot, hex::encode(&pkg_hash.0[..8])
+                            target_label,
+                            slot,
+                            hex::encode(&pkg_hash.0[..8])
                         );
                         wp_phase = WpPhase::GuaranteeSubmitted {
                             slot,
-                            parent_hash: state.recent_blocks.headers.last()
-                                .map(|h| h.header_hash).unwrap_or(Hash::ZERO),
+                            parent_hash: state
+                                .recent_blocks
+                                .headers
+                                .last()
+                                .map(|h| h.header_hash)
+                                .unwrap_or(Hash::ZERO),
                         };
                         work_packages_submitted += 1;
                         (vec![guarantee], vec![])
@@ -372,12 +423,11 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                     WpPhase::GuaranteeSubmitted { parent_hash, .. } => {
                         // Submit assurances from a super-majority of validators
                         let parent = *parent_hash;
-                        let assurances = build_test_assurances(
-                            &config, &secrets, parent, 0,
-                        );
+                        let assurances = build_test_assurances(&config, &secrets, parent, 0);
                         tracing::info!(
                             "  [WP] Submitting {} assurances at slot {}, core=0",
-                            assurances.len(), slot
+                            assurances.len(),
+                            slot
                         );
                         wp_phase = WpPhase::Done;
                         (vec![], assurances)
@@ -386,13 +436,21 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                 };
 
                 let block = grey_consensus::authoring::author_block_with_extrinsics(
-                    &state, &config, slot, author_idx, s, state_root,
-                    guarantees, assurances, vec![],
+                    &state,
+                    &config,
+                    slot,
+                    author_idx,
+                    s,
+                    state_root,
+                    guarantees,
+                    assurances,
+                    vec![],
                 );
 
                 match grey_state::transition::apply_with_config(&state, &block, &config, &[]) {
                     Ok((new_state, _)) => {
-                        let header_hash = grey_codec::header_codec::compute_header_hash(&block.header);
+                        let header_hash =
+                            grey_codec::header_codec::compute_header_hash(&block.header);
 
                         // Check if accumulation happened (service storage changed)
                         if matches!(wp_phase, WpPhase::Done) {
@@ -402,7 +460,8 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                                         if !svc.storage.is_empty() {
                                             tracing::info!(
                                                 "  [WP] SAMPLE ACCUMULATED! Service {} has {} storage entries",
-                                                service_id, svc.storage.len()
+                                                service_id,
+                                                svc.storage.len()
                                             );
                                             work_packages_accumulated += 1;
                                         }
@@ -421,7 +480,9 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                                             if canvas.len() >= offset + 3 {
                                                 tracing::info!(
                                                     "  [WP] PIXELS ACCUMULATED! Pixel (50,50) = ({},{},{}), canvas={} bytes",
-                                                    canvas[offset], canvas[offset + 1], canvas[offset + 2],
+                                                    canvas[offset],
+                                                    canvas[offset + 1],
+                                                    canvas[offset + 2],
                                                     canvas.len()
                                                 );
                                             }
@@ -429,7 +490,8 @@ pub fn run_sequential_test(num_blocks: u32) -> Result<SequentialTestResult, Stri
                                         } else if !svc.storage.is_empty() {
                                             tracing::info!(
                                                 "  [WP] PIXELS ACCUMULATED! Service {} has {} storage entries (no canvas key)",
-                                                pixels_service_id, svc.storage.len()
+                                                pixels_service_id,
+                                                svc.storage.len()
                                             );
                                             work_packages_accumulated += 1;
                                         }
@@ -533,7 +595,13 @@ pub fn build_test_guarantee(
     core: u16,
 ) -> (Guarantee, Hash) {
     build_test_guarantee_with_payload(
-        state, config, secrets, service_id, code_hash, timeslot, core,
+        state,
+        config,
+        secrets,
+        service_id,
+        code_hash,
+        timeslot,
+        core,
         b"test-payload".to_vec(),
     )
 }
@@ -569,11 +637,16 @@ pub fn build_test_guarantee_with_payload(
     };
 
     // Build anchor from recent history
-    let (anchor, anchor_state_root, anchor_beefy_root) = if let Some(recent) = state.recent_blocks.headers.last() {
-        (recent.header_hash, recent.state_root, recent.accumulation_root)
-    } else {
-        (Hash::ZERO, Hash::ZERO, Hash::ZERO)
-    };
+    let (anchor, anchor_state_root, anchor_beefy_root) =
+        if let Some(recent) = state.recent_blocks.headers.last() {
+            (
+                recent.header_hash,
+                recent.state_root,
+                recent.accumulation_root,
+            )
+        } else {
+            (Hash::ZERO, Hash::ZERO, Hash::ZERO)
+        };
 
     let context = RefinementContext {
         anchor,

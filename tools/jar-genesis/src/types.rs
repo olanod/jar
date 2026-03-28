@@ -242,7 +242,8 @@ mod tests {
 
     #[test]
     fn test_merge_readiness_serde() {
-        let json = r#"{"ready": true, "mergeWeight": 1000, "rejectWeight": 0, "totalWeight": 1000}"#;
+        let json =
+            r#"{"ready": true, "mergeWeight": 1000, "rejectWeight": 0, "totalWeight": 1000}"#;
         let readiness: MergeReadiness = serde_json::from_str(json).unwrap();
         assert!(readiness.ready);
         assert_eq!(readiness.merge_weight, 1000);

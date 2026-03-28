@@ -455,7 +455,10 @@ pub fn process_reports(
 
         // Update service statistics
         for digest in &guarantee.report.results {
-            let ss = state.services_statistics.entry(digest.service_id).or_default();
+            let ss = state
+                .services_statistics
+                .entry(digest.service_id)
+                .or_default();
             ss.refinement_count += 1;
             ss.refinement_gas_used += digest.gas_used;
             ss.imports += digest.imports_count as u64;

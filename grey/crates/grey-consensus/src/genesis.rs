@@ -88,11 +88,8 @@ pub fn create_genesis(config: &Config) -> (State, Vec<ValidatorSecrets>) {
 
     // Compute initial fallback key sequence for epoch 0
     // η₂ is Hash::ZERO at genesis
-    let fallback_keys = grey_state::safrole::fallback_key_sequence(
-        config,
-        &Hash::ZERO,
-        &validators,
-    );
+    let fallback_keys =
+        grey_state::safrole::fallback_key_sequence(config, &Hash::ZERO, &validators);
 
     let state = State {
         auth_pool: vec![vec![]; config.core_count as usize],
@@ -164,6 +161,9 @@ mod tests {
         let s1 = make_validator_secrets(0);
         let s2 = make_validator_secrets(0);
         assert_eq!(s1.ed25519.public_key().0, s2.ed25519.public_key().0);
-        assert_eq!(s1.bandersnatch.public_key_bytes(), s2.bandersnatch.public_key_bytes());
+        assert_eq!(
+            s1.bandersnatch.public_key_bytes(),
+            s2.bandersnatch.public_key_bytes()
+        );
     }
 }

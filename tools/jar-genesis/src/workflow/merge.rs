@@ -51,8 +51,8 @@ pub fn run(pr: u64, founder_override: bool) -> Result<(), Box<dyn std::error::Er
     }
 
     // --- Step 3: Compute comparison targets ---
-    let ranking_json = git::show_file("origin/genesis-state:ranking.json")
-        .unwrap_or_else(|_| "{}".to_string());
+    let ranking_json =
+        git::show_file("origin/genesis-state:ranking.json").unwrap_or_else(|_| "{}".to_string());
     let ranking: serde_json::Value = serde_json::from_str(&ranking_json)?;
     let ranking_snapshot = find_ranking_snapshot(&cache_indices, &ranking, pr_created_epoch);
 
@@ -204,7 +204,13 @@ pub fn run(pr: u64, founder_override: bool) -> Result<(), Box<dyn std::error::Er
     )?;
 
     // --- Step 10: Update genesis-state cache ---
-    update_cache(pr, &spec_dir, &cache_indices, &index_for_trailer, &commit_json)?;
+    update_cache(
+        pr,
+        &spec_dir,
+        &cache_indices,
+        &index_for_trailer,
+        &commit_json,
+    )?;
 
     // --- Step 11: Verify cache integrity ---
     // Pull latest master (now includes the merge), then verify
@@ -252,16 +258,24 @@ fn update_cache(
     let new_commit_hash = new_index["commitHash"].as_str().unwrap_or("");
 
     // Update ranking.json
-    let existing_ranking_json = git::show_file("origin/genesis-state:ranking.json")
-        .unwrap_or_else(|_| "{}".to_string());
+    let existing_ranking_json =
+        git::show_file("origin/genesis-state:ranking.json").unwrap_or_else(|_| "{}".to_string());
     let mut existing_ranking: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(&existing_ranking_json)?;
     existing_ranking.insert(new_commit_hash.to_string(), new_ranking.clone());
 
     // Write to genesis-state branch via worktree
     git::fetch("origin", "genesis-state")?;
-    git::git_cmd(&["worktree", "add", "/tmp/genesis-state", "origin/genesis-state"])?;
-    git::git_cmd_in("/tmp/genesis-state", &["checkout", "-B", "genesis-state", "origin/genesis-state"])?;
+    git::git_cmd(&[
+        "worktree",
+        "add",
+        "/tmp/genesis-state",
+        "origin/genesis-state",
+    ])?;
+    git::git_cmd_in(
+        "/tmp/genesis-state",
+        &["checkout", "-B", "genesis-state", "origin/genesis-state"],
+    )?;
 
     std::fs::write(
         "/tmp/genesis-state/genesis.json",
@@ -277,7 +291,10 @@ fn update_cache(
         "/tmp/genesis-state",
         &["config", "user.email", "legal@bitarray.dev"],
     )?;
-    git::git_cmd_in("/tmp/genesis-state", &["add", "genesis.json", "ranking.json"])?;
+    git::git_cmd_in(
+        "/tmp/genesis-state",
+        &["add", "genesis.json", "ranking.json"],
+    )?;
     git::git_cmd_in(
         "/tmp/genesis-state",
         &[
@@ -294,27 +311,32 @@ fn update_cache(
 
 fn check_no_new_commits(pr: u64) -> Result<(), Box<dyn std::error::Error>> {
     let repo = std::env::var("GITHUB_REPOSITORY").unwrap_or_else(|_| {
-        github::gh(&["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-            .unwrap_or_default()
-            .trim()
-            .to_string()
+        github::gh(&[
+            "repo",
+            "view",
+            "--json",
+            "nameWithOwner",
+            "--jq",
+            ".nameWithOwner",
+        ])
+        .unwrap_or_default()
+        .trim()
+        .to_string()
     });
 
     let comments_json = github::pr_view(pr, "comments")?;
-    let last_review_at = comments_json["comments"]
-        .as_array()
-        .and_then(|comments| {
-            comments
-                .iter()
-                .filter(|c| {
-                    c["body"]
-                        .as_str()
-                        .map(|b| b.starts_with("/review"))
-                        .unwrap_or(false)
-                })
-                .last()
-                .and_then(|c| c["createdAt"].as_str().map(|s| s.to_string()))
-        });
+    let last_review_at = comments_json["comments"].as_array().and_then(|comments| {
+        comments
+            .iter()
+            .filter(|c| {
+                c["body"]
+                    .as_str()
+                    .map(|b| b.starts_with("/review"))
+                    .unwrap_or(false)
+            })
+            .last()
+            .and_then(|c| c["createdAt"].as_str().map(|s| s.to_string()))
+    });
 
     if let Some(last_review) = last_review_at {
         let commits_output = github::gh(&[
@@ -326,9 +348,12 @@ fn check_no_new_commits(pr: u64) -> Result<(), Box<dyn std::error::Error>> {
         let last_commit_at = commits_output.trim();
 
         if !last_commit_at.is_empty() && last_commit_at > &last_review {
-            github::pr_comment(pr, &format!(
-                "**JAR Bot:** New commits pushed after the last review (commit: {last_commit_at}, review: {last_review}). Aborting merge — please re-review."
-            ))?;
+            github::pr_comment(
+                pr,
+                &format!(
+                    "**JAR Bot:** New commits pushed after the last review (commit: {last_commit_at}, review: {last_review}). Aborting merge — please re-review."
+                ),
+            )?;
             return Err("commits pushed after last review".into());
         }
     }
@@ -382,13 +407,19 @@ mod tests {
     #[test]
     fn test_parse_flag_basic() {
         let body = "Set-Genesis-Author: @alice\n\nThis PR does something.";
-        assert_eq!(parse_flag(body, "Set-Genesis-Author"), Some("alice".to_string()));
+        assert_eq!(
+            parse_flag(body, "Set-Genesis-Author"),
+            Some("alice".to_string())
+        );
     }
 
     #[test]
     fn test_parse_flag_no_at() {
         let body = "Set-Genesis-Author: alice\n\nBody text.";
-        assert_eq!(parse_flag(body, "Set-Genesis-Author"), Some("alice".to_string()));
+        assert_eq!(
+            parse_flag(body, "Set-Genesis-Author"),
+            Some("alice".to_string())
+        );
     }
 
     #[test]
@@ -445,7 +476,13 @@ mod tests {
     #[test]
     fn test_parse_flag_multiple_flags() {
         let body = "Set-Genesis-Author: @alice\nSome-Other-Flag: value\n\nBody text.";
-        assert_eq!(parse_flag(body, "Set-Genesis-Author"), Some("alice".to_string()));
-        assert_eq!(parse_flag(body, "Some-Other-Flag"), Some("value".to_string()));
+        assert_eq!(
+            parse_flag(body, "Set-Genesis-Author"),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            parse_flag(body, "Some-Other-Flag"),
+            Some("value".to_string())
+        );
     }
 }

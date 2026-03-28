@@ -240,7 +240,9 @@ impl GrandpaState {
     fn prevote_ghost(&self) -> Option<(Hash, Timeslot)> {
         let mut vote_counts: BTreeMap<Hash, (usize, Timeslot)> = BTreeMap::new();
         for vote in self.prevotes.values() {
-            let entry = vote_counts.entry(vote.block_hash).or_insert((0, vote.block_slot));
+            let entry = vote_counts
+                .entry(vote.block_hash)
+                .or_insert((0, vote.block_slot));
             entry.0 += 1;
         }
 
@@ -256,7 +258,9 @@ impl GrandpaState {
     fn check_finality(&mut self) -> Option<(Hash, Timeslot)> {
         let mut vote_counts: BTreeMap<Hash, (usize, Timeslot)> = BTreeMap::new();
         for vote in self.precommits.values() {
-            let entry = vote_counts.entry(vote.block_hash).or_insert((0, vote.block_slot));
+            let entry = vote_counts
+                .entry(vote.block_hash)
+                .or_insert((0, vote.block_slot));
             entry.0 += 1;
         }
 
@@ -327,11 +331,7 @@ fn sign_vote(
 }
 
 /// Verify a GRANDPA vote signature.
-pub fn verify_vote(
-    vote: &Vote,
-    vote_type: VoteType,
-    state: &grey_types::state::State,
-) -> bool {
+pub fn verify_vote(vote: &Vote, vote_type: VoteType, state: &grey_types::state::State) -> bool {
     let idx = vote.validator_index as usize;
     if idx >= state.current_validators.len() {
         return false;
@@ -451,7 +451,14 @@ mod tests {
         // Add prevotes from other validators until threshold
         let threshold = grandpa.threshold();
         for i in 1..threshold as u16 {
-            let vote = sign_vote(&block_hash, 5, 1, i, &secrets[i as usize], VoteType::Prevote);
+            let vote = sign_vote(
+                &block_hash,
+                5,
+                1,
+                i,
+                &secrets[i as usize],
+                VoteType::Prevote,
+            );
             let reached = grandpa.add_prevote(vote);
             if (i as usize + 1) == threshold {
                 // +1 because validator 0 already voted
@@ -473,7 +480,14 @@ mod tests {
 
         // All validators prevote
         for i in 0..config.validators_count {
-            let vote = sign_vote(&block_hash, 5, 1, i, &secrets[i as usize], VoteType::Prevote);
+            let vote = sign_vote(
+                &block_hash,
+                5,
+                1,
+                i,
+                &secrets[i as usize],
+                VoteType::Prevote,
+            );
             grandpa.add_prevote(vote);
         }
 
@@ -487,7 +501,14 @@ mod tests {
         let _threshold = grandpa.threshold();
         let mut finalized = None;
         for i in 1..config.validators_count {
-            let vote = sign_vote(&block_hash, 5, 1, i, &secrets[i as usize], VoteType::Precommit);
+            let vote = sign_vote(
+                &block_hash,
+                5,
+                1,
+                i,
+                &secrets[i as usize],
+                VoteType::Precommit,
+            );
             if let Some(fin) = grandpa.add_precommit(vote) {
                 finalized = Some(fin);
             }

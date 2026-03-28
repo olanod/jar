@@ -2,12 +2,12 @@
 
 use crate::TransitionError;
 use grey_codec::header_codec::compute_header_hash;
+use grey_types::Hash;
 use grey_types::config::Config;
 #[cfg(test)]
 use grey_types::constants::*;
 use grey_types::header::Block;
 use grey_types::state::{PendingReport, State};
-use grey_types::Hash;
 
 const MINIMUM_GUARANTORS: usize = 2; // Minimum credential count for guarantees
 
@@ -30,7 +30,12 @@ pub fn apply(state: &State, block: &Block) -> Result<State, TransitionError> {
 /// Apply a block with a specific configuration (for testing with tiny constants).
 /// Returns (new_state, remaining_opaque_data) where remaining_opaque_data is the
 /// opaque service data after consuming entries accessed during accumulation.
-pub fn apply_with_config(state: &State, block: &Block, config: &Config, opaque_data: &[([u8; 31], Vec<u8>)]) -> Result<(State, Vec<([u8; 31], Vec<u8>)>), TransitionError> {
+pub fn apply_with_config(
+    state: &State,
+    block: &Block,
+    config: &Config,
+    opaque_data: &[([u8; 31], Vec<u8>)],
+) -> Result<(State, Vec<([u8; 31], Vec<u8>)>), TransitionError> {
     let header = &block.header;
     let extrinsic = &block.extrinsic;
 
@@ -51,32 +56,51 @@ pub fn apply_with_config(state: &State, block: &Block, config: &Config, opaque_d
     clear_disputed_reports(&mut new_state, &extrinsic.disputes, config);
 
     // Step 4: Safrole sub-transition (Section 6)
-    apply_safrole(&mut new_state, header, &block.extrinsic.tickets, config, prior_timeslot);
+    apply_safrole(
+        &mut new_state,
+        header,
+        &block.extrinsic.tickets,
+        config,
+        prior_timeslot,
+    );
 
     // Step 5: Process availability assurances (Section 11.2)
-    let available_reports = process_assurances(&mut new_state, &extrinsic.assurances, header.timeslot, config);
-
+    let available_reports = process_assurances(
+        &mut new_state,
+        &extrinsic.assurances,
+        header.timeslot,
+        config,
+    );
 
     // Step 6: Process work report guarantees (Section 11.4)
     // Collect incoming reports (I) before processing guarantees
-    let incoming_reports: Vec<&grey_types::work::WorkReport> = extrinsic.guarantees.iter().map(|g| &g.report).collect();
+    let incoming_reports: Vec<&grey_types::work::WorkReport> =
+        extrinsic.guarantees.iter().map(|g| &g.report).collect();
     process_guarantees(&mut new_state, &extrinsic.guarantees, header.timeslot)?;
 
     // Step 7: Accumulation (Section 12)
-    let (accumulate_root, accumulation_stats, remaining_opaque) = crate::accumulate::run_accumulation(
-        config,
-        &mut new_state,
-        state.timeslot,
-        available_reports.clone(),
-        opaque_data,
-    );
+    let (accumulate_root, accumulation_stats, remaining_opaque) =
+        crate::accumulate::run_accumulation(
+            config,
+            &mut new_state,
+            state.timeslot,
+            available_reports.clone(),
+            opaque_data,
+        );
 
     // Step 8: Update recent block history β' (Section 7)
     {
         let header_hash = compute_header_hash(header);
-        let work_packages: Vec<(Hash, Hash)> = extrinsic.guarantees.iter().map(|g| {
-            (g.report.package_spec.package_hash, g.report.package_spec.exports_root)
-        }).collect();
+        let work_packages: Vec<(Hash, Hash)> = extrinsic
+            .guarantees
+            .iter()
+            .map(|g| {
+                (
+                    g.report.package_spec.package_hash,
+                    g.report.package_spec.exports_root,
+                )
+            })
+            .collect();
         let input = crate::history::HistoryInput {
             header_hash,
             parent_state_root: header.state_root,
@@ -100,7 +124,12 @@ pub fn apply_with_config(state: &State, block: &Block, config: &Config, opaque_d
     );
 
     // Step 10: Process preimages (Section 12.4)
-    process_preimages(&mut new_state, &extrinsic.preimages, header.timeslot, &remaining_opaque);
+    process_preimages(
+        &mut new_state,
+        &extrinsic.preimages,
+        header.timeslot,
+        &remaining_opaque,
+    );
 
     // Step 11: Authorization pool rotation (Section 8)
     rotate_auth_pool(&mut new_state, &extrinsic.guarantees, config);
@@ -141,11 +170,7 @@ fn apply_judgments(
 
     // Process verdicts (eq 10.12-10.19)
     for verdict in &disputes.verdicts {
-        let positive_count: usize = verdict
-            .judgments
-            .iter()
-            .filter(|j| j.is_valid)
-            .count();
+        let positive_count: usize = verdict.judgments.iter().filter(|j| j.is_valid).count();
 
         if positive_count >= supermajority {
             state.judgments.good.insert(verdict.report_hash);
@@ -176,19 +201,14 @@ fn clear_disputed_reports(
     let supermajority = config.super_majority() as usize;
 
     for verdict in &disputes.verdicts {
-        let positive_count: usize = verdict
-            .judgments
-            .iter()
-            .filter(|j| j.is_valid)
-            .count();
+        let positive_count: usize = verdict.judgments.iter().filter(|j| j.is_valid).count();
 
         // If not supermajority good, clear from pending
         if positive_count < supermajority {
             for slot in state.pending_reports.iter_mut() {
                 if let Some(pending) = slot {
-                    let report_hash = grey_crypto::blake2b_256(
-                        &pending.report.package_spec.package_hash.0,
-                    );
+                    let report_hash =
+                        grey_crypto::blake2b_256(&pending.report.package_spec.package_hash.0);
                     if report_hash == verdict.report_hash {
                         *slot = None;
                     }
@@ -239,13 +259,9 @@ fn apply_safrole(
                          gamma_z: &grey_types::BandersnatchRingRoot,
                          eta2: &Hash,
                          attempt: u8|
-                         -> Option<Hash> {
+          -> Option<Hash> {
         let ticket_id_bytes = grey_crypto::bandersnatch::verify_ticket(
-            ring_size,
-            &gamma_z.0,
-            &eta2.0,
-            attempt,
-            &tp.proof,
+            ring_size, &gamma_z.0, &eta2.0, attempt, &tp.proof,
         )?;
         Some(Hash(ticket_id_bytes))
     };
@@ -328,28 +344,28 @@ fn process_guarantees(
 
         // Validate: core index must be valid
         if report.core_index as usize >= state.pending_reports.len() {
-            return Err(TransitionError::InvalidExtrinsic(
-                format!("invalid core index: {}", report.core_index),
-            ));
+            return Err(TransitionError::InvalidExtrinsic(format!(
+                "invalid core index: {}",
+                report.core_index
+            )));
         }
 
         // Validate: core slot must be empty
         let core = report.core_index as usize;
         if state.pending_reports[core].is_some() {
-            return Err(TransitionError::InvalidExtrinsic(
-                format!("core {} already has pending report", core),
-            ));
+            return Err(TransitionError::InvalidExtrinsic(format!(
+                "core {} already has pending report",
+                core
+            )));
         }
 
         // Validate: minimum number of guarantors (eq 11.24-11.26)
         if guarantee.credentials.len() < MINIMUM_GUARANTORS {
-            return Err(TransitionError::InvalidExtrinsic(
-                format!(
-                    "insufficient guarantors: {} < {}",
-                    guarantee.credentials.len(),
-                    MINIMUM_GUARANTORS
-                ),
-            ));
+            return Err(TransitionError::InvalidExtrinsic(format!(
+                "insufficient guarantors: {} < {}",
+                guarantee.credentials.len(),
+                MINIMUM_GUARANTORS
+            )));
         }
 
         // Place report in pending slot
@@ -361,7 +377,6 @@ fn process_guarantees(
 
     Ok(())
 }
-
 
 /// Process preimage submissions — preimage integration function I (GP section 12.4).
 ///
@@ -382,10 +397,13 @@ fn process_preimages(
             // Promote from opaque data if not in structured preimage_info
             if !account.preimage_info.contains_key(&key) {
                 let state_key = grey_merkle::state_serial::compute_preimage_info_state_key(
-                    *service_id, &hash, data.len() as u32,
+                    *service_id,
+                    &hash,
+                    data.len() as u32,
                 );
                 if let Some(opaque_entry) = opaque_data.iter().find(|(k, _)| *k == state_key) {
-                    let timeslots = crate::accumulate::decode_preimage_info_timeslots(&opaque_entry.1);
+                    let timeslots =
+                        crate::accumulate::decode_preimage_info_timeslots(&opaque_entry.1);
                     account.preimage_info.insert(key, timeslots);
                 }
             }
@@ -426,7 +444,10 @@ fn rotate_auth_pool(
     for core in 0..state.auth_pool.len().min(config.core_count as usize) {
         // F(c): remove used authorizer if a guarantee was submitted for this core
         // α[c] ⊢ {(g_r)_a} — remove the specific authorizer hash by VALUE
-        if let Some(guarantee) = guarantees.iter().find(|g| g.report.core_index as usize == core) {
+        if let Some(guarantee) = guarantees
+            .iter()
+            .find(|g| g.report.core_index as usize == core)
+        {
             let auth_hash = &guarantee.report.authorizer_hash;
             if let Some(pos) = state.auth_pool[core].iter().position(|h| h == auth_hash) {
                 state.auth_pool[core].remove(pos);
@@ -450,7 +471,6 @@ fn rotate_auth_pool(
             let start = state.auth_pool[core].len() - o;
             state.auth_pool[core] = state.auth_pool[core][start..].to_vec();
         }
-
     }
 }
 
@@ -704,7 +724,10 @@ mod tests {
         );
 
         let mut block = make_empty_block(1);
-        block.extrinsic.preimages.push((service_id, preimage_data.clone()));
+        block
+            .extrinsic
+            .preimages
+            .push((service_id, preimage_data.clone()));
 
         let new_state = apply(&state, &block).unwrap();
         let account = new_state.services.get(&service_id).unwrap();

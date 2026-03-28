@@ -8,10 +8,10 @@
 //! - DA chunks keyed by (report_hash, chunk_index)
 
 use grey_codec::header_codec;
+use grey_types::Hash;
 use grey_types::config::Config;
 use grey_types::header::Block;
 use grey_types::state::State;
-use grey_types::Hash;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use std::path::Path;
 
@@ -187,8 +187,7 @@ impl Store {
         let kvs = decode_state_kvs(val.value())
             .ok_or_else(|| StoreError::Codec("invalid state KVs".into()))?;
 
-        let expected_key =
-            grey_merkle::state_serial::key_for_service_pub(255, service_id);
+        let expected_key = grey_merkle::state_serial::key_for_service_pub(255, service_id);
         for (key, value) in &kvs {
             if *key == expected_key {
                 // Service account: version(1) + code_hash(32) + ...
@@ -259,7 +258,10 @@ impl Store {
         let mut hash = [0u8; 32];
         hash.copy_from_slice(hash_val.value());
         let slot = u32::from_le_bytes(
-            slot_val.value().try_into().map_err(|_| StoreError::Codec("invalid head slot bytes".into()))?
+            slot_val
+                .value()
+                .try_into()
+                .map_err(|_| StoreError::Codec("invalid head slot bytes".into()))?,
         );
         Ok((Hash(hash), slot))
     }
@@ -281,17 +283,16 @@ impl Store {
         let txn = self.db.begin_read()?;
         let meta = txn.open_table(META)?;
 
-        let hash_val = meta
-            .get(META_FINALIZED_HASH)?
-            .ok_or(StoreError::NotFound)?;
-        let slot_val = meta
-            .get(META_FINALIZED_SLOT)?
-            .ok_or(StoreError::NotFound)?;
+        let hash_val = meta.get(META_FINALIZED_HASH)?.ok_or(StoreError::NotFound)?;
+        let slot_val = meta.get(META_FINALIZED_SLOT)?.ok_or(StoreError::NotFound)?;
 
         let mut hash = [0u8; 32];
         hash.copy_from_slice(hash_val.value());
         let slot = u32::from_le_bytes(
-            slot_val.value().try_into().map_err(|_| StoreError::Codec("invalid finalized slot bytes".into()))?
+            slot_val
+                .value()
+                .try_into()
+                .map_err(|_| StoreError::Codec("invalid finalized slot bytes".into()))?,
         );
         Ok((Hash(hash), slot))
     }
@@ -513,10 +514,7 @@ mod tests {
 
     #[test]
     fn test_state_kvs_encoding() {
-        let kvs = vec![
-            ([1u8; 31], vec![10, 20, 30]),
-            ([2u8; 31], vec![40, 50]),
-        ];
+        let kvs = vec![([1u8; 31], vec![10, 20, 30]), ([2u8; 31], vec![40, 50])];
         let encoded = encode_state_kvs(&kvs);
         let decoded = decode_state_kvs(&encoded).unwrap();
         assert_eq!(decoded.len(), 2);

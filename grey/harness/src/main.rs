@@ -85,7 +85,10 @@ async fn main() {
         error!("RPC not ready: {e}");
         std::process::exit(1);
     }
-    let status = client.get_status().await.expect("RPC ready but get_status failed");
+    let status = client
+        .get_status()
+        .await
+        .expect("RPC ready but get_status failed");
     println!("RPC ready (slot {})", status.head_slot);
 
     // Wait for pixels service.
@@ -111,7 +114,10 @@ async fn main() {
         if result.pass {
             println!("  PASS ({dur}s)\n");
         } else {
-            println!("  FAIL: {} ({dur}s)\n", result.error.as_deref().unwrap_or("unknown"));
+            println!(
+                "  FAIL: {} ({dur}s)\n",
+                result.error.as_deref().unwrap_or("unknown")
+            );
         }
         results.push(result);
     }

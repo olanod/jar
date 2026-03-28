@@ -52,7 +52,12 @@ unsafe fn install_handler() {
     sa.sa_sigaction = sigsegv_handler as usize;
     libc::sigemptyset(&mut sa.sa_mask);
     let r = libc::sigaction(libc::SIGSEGV, &sa, &raw mut PREV_SIGSEGV);
-    assert_eq!(r, 0, "sigaction(SIGSEGV) failed: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        r,
+        0,
+        "sigaction(SIGSEGV) failed: {}",
+        std::io::Error::last_os_error()
+    );
 }
 
 unsafe fn install_sigaltstack() {
@@ -86,7 +91,12 @@ unsafe fn install_sigaltstack() {
         ss_size: MIN_STACK,
     };
     let r = libc::sigaltstack(&new_stack, null_mut());
-    assert_eq!(r, 0, "sigaltstack failed: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        r,
+        0,
+        "sigaltstack failed: {}",
+        std::io::Error::last_os_error()
+    );
     // Intentionally leak the allocation — it lives for the process lifetime.
 }
 
@@ -114,7 +124,10 @@ unsafe extern "C" fn sigsegv_handler(
 
     // Binary search the trap table for this native offset.
     let native_offset = (pc - state.code_start) as u32;
-    let pvm_pc = match state.trap_table.binary_search_by_key(&native_offset, |&(off, _)| off) {
+    let pvm_pc = match state
+        .trap_table
+        .binary_search_by_key(&native_offset, |&(off, _)| off)
+    {
         Ok(idx) => state.trap_table[idx].1,
         Err(_) => {
             // PC is in our code but not at a registered trap site — real bug.

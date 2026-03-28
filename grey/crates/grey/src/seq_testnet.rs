@@ -9,7 +9,7 @@
 
 use grey_codec::header_codec::compute_header_hash;
 use grey_consensus::authoring;
-use grey_consensus::genesis::{create_genesis, ValidatorSecrets};
+use grey_consensus::genesis::{ValidatorSecrets, create_genesis};
 use grey_rpc::{self, RpcCommand};
 use grey_store::Store;
 use grey_types::config::Config;
@@ -115,8 +115,13 @@ pub async fn run_seq_testnet(
                     match <WorkPackage as grey_codec::Decode>::decode(&data) {
                         Ok((wp, _len)) => {
                             let service_id = wp.items.first().map(|i| i.service_id).unwrap_or(0);
-                            let code_hash = wp.items.first().map(|i| i.code_hash).unwrap_or(Hash::ZERO);
-                            let payload = wp.items.first().map(|i| i.payload.clone()).unwrap_or_default();
+                            let code_hash =
+                                wp.items.first().map(|i| i.code_hash).unwrap_or(Hash::ZERO);
+                            let payload = wp
+                                .items
+                                .first()
+                                .map(|i| i.payload.clone())
+                                .unwrap_or_default();
 
                             let (guarantee, _pkg_hash) = build_test_guarantee_with_payload(
                                 &nodes[0].state,
@@ -128,7 +133,9 @@ pub async fn run_seq_testnet(
                                 0, // core 0
                                 payload,
                             );
-                            tracing::info!("RPC: work package → guarantee for service {service_id}");
+                            tracing::info!(
+                                "RPC: work package → guarantee for service {service_id}"
+                            );
                             pending_guarantees.push(guarantee);
                         }
                         Err(e) => {
@@ -199,12 +206,7 @@ pub async fn run_seq_testnet(
                 );
 
                 // Apply to author's state
-                match grey_state::transition::apply_with_config(
-                    &node.state,
-                    &block,
-                    &config,
-                    &[],
-                ) {
+                match grey_state::transition::apply_with_config(&node.state, &block, &config, &[]) {
                     Ok((new_state, _)) => {
                         let header_hash = compute_header_hash(&block.header);
 
@@ -268,7 +270,6 @@ pub async fn run_seq_testnet(
         if slot % 2 == 0 {
             tokio::time::sleep(std::time::Duration::from_millis(1)).await;
         }
-
     }
 
     // Cleanup

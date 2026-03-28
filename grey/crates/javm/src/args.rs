@@ -74,7 +74,12 @@ pub enum Args {
     /// Two registers + one offset.
     TwoRegOffset { ra: usize, rb: usize, offset: u64 },
     /// Two registers + two immediates.
-    TwoRegTwoImm { ra: usize, rb: usize, imm_x: u64, imm_y: u64 },
+    TwoRegTwoImm {
+        ra: usize,
+        rb: usize,
+        imm_x: u64,
+        imm_y: u64,
+    },
     /// Three registers.
     ThreeReg { ra: usize, rb: usize, rd: usize },
 }
@@ -249,7 +254,12 @@ pub fn decode_args(
             let ly = if l > lx + 2 { (l - lx - 2).min(4) } else { 0 };
             let imm_x = read_signed_at(code, pc + 3, lx);
             let imm_y = read_signed_at(code, pc + 3 + lx, ly);
-            Args::TwoRegTwoImm { ra, rb, imm_x, imm_y }
+            Args::TwoRegTwoImm {
+                ra,
+                rb,
+                imm_x,
+                imm_y,
+            }
         }
 
         // A.5.13: rA, rB from first reg_byte, rD from second byte

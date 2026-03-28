@@ -27,10 +27,15 @@ fn run_encode_test(params: &ErasureParams, json_str: &str) {
 
     let actual_shards = encode(params, &data).unwrap();
 
-    assert_eq!(actual_shards.len(), expected_shards.len(), "shard count mismatch");
+    assert_eq!(
+        actual_shards.len(),
+        expected_shards.len(),
+        "shard count mismatch"
+    );
     for (i, (actual, expected)) in actual_shards.iter().zip(&expected_shards).enumerate() {
         assert_eq!(
-            actual, expected,
+            actual,
+            expected,
             "shard {i} mismatch:\n  got:      {}\n  expected: {}",
             hex::encode(actual),
             hex::encode(expected)
@@ -55,7 +60,8 @@ fn run_recover_test(params: &ErasureParams, json_str: &str) {
 
     let recovered = recover(params, &chunks, data.len()).unwrap();
     assert_eq!(
-        recovered, data,
+        recovered,
+        data,
         "recovery mismatch:\n  got:      {}\n  expected: {}",
         hex::encode(&recovered),
         hex::encode(&data)

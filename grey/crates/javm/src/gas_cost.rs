@@ -23,52 +23,110 @@ struct ExecUnits {
 
 impl ExecUnits {
     fn can_satisfy(self, req: ExecUnits) -> bool {
-        self.alu >= req.alu && self.load >= req.load && self.store >= req.store
-            && self.mul >= req.mul && self.div >= req.div
+        self.alu >= req.alu
+            && self.load >= req.load
+            && self.store >= req.store
+            && self.mul >= req.mul
+            && self.div >= req.div
     }
     fn sub(self, req: ExecUnits) -> ExecUnits {
         ExecUnits {
-            alu: self.alu - req.alu, load: self.load - req.load,
-            store: self.store - req.store, mul: self.mul - req.mul,
+            alu: self.alu - req.alu,
+            load: self.load - req.load,
+            store: self.store - req.store,
+            mul: self.mul - req.mul,
             div: self.div - req.div,
         }
     }
-    const RESET: ExecUnits = ExecUnits { alu: 4, load: 4, store: 4, mul: 1, div: 1 };
-    const ALU: ExecUnits = ExecUnits { alu: 1, load: 0, store: 0, mul: 0, div: 0 };
-    const LOAD: ExecUnits = ExecUnits { alu: 1, load: 1, store: 0, mul: 0, div: 0 };
-    const STORE: ExecUnits = ExecUnits { alu: 1, load: 0, store: 1, mul: 0, div: 0 };
-    const MUL: ExecUnits = ExecUnits { alu: 1, load: 0, store: 0, mul: 1, div: 0 };
-    const DIV: ExecUnits = ExecUnits { alu: 1, load: 0, store: 0, mul: 0, div: 1 };
-    const NONE: ExecUnits = ExecUnits { alu: 0, load: 0, store: 0, mul: 0, div: 0 };
+    const RESET: ExecUnits = ExecUnits {
+        alu: 4,
+        load: 4,
+        store: 4,
+        mul: 1,
+        div: 1,
+    };
+    const ALU: ExecUnits = ExecUnits {
+        alu: 1,
+        load: 0,
+        store: 0,
+        mul: 0,
+        div: 0,
+    };
+    const LOAD: ExecUnits = ExecUnits {
+        alu: 1,
+        load: 1,
+        store: 0,
+        mul: 0,
+        div: 0,
+    };
+    const STORE: ExecUnits = ExecUnits {
+        alu: 1,
+        load: 0,
+        store: 1,
+        mul: 0,
+        div: 0,
+    };
+    const MUL: ExecUnits = ExecUnits {
+        alu: 1,
+        load: 0,
+        store: 0,
+        mul: 1,
+        div: 0,
+    };
+    const DIV: ExecUnits = ExecUnits {
+        alu: 1,
+        load: 0,
+        store: 0,
+        mul: 0,
+        div: 1,
+    };
+    const NONE: ExecUnits = ExecUnits {
+        alu: 0,
+        load: 0,
+        store: 0,
+        mul: 0,
+        div: 0,
+    };
     fn to_eu_byte(self) -> u8 {
-        if self.div > 0 { 5 }
-        else if self.mul > 0 { 4 }
-        else if self.store > 0 { 3 }
-        else if self.load > 0 { 2 }
-        else if self.alu > 0 { 1 }
-        else { 0 }
+        if self.div > 0 {
+            5
+        } else if self.mul > 0 {
+            4
+        } else if self.store > 0 {
+            3
+        } else if self.load > 0 {
+            2
+        } else if self.alu > 0 {
+            1
+        } else {
+            0
+        }
     }
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum RobState { Wait, Exe, Fin }
+enum RobState {
+    Wait,
+    Exe,
+    Fin,
+}
 
 #[derive(Clone, Copy)]
 struct RobEntry {
     state: RobState,
     cycles_left: u32,
-    deps: [u8; 4],          // ROB indices this depends on (0xFF = unused)
+    deps: [u8; 4], // ROB indices this depends on (0xFF = unused)
     dep_count: u8,
     dest_regs: RegSet,
     exec_units: ExecUnits,
 }
 
 struct SimState {
-    ip: Option<usize>,          // instruction pointer (None = done decoding)
+    ip: Option<usize>, // instruction pointer (None = done decoding)
     cycles: u32,
-    decode_slots: u8,           // remaining per cycle (reset to 4)
-    dispatch_slots: u8,         // remaining per cycle (reset to 5)
-    exec_units: ExecUnits,      // remaining per cycle
+    decode_slots: u8,      // remaining per cycle (reset to 4)
+    dispatch_slots: u8,    // remaining per cycle (reset to 5)
+    exec_units: ExecUnits, // remaining per cycle
     rob: Vec<RobEntry>,
 }
 
@@ -82,14 +140,27 @@ struct RegSet {
 }
 
 impl RegSet {
-    const EMPTY: Self = Self { regs: [0; 3], len: 0 };
-    fn one(r: u8) -> Self { Self { regs: [r, 0, 0], len: 1 } }
-    fn two(a: u8, b: u8) -> Self { Self { regs: [a, b, 0], len: 2 } }
+    const EMPTY: Self = Self {
+        regs: [0; 3],
+        len: 0,
+    };
+    fn one(r: u8) -> Self {
+        Self {
+            regs: [r, 0, 0],
+            len: 1,
+        }
+    }
+    fn two(a: u8, b: u8) -> Self {
+        Self {
+            regs: [a, b, 0],
+            len: 2,
+        }
+    }
     #[inline]
     fn contains(&self, r: u8) -> bool {
         (self.len >= 1 && self.regs[0] == r)
-        || (self.len >= 2 && self.regs[1] == r)
-        || (self.len >= 3 && self.regs[2] == r)
+            || (self.len >= 2 && self.regs[1] == r)
+            || (self.len >= 3 && self.regs[2] == r)
     }
     #[inline]
     fn iter(&self) -> impl Iterator<Item = &u8> {
@@ -123,15 +194,27 @@ fn branch_cost(code: &[u8], bitmask: &[u8], target: usize) -> u32 {
 
 /// Extract register A (first register in instruction encoding).
 fn reg_a(code: &[u8], pc: usize) -> u8 {
-    if pc + 1 < code.len() { code[pc + 1] & 0x0F } else { 0 }
+    if pc + 1 < code.len() {
+        code[pc + 1] & 0x0F
+    } else {
+        0
+    }
 }
 /// Extract register B (second register, upper nibble of byte after opcode).
 fn reg_b(code: &[u8], pc: usize) -> u8 {
-    if pc + 1 < code.len() { (code[pc + 1] >> 4) & 0x0F } else { 0 }
+    if pc + 1 < code.len() {
+        (code[pc + 1] >> 4) & 0x0F
+    } else {
+        0
+    }
 }
 /// Extract register D (third register encoding for 3-reg instructions).
 fn reg_d(code: &[u8], pc: usize) -> u8 {
-    if pc + 2 < code.len() { code[pc + 2] & 0x0F } else { 0 }
+    if pc + 2 < code.len() {
+        code[pc + 2] & 0x0F
+    } else {
+        0
+    }
 }
 
 /// Compute skip distance (bytes to next instruction start).
@@ -139,7 +222,9 @@ pub fn skip_distance(bitmask: &[u8], pc: usize) -> usize {
     for j in 0..25 {
         let idx = pc + 1 + j;
         let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-        if bit == 1 { return j; }
+        if bit == 1 {
+            return j;
+        }
     }
     24
 }
@@ -155,7 +240,12 @@ fn extract_branch_target(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
         // Decode offset from the last portion of the instruction
         // For A.5.8 format: opcode + reg_nibble + immediate + offset
         // The offset part depends on skip length
-        let raw = crate::args::decode_args(code, pc, skip, crate::instruction::InstructionCategory::OneRegImmOffset);
+        let raw = crate::args::decode_args(
+            code,
+            pc,
+            skip,
+            crate::instruction::InstructionCategory::OneRegImmOffset,
+        );
         if let crate::args::Args::RegImmOffset { offset, .. } = raw {
             return offset as usize;
         }
@@ -166,7 +256,12 @@ fn extract_branch_target(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
 /// Extract branch target from two-reg+offset instruction.
 fn extract_two_reg_branch_target(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
     let skip = skip_distance(bitmask, pc);
-    let raw = crate::args::decode_args(code, pc, skip, crate::instruction::InstructionCategory::TwoRegOneOffset);
+    let raw = crate::args::decode_args(
+        code,
+        pc,
+        skip,
+        crate::instruction::InstructionCategory::TwoRegOneOffset,
+    );
     if let crate::args::Args::TwoRegOffset { offset, .. } = raw {
         return offset as usize;
     }
@@ -181,12 +276,26 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
     let rd = reg_d(code, pc);
 
     let mk = |cy: u32, dc: u8, eu: ExecUnits, dst: RegSet, src: RegSet| -> InstrCost {
-        InstrCost { cycles: cy, decode_slots: dc, exec_units: eu,
-                    dest_regs: dst, src_regs: src, is_terminator: false, is_move_reg: false }
+        InstrCost {
+            cycles: cy,
+            decode_slots: dc,
+            exec_units: eu,
+            dest_regs: dst,
+            src_regs: src,
+            is_terminator: false,
+            is_move_reg: false,
+        }
     };
     let mkt = |cy: u32, dc: u8, eu: ExecUnits, dst: RegSet, src: RegSet| -> InstrCost {
-        InstrCost { cycles: cy, decode_slots: dc, exec_units: eu,
-                    dest_regs: dst, src_regs: src, is_terminator: true, is_move_reg: false }
+        InstrCost {
+            cycles: cy,
+            decode_slots: dc,
+            exec_units: eu,
+            dest_regs: dst,
+            src_regs: src,
+            is_terminator: true,
+            is_move_reg: false,
+        }
     };
     let e = RegSet::EMPTY;
     let r1 = RegSet::one;
@@ -194,20 +303,30 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
 
     match opcode {
         // No-arg
-        0 => mkt(2, 1, ExecUnits::NONE, e, e),       // trap
-        1 => mkt(2, 1, ExecUnits::NONE, e, e),       // fallthrough
-        2 => mkt(40, 1, ExecUnits::NONE, e, e),      // unlikely
-        10 => mkt(100, 4, ExecUnits::ALU, e, e),     // ecalli
+        0 => mkt(2, 1, ExecUnits::NONE, e, e),   // trap
+        1 => mkt(2, 1, ExecUnits::NONE, e, e),   // fallthrough
+        2 => mkt(40, 1, ExecUnits::NONE, e, e),  // unlikely
+        10 => mkt(100, 4, ExecUnits::ALU, e, e), // ecalli
 
         // Control flow
-        40 => mkt(15, 1, ExecUnits::ALU, e, e),      // jump
-        80 => {                                                       // load_imm_jump
+        40 => mkt(15, 1, ExecUnits::ALU, e, e), // jump
+        80 => {
+            // load_imm_jump
             let skip = skip_distance(bitmask, pc);
-            let raw = crate::args::decode_args(code, pc, skip, crate::instruction::InstructionCategory::OneRegImmOffset);
-            let r = if let crate::args::Args::RegImmOffset { ra: r, .. } = raw { r as u8 } else { ra };
+            let raw = crate::args::decode_args(
+                code,
+                pc,
+                skip,
+                crate::instruction::InstructionCategory::OneRegImmOffset,
+            );
+            let r = if let crate::args::Args::RegImmOffset { ra: r, .. } = raw {
+                r as u8
+            } else {
+                ra
+            };
             mkt(15, 1, ExecUnits::ALU, r1(r), e)
         }
-        50 => mkt(22, 1, ExecUnits::ALU, e, e),      // jump_ind
+        50 => mkt(22, 1, ExecUnits::ALU, e, e), // jump_ind
         180 => mkt(22, 1, ExecUnits::ALU, r1(ra), r1(rb)), // load_imm_jump_ind
 
         // Loads (reg+imm and two-reg+imm variants)
@@ -224,14 +343,18 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
         70..=73 => mk(25, 1, ExecUnits::STORE, e, r1(ra)),
 
         // Load immediates
-        51 => mk(1, 1, ExecUnits::NONE, r1(ra), e),          // load_imm
-        20 => mk(1, 2, ExecUnits::NONE, r1(ra), e),          // load_imm_64
+        51 => mk(1, 1, ExecUnits::NONE, r1(ra), e), // load_imm
+        20 => mk(1, 2, ExecUnits::NONE, r1(ra), e), // load_imm_64
 
         // move_reg: decoded in frontend, no ROB entry
         100 => InstrCost {
-            cycles: 0, decode_slots: 1, exec_units: ExecUnits::NONE,
-            dest_regs: r1(ra), src_regs: r1(rb),
-            is_terminator: false, is_move_reg: true,
+            cycles: 0,
+            decode_slots: 1,
+            exec_units: ExecUnits::NONE,
+            dest_regs: r1(ra),
+            src_regs: r1(rb),
+            is_terminator: false,
+            is_move_reg: true,
         },
 
         // sbrk (101): removed in jar080, but cost it anyway for simulation
@@ -253,12 +376,20 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
 
         // ALU 64-bit 3-reg: add_64(200), sub_64(201), and(210), xor(211), or(212)
         200 | 201 | 210 | 211 | 212 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 1 } else { 2 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                1
+            } else {
+                2
+            };
             mk(1, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         // ALU 32-bit 3-reg: add_32(190), sub_32(191)
         190 | 191 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(2, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
 
@@ -307,14 +438,22 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
 
         // Min/Max
         227 | 228 | 229 | 230 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(3, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         // and_inv, or_inv
         224 | 225 => mk(2, 3, ExecUnits::ALU, r1(ra), r2(rb, rd)),
         // xnor
         226 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(2, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
 
@@ -325,7 +464,11 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
 
         // Multiply 64-bit (3-reg)
         202 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 1 } else { 2 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                1
+            } else {
+                2
+            };
             mk(3, dc, ExecUnits::MUL, r1(ra), r2(rb, rd))
         }
         // mul_imm_64
@@ -335,7 +478,11 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
         }
         // Multiply 32-bit (3-reg)
         192 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(4, dc, ExecUnits::MUL, r1(ra), r2(rb, rd))
         }
         // mul_imm_32
@@ -350,8 +497,9 @@ fn instruction_cost(code: &[u8], bitmask: &[u8], pc: usize) -> InstrCost {
         215 => mk(6, 4, ExecUnits::MUL, r1(ra), r2(rb, rd)),
 
         // Divide (all variants)
-        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 =>
-            mk(60, 4, ExecUnits::DIV, r1(ra), r2(rb, rd)),
+        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 => {
+            mk(60, 4, ExecUnits::DIV, r1(ra), r2(rb, rd))
+        }
 
         // Rotate 64-bit (3-reg)
         // Already covered by shifts above (220, 222 = RotL64, RotR64)
@@ -433,9 +581,22 @@ fn gas_sim_traced(code: &[u8], bitmask: &[u8], start_pc: usize, trace: bool) -> 
             };
             #[cfg(feature = "std")]
             if trace {
-                let op = crate::instruction::Opcode::from_byte(code[pc]).map(|o| alloc::format!("{:?}", o)).unwrap_or("?".into());
-                eprintln!("  [{}] DECODE pc={} {} cy={} dec={} rob_idx={} deps={:?} move={} term={} slots_left={}",
-                    iter, pc, op, cost.cycles, cost.decode_slots, s.rob.len(), &deps[..dep_count as usize], cost.is_move_reg, cost.is_terminator, s.decode_slots);
+                let op = crate::instruction::Opcode::from_byte(code[pc])
+                    .map(|o| alloc::format!("{:?}", o))
+                    .unwrap_or("?".into());
+                eprintln!(
+                    "  [{}] DECODE pc={} {} cy={} dec={} rob_idx={} deps={:?} move={} term={} slots_left={}",
+                    iter,
+                    pc,
+                    op,
+                    cost.cycles,
+                    cost.decode_slots,
+                    s.rob.len(),
+                    &deps[..dep_count as usize],
+                    cost.is_move_reg,
+                    cost.is_terminator,
+                    s.decode_slots
+                );
             }
             if cost.is_move_reg {
                 s.ip = next_ip;
@@ -459,7 +620,13 @@ fn gas_sim_traced(code: &[u8], bitmask: &[u8], start_pc: usize, trace: bool) -> 
                 let eu = s.rob[idx].exec_units;
                 #[cfg(feature = "std")]
                 if trace {
-                    eprintln!("  [{}] DISPATCH rob[{}] cy={} dispatch_left={}", iter, idx, s.rob[idx].cycles_left, s.dispatch_slots - 1);
+                    eprintln!(
+                        "  [{}] DISPATCH rob[{}] cy={} dispatch_left={}",
+                        iter,
+                        idx,
+                        s.rob[idx].cycles_left,
+                        s.dispatch_slots - 1
+                    );
                 }
                 s.rob[idx].state = RobState::Exe;
                 s.dispatch_slots -= 1;
@@ -471,18 +638,44 @@ fn gas_sim_traced(code: &[u8], bitmask: &[u8], start_pc: usize, trace: bool) -> 
         // Priority 3: Done
         if s.ip.is_none() && rob_all_finished(&s.rob) {
             #[cfg(feature = "std")]
-            if trace { eprintln!("  [{}] DONE cycles={}", iter, s.cycles); }
+            if trace {
+                eprintln!("  [{}] DONE cycles={}", iter, s.cycles);
+            }
             break;
         }
 
         // Priority 4: Advance cycle
         #[cfg(feature = "std")]
         if trace {
-            let states: Vec<alloc::string::String> = s.rob.iter().enumerate().map(|(i, e)| {
-                let st = match e.state { RobState::Wait => "W", RobState::Exe => "E", RobState::Fin => "F" };
-                alloc::format!("{}:{}{}", i, st, if e.state == RobState::Exe { alloc::format!("({})", e.cycles_left) } else { alloc::string::String::new() })
-            }).collect();
-            eprintln!("  [{}] ADVANCE cycle {} → {} rob=[{}]", iter, s.cycles, s.cycles + 1, states.join(", "));
+            let states: Vec<alloc::string::String> = s
+                .rob
+                .iter()
+                .enumerate()
+                .map(|(i, e)| {
+                    let st = match e.state {
+                        RobState::Wait => "W",
+                        RobState::Exe => "E",
+                        RobState::Fin => "F",
+                    };
+                    alloc::format!(
+                        "{}:{}{}",
+                        i,
+                        st,
+                        if e.state == RobState::Exe {
+                            alloc::format!("({})", e.cycles_left)
+                        } else {
+                            alloc::string::String::new()
+                        }
+                    )
+                })
+                .collect();
+            eprintln!(
+                "  [{}] ADVANCE cycle {} → {} rob=[{}]",
+                iter,
+                s.cycles,
+                s.cycles + 1,
+                states.join(", ")
+            );
         }
         for entry in s.rob.iter_mut() {
             if entry.state == RobState::Exe {
@@ -517,14 +710,22 @@ pub fn gas_cost_for_block(code: &[u8], bitmask: &[u8], start_pc: usize) -> u64 {
 #[cfg(feature = "std")]
 /// Compute gas cost for a block given as a slice of pre-decoded instructions.
 /// This avoids re-parsing raw code+bitmask.
-pub fn gas_cost_for_block_decoded(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &[u8], bitmask: &[u8]) -> u64 {
+pub fn gas_cost_for_block_decoded(
+    instrs: &[crate::recompiler::predecode::PreDecodedInst],
+    code: &[u8],
+    bitmask: &[u8],
+) -> u64 {
     let cycles = gas_sim_decoded(instrs, code, bitmask);
     if cycles > 3 { (cycles - 3) as u64 } else { 1 }
 }
 
 #[cfg(feature = "std")]
 /// Pipeline simulation from pre-decoded instructions (no raw byte re-parsing).
-fn gas_sim_decoded(instrs: &[crate::recompiler::predecode::PreDecodedInst], code: &[u8], bitmask: &[u8]) -> u32 {
+fn gas_sim_decoded(
+    instrs: &[crate::recompiler::predecode::PreDecodedInst],
+    code: &[u8],
+    bitmask: &[u8],
+) -> u32 {
     use crate::args::Args;
 
     let mut s = SimState {
@@ -546,10 +747,13 @@ fn gas_sim_decoded(instrs: &[crate::recompiler::predecode::PreDecodedInst], code
                 let (ra, rb, rd) = match instr.args {
                     Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8),
                     Args::TwoReg { rd: d, ra: a } => (a as u8, 0xFF, d as u8),
-                    Args::TwoRegImm { ra, rb, .. } | Args::TwoRegOffset { ra, rb, .. }
+                    Args::TwoRegImm { ra, rb, .. }
+                    | Args::TwoRegOffset { ra, rb, .. }
                     | Args::TwoRegTwoImm { ra, rb, .. } => (ra as u8, rb as u8, 0xFF),
-                    Args::RegImm { ra, .. } | Args::RegExtImm { ra, .. }
-                    | Args::RegTwoImm { ra, .. } | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
+                    Args::RegImm { ra, .. }
+                    | Args::RegExtImm { ra, .. }
+                    | Args::RegTwoImm { ra, .. }
+                    | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
                     _ => (0xFF, 0xFF, 0xFF),
                 };
 
@@ -569,7 +773,11 @@ fn gas_sim_decoded(instrs: &[crate::recompiler::predecode::PreDecodedInst], code
                 }
 
                 s.decode_slots = s.decode_slots.saturating_sub(cost.decode_slots);
-                let next_ip = if cost.is_terminator { None } else { Some(idx + 1) };
+                let next_ip = if cost.is_terminator {
+                    None
+                } else {
+                    Some(idx + 1)
+                };
 
                 if cost.is_move_reg {
                     s.ip = next_ip;
@@ -624,16 +832,36 @@ fn gas_sim_decoded(instrs: &[crate::recompiler::predecode::PreDecodedInst], code
 #[cfg(feature = "std")]
 /// Fast instruction cost lookup using pre-decoded register fields.
 /// Avoids re-parsing code bytes for register extraction.
-fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
-    instr: &crate::recompiler::predecode::PreDecodedInst, code: &[u8], bitmask: &[u8]) -> InstrCost
-{
+fn instruction_cost_fast(
+    opcode: u8,
+    ra: u8,
+    rb: u8,
+    rd: u8,
+    instr: &crate::recompiler::predecode::PreDecodedInst,
+    code: &[u8],
+    bitmask: &[u8],
+) -> InstrCost {
     let mk = |cy: u32, dc: u8, eu: ExecUnits, dst: RegSet, src: RegSet| -> InstrCost {
-        InstrCost { cycles: cy, decode_slots: dc, exec_units: eu,
-                    dest_regs: dst, src_regs: src, is_terminator: false, is_move_reg: false }
+        InstrCost {
+            cycles: cy,
+            decode_slots: dc,
+            exec_units: eu,
+            dest_regs: dst,
+            src_regs: src,
+            is_terminator: false,
+            is_move_reg: false,
+        }
     };
     let mkt = |cy: u32, dc: u8, eu: ExecUnits, dst: RegSet, src: RegSet| -> InstrCost {
-        InstrCost { cycles: cy, decode_slots: dc, exec_units: eu,
-                    dest_regs: dst, src_regs: src, is_terminator: true, is_move_reg: false }
+        InstrCost {
+            cycles: cy,
+            decode_slots: dc,
+            exec_units: eu,
+            dest_regs: dst,
+            src_regs: src,
+            is_terminator: true,
+            is_move_reg: false,
+        }
     };
     let e = RegSet::EMPTY;
     let r1 = RegSet::one;
@@ -657,9 +885,13 @@ fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
         51 => mk(1, 1, ExecUnits::NONE, r1(ra), e),
         20 => mk(1, 2, ExecUnits::NONE, r1(ra), e),
         100 => InstrCost {
-            cycles: 0, decode_slots: 1, exec_units: ExecUnits::NONE,
-            dest_regs: r1(ra), src_regs: r1(rb),
-            is_terminator: false, is_move_reg: true,
+            cycles: 0,
+            decode_slots: 1,
+            exec_units: ExecUnits::NONE,
+            dest_regs: r1(ra),
+            src_regs: r1(rb),
+            is_terminator: false,
+            is_move_reg: true,
         },
         101 => mk(2, 1, ExecUnits::NONE, e, e),
         81..=90 => {
@@ -680,11 +912,19 @@ fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
             mkt(bc, 1, ExecUnits::ALU, e, r2(ra, rb))
         }
         200 | 201 | 210 | 211 | 212 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 1 } else { 2 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                1
+            } else {
+                2
+            };
             mk(1, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         190 | 191 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(2, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         132 | 133 | 134 | 149 | 151 | 152 | 153 | 158 | 110 => {
@@ -713,18 +953,30 @@ fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
         218 | 219 => mk(2, 2, ExecUnits::ALU, r1(ra), r2(rb, rd)),
         147 | 148 => mk(2, 3, ExecUnits::ALU, r1(ra), r1(rb)),
         227 | 228 | 229 | 230 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(3, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         224 | 225 => mk(2, 3, ExecUnits::ALU, r1(ra), r2(rb, rd)),
         226 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(2, dc, ExecUnits::ALU, r1(ra), r2(rb, rd))
         }
         154 => mk(2, 3, ExecUnits::ALU, r1(ra), r1(rb)),
         141 => mk(3, 4, ExecUnits::ALU, r1(ra), r1(rb)),
         202 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 1 } else { 2 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                1
+            } else {
+                2
+            };
             mk(3, dc, ExecUnits::MUL, r1(ra), r2(rb, rd))
         }
         150 => {
@@ -732,7 +984,11 @@ fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
             mk(3, dc, ExecUnits::MUL, r1(ra), r1(rb))
         }
         192 => {
-            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) { 2 } else { 3 };
+            let dc = if dst_overlaps_src(ra, &r2(rb, rd)) {
+                2
+            } else {
+                3
+            };
             mk(4, dc, ExecUnits::MUL, r1(ra), r2(rb, rd))
         }
         135 => {
@@ -741,8 +997,9 @@ fn instruction_cost_fast(opcode: u8, ra: u8, rb: u8, rd: u8,
         }
         213 | 214 => mk(4, 4, ExecUnits::MUL, r1(ra), r2(rb, rd)),
         215 => mk(6, 4, ExecUnits::MUL, r1(ra), r2(rb, rd)),
-        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 =>
-            mk(60, 4, ExecUnits::DIV, r1(ra), r2(rb, rd)),
+        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 => {
+            mk(60, 4, ExecUnits::DIV, r1(ra), r2(rb, rd))
+        }
         _ => mk(1, 1, ExecUnits::NONE, e, e),
     }
 }
@@ -798,7 +1055,10 @@ fn extract_branch_target_raw(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
         let mut s = 0;
         for j in 0..25 {
             let idx = pc + 1 + j;
-            if idx >= bitmask.len() || bitmask[idx] == 1 { s = j; break; }
+            if idx >= bitmask.len() || bitmask[idx] == 1 {
+                s = j;
+                break;
+            }
         }
         s
     };
@@ -819,8 +1079,15 @@ fn extract_branch_target_raw(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
 /// Compute FastCost from raw register bytes (no Args enum needed).
 /// For branches, extracts target from raw code bytes.
 #[inline(always)]
-pub fn fast_cost_from_raw(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, code: &[u8], bitmask: &[u8]) -> FastCost {
-
+pub fn fast_cost_from_raw(
+    opcode_byte: u8,
+    ra: u8,
+    rb: u8,
+    rd: u8,
+    pc: u32,
+    code: &[u8],
+    bitmask: &[u8],
+) -> FastCost {
     let r1 = |r: u8| reg_bit(r);
     let r2 = |a: u8, b: u8| reg_bit(a) | reg_bit(b);
     let dst_src_overlap = |dst: u8, s: u16| (reg_bit(dst) & s) != 0;
@@ -828,151 +1095,526 @@ pub fn fast_cost_from_raw(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, code
     let opcode = opcode_byte;
     match opcode {
         // No-arg terminators
-        0 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        1 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        2 => FastCost { cycles: 40, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        10 => FastCost { cycles: 100, decode_slots: 4, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
+        0 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        1 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        2 => FastCost {
+            cycles: 40,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        10 => FastCost {
+            cycles: 100,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
 
         // Control flow
-        40 => FastCost { cycles: 15, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        80 => FastCost { cycles: 15, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: r1(ra), is_terminator: true, is_move_reg: false },
-        50 => FastCost { cycles: 22, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        180 => FastCost { cycles: 22, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: true, is_move_reg: false },
+        40 => FastCost {
+            cycles: 15,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        80 => FastCost {
+            cycles: 15,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        50 => FastCost {
+            cycles: 22,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        180 => FastCost {
+            cycles: 22,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: true,
+            is_move_reg: false,
+        },
 
         // Loads
-        52..=58 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_LOAD, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        124..=130 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_LOAD, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        52..=58 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_LOAD,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        124..=130 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_LOAD,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Stores
-        59..=62 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: false, is_move_reg: false },
-        120..=123 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: false, is_move_reg: false },
-        30..=33 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
-        70..=73 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r1(ra), dst_mask: 0, is_terminator: false, is_move_reg: false },
+        59..=62 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r2(ra, rb),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        120..=123 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r2(ra, rb),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        30..=33 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        70..=73 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r1(ra),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Load immediates
-        51 => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        20 => FastCost { cycles: 1, decode_slots: 2, exec_unit: EU_NONE, src_mask: 0, dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        51 => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        20 => FastCost {
+            cycles: 1,
+            decode_slots: 2,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // move_reg — no ROB entry
-        100 => FastCost { cycles: 0, decode_slots: 1, exec_unit: EU_NONE, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: true },
+        100 => FastCost {
+            cycles: 0,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: true,
+        },
 
-        101 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
+        101 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Branches (reg+imm+offset)
         81..=90 => {
             let target = extract_branch_target_raw(code, bitmask, pc as usize);
             let bc = branch_cost(code, bitmask, target);
-            FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(ra), dst_mask: 0, is_terminator: true, is_move_reg: false }
+            FastCost {
+                cycles: bc as u8,
+                decode_slots: 1,
+                exec_unit: EU_ALU,
+                src_mask: r1(ra),
+                dst_mask: 0,
+                is_terminator: true,
+                is_move_reg: false,
+            }
         }
         // Branches (two-reg+offset)
         170..=175 => {
             let target = extract_branch_target_raw(code, bitmask, pc as usize);
             let bc = branch_cost(code, bitmask, target);
-            FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: true, is_move_reg: false }
+            FastCost {
+                cycles: bc as u8,
+                decode_slots: 1,
+                exec_unit: EU_ALU,
+                src_mask: r2(ra, rb),
+                dst_mask: 0,
+                is_terminator: true,
+                is_move_reg: false,
+            }
         }
 
         // ALU 64-bit 3-reg
         200 | 201 | 210 | 211 | 212 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 1 } else { 2 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 32-bit 3-reg
         190 | 191 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 2-op imm 64-bit
         132 | 133 | 134 | 149 | 151 | 152 | 153 | 158 | 110 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 1 } else { 2 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 2-op imm 32-bit
         131 | 138 | 139 | 140 | 160 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Trivial 2-op: popcount, clz, sign_extend, zero_extend, reverse_bytes
-        102 | 103 | 104 | 105 | 108 | 109 | 111 => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        102 | 103 | 104 | 105 | 108 | 109 | 111 => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // ctz
-        106 | 107 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        106 | 107 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Shifts 64-bit 3-reg
         207 | 208 | 209 | 220 | 222 => {
             let dc = if rb == ra { 2 } else { 3 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r2(rb, rd),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Shifts 32-bit 3-reg
         197 | 198 | 199 | 221 | 223 => {
             let dc = if rb == ra { 3 } else { 4 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r2(rb, rd),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Shift alt 64-bit
-        155 | 156 | 157 | 159 => FastCost { cycles: 1, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        155 | 156 | 157 | 159 => FastCost {
+            cycles: 1,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Shift alt 32-bit
-        144 | 145 | 146 | 161 => FastCost { cycles: 2, decode_slots: 4, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        144 | 145 | 146 | 161 => FastCost {
+            cycles: 2,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Comparisons 3-reg
-        216 | 217 => FastCost { cycles: 3, decode_slots: 3, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        216 | 217 => FastCost {
+            cycles: 3,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Comparisons imm
-        136 | 137 | 142 | 143 => FastCost { cycles: 3, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        136 | 137 | 142 | 143 => FastCost {
+            cycles: 3,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Conditional moves 3-reg
-        218 | 219 => FastCost { cycles: 2, decode_slots: 2, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        218 | 219 => FastCost {
+            cycles: 2,
+            decode_slots: 2,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Conditional moves imm
-        147 | 148 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        147 | 148 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Min/Max
         227 | 228 | 229 | 230 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // and_inv, or_inv
-        224 | 225 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        224 | 225 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // xnor
         226 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // neg_add_imm
-        154 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        141 => FastCost { cycles: 3, decode_slots: 4, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        154 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        141 => FastCost {
+            cycles: 3,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Multiply 64-bit 3-reg
         202 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 1 } else { 2 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_MUL, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // mul_imm_64
         150 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 1 } else { 2 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_MUL, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Multiply 32-bit 3-reg
         192 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 4, decode_slots: dc, exec_unit: EU_MUL, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 4,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // mul_imm_32
         135 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 2 } else { 3 };
-            FastCost { cycles: 4, decode_slots: dc, exec_unit: EU_MUL, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 4,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Multiply upper
-        213 | 214 => FastCost { cycles: 4, decode_slots: 4, exec_unit: EU_MUL, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        215 => FastCost { cycles: 6, decode_slots: 4, exec_unit: EU_MUL, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        213 | 214 => FastCost {
+            cycles: 4,
+            decode_slots: 4,
+            exec_unit: EU_MUL,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        215 => FastCost {
+            cycles: 6,
+            decode_slots: 4,
+            exec_unit: EU_MUL,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Divide
-        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 =>
-            FastCost { cycles: 60, decode_slots: 4, exec_unit: EU_DIV, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 => FastCost {
+            cycles: 60,
+            decode_slots: 4,
+            exec_unit: EU_DIV,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Default
-        _ => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
+        _ => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
     }
 }
 
@@ -982,16 +1624,34 @@ pub fn fast_cost_from_raw(opcode_byte: u8, ra: u8, rb: u8, rd: u8, pc: u32, code
 /// avoids the redundant `extract_branch_target_raw` call which re-computes skip
 /// distances and re-decodes args just to extract the branch offset.
 #[inline(always)]
-pub fn fast_cost_from_decoded(opcode_byte: u8, args: &crate::args::Args, pc: u32, code: &[u8], bitmask: &[u8]) -> FastCost {
+pub fn fast_cost_from_decoded(
+    opcode_byte: u8,
+    args: &crate::args::Args,
+    pc: u32,
+    code: &[u8],
+    bitmask: &[u8],
+) -> FastCost {
     use crate::args::Args;
 
     // Use raw byte positions for register fields (same as fast_cost_from_raw).
     // The raw nibble positions don't correspond to semantic arg names — the
     // mapping varies by instruction format — so we read directly from code[].
     let pcu = pc as usize;
-    let ra = if pcu + 1 < code.len() { code[pcu + 1] & 0x0F } else { 0xFF };
-    let rb = if pcu + 1 < code.len() { (code[pcu + 1] >> 4) & 0x0F } else { 0xFF };
-    let rd = if pcu + 2 < code.len() { code[pcu + 2] & 0x0F } else { 0xFF };
+    let ra = if pcu + 1 < code.len() {
+        code[pcu + 1] & 0x0F
+    } else {
+        0xFF
+    };
+    let rb = if pcu + 1 < code.len() {
+        (code[pcu + 1] >> 4) & 0x0F
+    } else {
+        0xFF
+    };
+    let rd = if pcu + 2 < code.len() {
+        code[pcu + 2] & 0x0F
+    } else {
+        0xFF
+    };
 
     // Extract branch target from already-decoded offset (the main optimization:
     // avoids extract_branch_target_raw which does skip computation + decode_args)
@@ -1009,149 +1669,524 @@ pub fn fast_cost_from_decoded(opcode_byte: u8, args: &crate::args::Args, pc: u32
     let opcode = opcode_byte;
     match opcode {
         // No-arg terminators
-        0 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        1 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        2 => FastCost { cycles: 40, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        10 => FastCost { cycles: 100, decode_slots: 4, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
+        0 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        1 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        2 => FastCost {
+            cycles: 40,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        10 => FastCost {
+            cycles: 100,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
 
         // Control flow
-        40 => FastCost { cycles: 15, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        80 => FastCost { cycles: 15, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: r1(ra), is_terminator: true, is_move_reg: false },
-        50 => FastCost { cycles: 22, decode_slots: 1, exec_unit: EU_ALU, src_mask: 0, dst_mask: 0, is_terminator: true, is_move_reg: false },
-        180 => FastCost { cycles: 22, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: true, is_move_reg: false },
+        40 => FastCost {
+            cycles: 15,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        80 => FastCost {
+            cycles: 15,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        50 => FastCost {
+            cycles: 22,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: true,
+            is_move_reg: false,
+        },
+        180 => FastCost {
+            cycles: 22,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: true,
+            is_move_reg: false,
+        },
 
         // Loads
-        52..=58 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_LOAD, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        124..=130 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_LOAD, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        52..=58 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_LOAD,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        124..=130 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_LOAD,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Stores
-        59..=62 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: false, is_move_reg: false },
-        120..=123 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: false, is_move_reg: false },
-        30..=33 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
-        70..=73 => FastCost { cycles: 25, decode_slots: 1, exec_unit: EU_STORE, src_mask: r1(ra), dst_mask: 0, is_terminator: false, is_move_reg: false },
+        59..=62 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r2(ra, rb),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        120..=123 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r2(ra, rb),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        30..=33 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        70..=73 => FastCost {
+            cycles: 25,
+            decode_slots: 1,
+            exec_unit: EU_STORE,
+            src_mask: r1(ra),
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Load immediates
-        51 => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        20 => FastCost { cycles: 1, decode_slots: 2, exec_unit: EU_NONE, src_mask: 0, dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        51 => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        20 => FastCost {
+            cycles: 1,
+            decode_slots: 2,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // move_reg — no ROB entry
-        100 => FastCost { cycles: 0, decode_slots: 1, exec_unit: EU_NONE, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: true },
+        100 => FastCost {
+            cycles: 0,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: true,
+        },
 
-        101 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
+        101 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Branches (reg+imm+offset) — uses pre-decoded branch target
         81..=90 => {
             let bc = branch_cost(code, bitmask, branch_target);
-            FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(ra), dst_mask: 0, is_terminator: true, is_move_reg: false }
+            FastCost {
+                cycles: bc as u8,
+                decode_slots: 1,
+                exec_unit: EU_ALU,
+                src_mask: r1(ra),
+                dst_mask: 0,
+                is_terminator: true,
+                is_move_reg: false,
+            }
         }
         // Branches (two-reg+offset) — uses pre-decoded branch target
         170..=175 => {
             let bc = branch_cost(code, bitmask, branch_target);
-            FastCost { cycles: bc as u8, decode_slots: 1, exec_unit: EU_ALU, src_mask: r2(ra, rb), dst_mask: 0, is_terminator: true, is_move_reg: false }
+            FastCost {
+                cycles: bc as u8,
+                decode_slots: 1,
+                exec_unit: EU_ALU,
+                src_mask: r2(ra, rb),
+                dst_mask: 0,
+                is_terminator: true,
+                is_move_reg: false,
+            }
         }
 
         // ALU 64-bit 3-reg
         200 | 201 | 210 | 211 | 212 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 1 } else { 2 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 32-bit 3-reg
         190 | 191 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 2-op imm 64-bit
         132 | 133 | 134 | 149 | 151 | 152 | 153 | 158 | 110 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 1 } else { 2 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // ALU 2-op imm 32-bit
         131 | 138 | 139 | 140 | 160 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Trivial 2-op: popcount, clz, sign_extend, zero_extend, reverse_bytes
-        102 | 103 | 104 | 105 | 108 | 109 | 111 => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        102 | 103 | 104 | 105 | 108 | 109 | 111 => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // ctz
-        106 | 107 => FastCost { cycles: 2, decode_slots: 1, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        106 | 107 => FastCost {
+            cycles: 2,
+            decode_slots: 1,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Shifts 64-bit 3-reg
         207 | 208 | 209 | 220 | 222 => {
             let dc = if rb == ra { 2 } else { 3 };
-            FastCost { cycles: 1, decode_slots: dc, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 1,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r2(rb, rd),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Shifts 32-bit 3-reg
         197 | 198 | 199 | 221 | 223 => {
             let dc = if rb == ra { 3 } else { 4 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: r2(rb, rd),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Shift alt 64-bit
-        155 | 156 | 157 | 159 => FastCost { cycles: 1, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        155 | 156 | 157 | 159 => FastCost {
+            cycles: 1,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Shift alt 32-bit
-        144 | 145 | 146 | 161 => FastCost { cycles: 2, decode_slots: 4, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        144 | 145 | 146 | 161 => FastCost {
+            cycles: 2,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Comparisons 3-reg
-        216 | 217 => FastCost { cycles: 3, decode_slots: 3, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        216 | 217 => FastCost {
+            cycles: 3,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Comparisons imm
-        136 | 137 | 142 | 143 => FastCost { cycles: 3, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        136 | 137 | 142 | 143 => FastCost {
+            cycles: 3,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Conditional moves 3-reg
-        218 | 219 => FastCost { cycles: 2, decode_slots: 2, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        218 | 219 => FastCost {
+            cycles: 2,
+            decode_slots: 2,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // Conditional moves imm
-        147 | 148 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        147 | 148 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Min/Max
         227 | 228 | 229 | 230 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // and_inv, or_inv
-        224 | 225 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        224 | 225 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
         // xnor
         226 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 2, decode_slots: dc, exec_unit: EU_ALU, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 2,
+                decode_slots: dc,
+                exec_unit: EU_ALU,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // neg_add_imm
-        154 => FastCost { cycles: 2, decode_slots: 3, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        141 => FastCost { cycles: 3, decode_slots: 4, exec_unit: EU_ALU, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        154 => FastCost {
+            cycles: 2,
+            decode_slots: 3,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        141 => FastCost {
+            cycles: 3,
+            decode_slots: 4,
+            exec_unit: EU_ALU,
+            src_mask: r1(rb),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Multiply 64-bit 3-reg
         202 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 1 } else { 2 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_MUL, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // mul_imm_64
         150 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 1 } else { 2 };
-            FastCost { cycles: 3, decode_slots: dc, exec_unit: EU_MUL, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 3,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Multiply 32-bit 3-reg
         192 => {
             let s = r2(rb, rd);
             let dc = if dst_src_overlap(ra, s) { 2 } else { 3 };
-            FastCost { cycles: 4, decode_slots: dc, exec_unit: EU_MUL, src_mask: s, dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 4,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: s,
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // mul_imm_32
         135 => {
             let dc = if dst_src_overlap(ra, r1(rb)) { 2 } else { 3 };
-            FastCost { cycles: 4, decode_slots: dc, exec_unit: EU_MUL, src_mask: r1(rb), dst_mask: r1(ra), is_terminator: false, is_move_reg: false }
+            FastCost {
+                cycles: 4,
+                decode_slots: dc,
+                exec_unit: EU_MUL,
+                src_mask: r1(rb),
+                dst_mask: r1(ra),
+                is_terminator: false,
+                is_move_reg: false,
+            }
         }
         // Multiply upper
-        213 | 214 => FastCost { cycles: 4, decode_slots: 4, exec_unit: EU_MUL, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
-        215 => FastCost { cycles: 6, decode_slots: 4, exec_unit: EU_MUL, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        213 | 214 => FastCost {
+            cycles: 4,
+            decode_slots: 4,
+            exec_unit: EU_MUL,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
+        215 => FastCost {
+            cycles: 6,
+            decode_slots: 4,
+            exec_unit: EU_MUL,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Divide
-        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 =>
-            FastCost { cycles: 60, decode_slots: 4, exec_unit: EU_DIV, src_mask: r2(rb, rd), dst_mask: r1(ra), is_terminator: false, is_move_reg: false },
+        193 | 194 | 195 | 196 | 203 | 204 | 205 | 206 => FastCost {
+            cycles: 60,
+            decode_slots: 4,
+            exec_unit: EU_DIV,
+            src_mask: r2(rb, rd),
+            dst_mask: r1(ra),
+            is_terminator: false,
+            is_move_reg: false,
+        },
 
         // Default
-        _ => FastCost { cycles: 1, decode_slots: 1, exec_unit: EU_NONE, src_mask: 0, dst_mask: 0, is_terminator: false, is_move_reg: false },
+        _ => FastCost {
+            cycles: 1,
+            decode_slots: 1,
+            exec_unit: EU_NONE,
+            src_mask: 0,
+            dst_mask: 0,
+            is_terminator: false,
+            is_move_reg: false,
+        },
     }
 }
 
@@ -1183,11 +2218,42 @@ const F_OVERLAP: u8 = 8;
 const F_BRANCH2: u8 = 16; // two-reg branch (src=ra|rb)
 const F_SHIFT_OVERLAP: u8 = 32; // shift: overlap is rb==ra, not dst_src_overlap
 
-const fn gc(cycles: u8, decode_slots: u8, exec_unit: u8, src_pat: u8, dst_pat: u8, flags: u8) -> GasCostEntry {
-    GasCostEntry { cycles, decode_slots, exec_unit, src_pat, dst_pat, flags, overlap_slots: 0 }
+const fn gc(
+    cycles: u8,
+    decode_slots: u8,
+    exec_unit: u8,
+    src_pat: u8,
+    dst_pat: u8,
+    flags: u8,
+) -> GasCostEntry {
+    GasCostEntry {
+        cycles,
+        decode_slots,
+        exec_unit,
+        src_pat,
+        dst_pat,
+        flags,
+        overlap_slots: 0,
+    }
 }
-const fn gc_ov(cycles: u8, overlap_if: u8, overlap_no: u8, exec_unit: u8, src_pat: u8, dst_pat: u8, flags: u8) -> GasCostEntry {
-    GasCostEntry { cycles, decode_slots: 0, exec_unit, src_pat, dst_pat, flags: flags | F_OVERLAP, overlap_slots: overlap_if | (overlap_no << 4) }
+const fn gc_ov(
+    cycles: u8,
+    overlap_if: u8,
+    overlap_no: u8,
+    exec_unit: u8,
+    src_pat: u8,
+    dst_pat: u8,
+    flags: u8,
+) -> GasCostEntry {
+    GasCostEntry {
+        cycles,
+        decode_slots: 0,
+        exec_unit,
+        src_pat,
+        dst_pat,
+        flags: flags | F_OVERLAP,
+        overlap_slots: overlap_if | (overlap_no << 4),
+    }
 }
 
 static GAS_COST_LUT: [GasCostEntry; 256] = {
@@ -1204,13 +2270,37 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[50] = gc(22, 1, EU_ALU, 0, 0, F_TERM);
     t[180] = gc(22, 1, EU_ALU, 2, 1, F_TERM); // src=rb, dst=ra
     // Loads (src=rb, dst=ra)
-    let mut i = 52; while i <= 58 { t[i] = gc(25, 1, EU_LOAD, 2, 1, 0); i += 1; }
-    i = 124; while i <= 130 { t[i] = gc(25, 1, EU_LOAD, 2, 1, 0); i += 1; }
+    let mut i = 52;
+    while i <= 58 {
+        t[i] = gc(25, 1, EU_LOAD, 2, 1, 0);
+        i += 1;
+    }
+    i = 124;
+    while i <= 130 {
+        t[i] = gc(25, 1, EU_LOAD, 2, 1, 0);
+        i += 1;
+    }
     // Stores (src=ra|rb, dst=none)
-    i = 59; while i <= 62 { t[i] = gc(25, 1, EU_STORE, 3, 0, 0); i += 1; }
-    i = 120; while i <= 123 { t[i] = gc(25, 1, EU_STORE, 3, 0, 0); i += 1; }
-    i = 30; while i <= 33 { t[i] = gc(25, 1, EU_STORE, 0, 0, 0); i += 1; }
-    i = 70; while i <= 73 { t[i] = gc(25, 1, EU_STORE, 1, 0, 0); i += 1; } // src=ra
+    i = 59;
+    while i <= 62 {
+        t[i] = gc(25, 1, EU_STORE, 3, 0, 0);
+        i += 1;
+    }
+    i = 120;
+    while i <= 123 {
+        t[i] = gc(25, 1, EU_STORE, 3, 0, 0);
+        i += 1;
+    }
+    i = 30;
+    while i <= 33 {
+        t[i] = gc(25, 1, EU_STORE, 0, 0, 0);
+        i += 1;
+    }
+    i = 70;
+    while i <= 73 {
+        t[i] = gc(25, 1, EU_STORE, 1, 0, 0);
+        i += 1;
+    } // src=ra
     // Load immediates
     t[51] = gc(1, 1, EU_NONE, 0, 1, 0);
     t[20] = gc(1, 2, EU_NONE, 0, 1, 0);
@@ -1218,9 +2308,17 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[100] = gc(0, 1, EU_NONE, 2, 1, F_MOVE); // src=rb, dst=ra
     t[101] = gc(2, 1, EU_NONE, 0, 0, 0); // nop
     // Branches (reg+imm+offset) — needs branch_cost
-    i = 81; while i <= 90 { t[i] = gc(0, 1, EU_ALU, 1, 0, F_TERM | F_BRANCH); i += 1; } // src=ra
+    i = 81;
+    while i <= 90 {
+        t[i] = gc(0, 1, EU_ALU, 1, 0, F_TERM | F_BRANCH);
+        i += 1;
+    } // src=ra
     // Branches (two-reg+offset)
-    i = 170; while i <= 175 { t[i] = gc(0, 1, EU_ALU, 3, 0, F_TERM | F_BRANCH2); i += 1; } // src=ra|rb
+    i = 170;
+    while i <= 175 {
+        t[i] = gc(0, 1, EU_ALU, 3, 0, F_TERM | F_BRANCH2);
+        i += 1;
+    } // src=ra|rb
     // ALU 64-bit 3-reg (src=rb|rd, dst=ra, overlap adjust)
     t[200] = gc_ov(1, 1, 2, EU_ALU, 4, 1, 0);
     t[201] = gc_ov(1, 1, 2, EU_ALU, 4, 1, 0);
@@ -1231,35 +2329,86 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[190] = gc_ov(2, 2, 3, EU_ALU, 4, 1, 0);
     t[191] = gc_ov(2, 2, 3, EU_ALU, 4, 1, 0);
     // ALU 2-op imm 64-bit (src=rb, dst=ra, overlap adjust)
-    { let e = gc_ov(1, 1, 2, EU_ALU, 2, 1, 0);
-      t[132]=e; t[133]=e; t[134]=e; t[149]=e; t[151]=e; t[152]=e; t[153]=e; t[158]=e; t[110]=e; }
+    {
+        let e = gc_ov(1, 1, 2, EU_ALU, 2, 1, 0);
+        t[132] = e;
+        t[133] = e;
+        t[134] = e;
+        t[149] = e;
+        t[151] = e;
+        t[152] = e;
+        t[153] = e;
+        t[158] = e;
+        t[110] = e;
+    }
     // ALU 2-op imm 32-bit
-    { let e = gc_ov(2, 2, 3, EU_ALU, 2, 1, 0);
-      t[131]=e; t[138]=e; t[139]=e; t[140]=e; t[160]=e; }
+    {
+        let e = gc_ov(2, 2, 3, EU_ALU, 2, 1, 0);
+        t[131] = e;
+        t[138] = e;
+        t[139] = e;
+        t[140] = e;
+        t[160] = e;
+    }
     // Trivial 2-op (src=rb, dst=ra)
-    { let e = gc(1, 1, EU_ALU, 2, 1, 0);
-      t[102]=e; t[103]=e; t[104]=e; t[105]=e; t[108]=e; t[109]=e; t[111]=e; }
+    {
+        let e = gc(1, 1, EU_ALU, 2, 1, 0);
+        t[102] = e;
+        t[103] = e;
+        t[104] = e;
+        t[105] = e;
+        t[108] = e;
+        t[109] = e;
+        t[111] = e;
+    }
     // ctz
     t[106] = gc(2, 1, EU_ALU, 2, 1, 0);
     t[107] = gc(2, 1, EU_ALU, 2, 1, 0);
     // Shifts 64-bit 3-reg (src=rb|rd, dst=ra, shift overlap: rb==ra)
-    { let e = gc_ov(1, 2, 3, EU_ALU, 4, 1, F_SHIFT_OVERLAP);
-      t[207]=e; t[208]=e; t[209]=e; t[220]=e; t[222]=e; }
+    {
+        let e = gc_ov(1, 2, 3, EU_ALU, 4, 1, F_SHIFT_OVERLAP);
+        t[207] = e;
+        t[208] = e;
+        t[209] = e;
+        t[220] = e;
+        t[222] = e;
+    }
     // Shifts 32-bit 3-reg
-    { let e = gc_ov(2, 3, 4, EU_ALU, 4, 1, F_SHIFT_OVERLAP);
-      t[197]=e; t[198]=e; t[199]=e; t[221]=e; t[223]=e; }
+    {
+        let e = gc_ov(2, 3, 4, EU_ALU, 4, 1, F_SHIFT_OVERLAP);
+        t[197] = e;
+        t[198] = e;
+        t[199] = e;
+        t[221] = e;
+        t[223] = e;
+    }
     // Shift alt 64-bit
-    { let e = gc(1, 3, EU_ALU, 2, 1, 0);
-      t[155]=e; t[156]=e; t[157]=e; t[159]=e; }
+    {
+        let e = gc(1, 3, EU_ALU, 2, 1, 0);
+        t[155] = e;
+        t[156] = e;
+        t[157] = e;
+        t[159] = e;
+    }
     // Shift alt 32-bit
-    { let e = gc(2, 4, EU_ALU, 2, 1, 0);
-      t[144]=e; t[145]=e; t[146]=e; t[161]=e; }
+    {
+        let e = gc(2, 4, EU_ALU, 2, 1, 0);
+        t[144] = e;
+        t[145] = e;
+        t[146] = e;
+        t[161] = e;
+    }
     // Comparisons 3-reg (src=rb|rd, dst=ra)
     t[216] = gc(3, 3, EU_ALU, 4, 1, 0);
     t[217] = gc(3, 3, EU_ALU, 4, 1, 0);
     // Comparisons imm (src=rb, dst=ra)
-    { let e = gc(3, 3, EU_ALU, 2, 1, 0);
-      t[136]=e; t[137]=e; t[142]=e; t[143]=e; }
+    {
+        let e = gc(3, 3, EU_ALU, 2, 1, 0);
+        t[136] = e;
+        t[137] = e;
+        t[142] = e;
+        t[143] = e;
+    }
     // Conditional moves 3-reg
     t[218] = gc(2, 2, EU_ALU, 4, 1, 0);
     t[219] = gc(2, 2, EU_ALU, 4, 1, 0);
@@ -1267,8 +2416,13 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[147] = gc(2, 3, EU_ALU, 2, 1, 0);
     t[148] = gc(2, 3, EU_ALU, 2, 1, 0);
     // Min/Max (src=rb|rd, dst=ra, overlap adjust)
-    { let e = gc_ov(3, 2, 3, EU_ALU, 4, 1, 0);
-      t[227]=e; t[228]=e; t[229]=e; t[230]=e; }
+    {
+        let e = gc_ov(3, 2, 3, EU_ALU, 4, 1, 0);
+        t[227] = e;
+        t[228] = e;
+        t[229] = e;
+        t[230] = e;
+    }
     // and_inv, or_inv
     t[224] = gc(2, 3, EU_ALU, 4, 1, 0);
     t[225] = gc(2, 3, EU_ALU, 4, 1, 0);
@@ -1290,22 +2444,45 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[214] = gc(4, 4, EU_MUL, 4, 1, 0);
     t[215] = gc(6, 4, EU_MUL, 4, 1, 0);
     // Divide (src=rb|rd, dst=ra)
-    { let e = gc(60, 4, EU_DIV, 4, 1, 0);
-      t[193]=e; t[194]=e; t[195]=e; t[196]=e; t[203]=e; t[204]=e; t[205]=e; t[206]=e; }
+    {
+        let e = gc(60, 4, EU_DIV, 4, 1, 0);
+        t[193] = e;
+        t[194] = e;
+        t[195] = e;
+        t[196] = e;
+        t[203] = e;
+        t[204] = e;
+        t[205] = e;
+        t[206] = e;
+    }
     t
 };
 
 /// Compute FastCost via lookup table — replaces the 256-arm match dispatch
 /// with a single array access + lightweight mask computation.
 #[inline(always)]
-pub fn fast_cost_lut(opcode_byte: u8, args: &crate::args::Args, pc: u32, code: &[u8], bitmask: &[u8]) -> FastCost {
+pub fn fast_cost_lut(
+    opcode_byte: u8,
+    args: &crate::args::Args,
+    pc: u32,
+    code: &[u8],
+    bitmask: &[u8],
+) -> FastCost {
     // Accept raw register bytes extracted from the code during argument decoding.
     // This avoids re-reading code[pc+1] and code[pc+2].
     let pcu = pc as usize;
-    let reg_byte1 = if pcu + 1 < code.len() { code[pcu + 1] } else { 0xFF };
+    let reg_byte1 = if pcu + 1 < code.len() {
+        code[pcu + 1]
+    } else {
+        0xFF
+    };
     let ra = reg_byte1 & 0x0F;
     let rb = (reg_byte1 >> 4) & 0x0F;
-    let rd = if pcu + 2 < code.len() { code[pcu + 2] & 0x0F } else { 0xFF };
+    let rd = if pcu + 2 < code.len() {
+        code[pcu + 2] & 0x0F
+    } else {
+        0xFF
+    };
 
     fast_cost_lut_inner(opcode_byte, args, pcu, code, bitmask, ra, rb, rd)
 }
@@ -1314,8 +2491,14 @@ pub fn fast_cost_lut(opcode_byte: u8, args: &crate::args::Args, pc: u32, code: &
 /// caller-side register extraction and keep the complex logic out-of-line.
 #[inline(always)]
 fn fast_cost_lut_inner(
-    opcode_byte: u8, args: &crate::args::Args, pcu: usize,
-    code: &[u8], bitmask: &[u8], ra: u8, rb: u8, rd: u8,
+    opcode_byte: u8,
+    args: &crate::args::Args,
+    pcu: usize,
+    code: &[u8],
+    bitmask: &[u8],
+    ra: u8,
+    rb: u8,
+    rd: u8,
 ) -> FastCost {
     use crate::args::Args;
 
@@ -1331,8 +2514,12 @@ fn fast_cost_lut_inner(
         let rb_bit = 1u16 << rb.min(12);
         let rd_bit = 1u16 << rd.min(12);
         let src_mask: u16 = match entry.src_pat {
-            0 => 0, 1 => ra_bit, 2 => rb_bit,
-            3 => ra_bit | rb_bit, 4 => rb_bit | rd_bit, _ => 0,
+            0 => 0,
+            1 => ra_bit,
+            2 => rb_bit,
+            3 => ra_bit | rb_bit,
+            4 => rb_bit | rd_bit,
+            _ => 0,
         };
         let dst_mask: u16 = if entry.dst_pat == 1 { ra_bit } else { 0 };
         return FastCost {
@@ -1352,8 +2539,12 @@ fn fast_cost_lut_inner(
     let rd_bit = 1u16 << rd.min(12);
 
     let src_mask: u16 = match entry.src_pat {
-        0 => 0, 1 => ra_bit, 2 => rb_bit,
-        3 => ra_bit | rb_bit, 4 => rb_bit | rd_bit, _ => 0,
+        0 => 0,
+        1 => ra_bit,
+        2 => rb_bit,
+        3 => ra_bit | rb_bit,
+        4 => rb_bit | rd_bit,
+        _ => 0,
     };
     let dst_mask: u16 = if entry.dst_pat == 1 { ra_bit } else { 0 };
 
@@ -1375,7 +2566,11 @@ fn fast_cost_lut_inner(
         } else {
             (dst_mask & src_mask) != 0
         };
-        if overlap { entry.overlap_slots & 0x0F } else { entry.overlap_slots >> 4 }
+        if overlap {
+            entry.overlap_slots & 0x0F
+        } else {
+            entry.overlap_slots >> 4
+        }
     } else {
         entry.decode_slots
     };
@@ -1409,11 +2604,25 @@ fn eu_available(avail: &[u8; 5], eu: u8) -> bool {
 #[inline(always)]
 fn eu_consume(avail: &mut [u8; 5], eu: u8) {
     match eu {
-        EU_ALU => { avail[0] -= 1; }
-        EU_LOAD => { avail[0] -= 1; avail[1] -= 1; }
-        EU_STORE => { avail[0] -= 1; avail[2] -= 1; }
-        EU_MUL => { avail[0] -= 1; avail[3] -= 1; }
-        EU_DIV => { avail[0] -= 1; avail[4] -= 1; }
+        EU_ALU => {
+            avail[0] -= 1;
+        }
+        EU_LOAD => {
+            avail[0] -= 1;
+            avail[1] -= 1;
+        }
+        EU_STORE => {
+            avail[0] -= 1;
+            avail[2] -= 1;
+        }
+        EU_MUL => {
+            avail[0] -= 1;
+            avail[3] -= 1;
+        }
+        EU_DIV => {
+            avail[0] -= 1;
+            avail[4] -= 1;
+        }
         _ => {}
     }
 }
@@ -1439,9 +2648,13 @@ fn advance_cycle(cycles_left: &mut [u8; 32], exe_mask: &mut u32, fin_mask: &mut 
 }
 
 #[cfg(feature = "std")]
-fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: &[u8], _bitmask: &[u8]) -> u32 {
+fn gas_sim_fast(
+    instrs: &[crate::recompiler::predecode::PreDecodedInst],
+    _code: &[u8],
+    _bitmask: &[u8],
+) -> u32 {
     // SoA ROB arrays (32 entries, stack-allocated)
-    let mut state = [0u8; 32];        // 0=empty, 1=wait, 2=exe, 3=fin
+    let mut state = [0u8; 32]; // 0=empty, 1=wait, 2=exe, 3=fin
     let mut cycles_left = [0u8; 32];
     let mut exec_unit = [0u8; 32];
     let mut deps = [0u32; 32];
@@ -1465,13 +2678,16 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: 
         // Phase 1: Decode as many instructions as possible this cycle
         while instr_idx < instrs.len() && decode_slots > 0 && (next_slot as usize) < 32 {
             let ii = &instrs[instr_idx];
-            let cost = fast_cost_from_raw(
-                ii.opcode as u8, ii.ra, ii.rb, ii.rd, ii.pc, _code, _bitmask,
-            );
+            let cost =
+                fast_cost_from_raw(ii.opcode as u8, ii.ra, ii.rb, ii.rd, ii.pc, _code, _bitmask);
 
             if cost.is_move_reg {
                 decode_slots = decode_slots.saturating_sub(cost.decode_slots);
-                instr_idx = if cost.is_terminator { instrs.len() } else { instr_idx + 1 };
+                instr_idx = if cost.is_terminator {
+                    instrs.len()
+                } else {
+                    instr_idx + 1
+                };
                 continue;
             }
 
@@ -1503,7 +2719,11 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: 
 
             next_slot += 1;
             decode_slots = decode_slots.saturating_sub(cost.decode_slots);
-            instr_idx = if cost.is_terminator { instrs.len() } else { instr_idx + 1 };
+            instr_idx = if cost.is_terminator {
+                instrs.len()
+            } else {
+                instr_idx + 1
+            };
         }
 
         // Phase 2: Dispatch as many ready instructions as possible this cycle
@@ -1523,7 +2743,9 @@ fn gas_sim_fast(instrs: &[crate::recompiler::predecode::PreDecodedInst], _code: 
                     break; // re-scan from start (priority order)
                 }
             }
-            if !found { break; }
+            if !found {
+                break;
+            }
         }
 
         // Phase 3: Done check
@@ -1564,14 +2786,39 @@ mod tests {
         let mut sim = GasSimulator::new();
         let mut pc = 0;
         while pc < code.len() {
-            if pc < bitmask.len() && bitmask[pc] != 1 { pc += 1; continue; }
+            if pc < bitmask.len() && bitmask[pc] != 1 {
+                pc += 1;
+                continue;
+            }
             let opcode_byte = code[pc];
-            let raw_ra = if pc + 1 < code.len() { code[pc + 1] & 0x0F } else { 0xFF };
-            let raw_rb = if pc + 1 < code.len() { (code[pc + 1] >> 4) & 0x0F } else { 0xFF };
-            let raw_rd = if pc + 2 < code.len() { code[pc + 2] & 0x0F } else { 0xFF };
-            let fc = fast_cost_from_raw(opcode_byte, raw_ra, raw_rb, raw_rd, pc as u32, code, bitmask);
+            let raw_ra = if pc + 1 < code.len() {
+                code[pc + 1] & 0x0F
+            } else {
+                0xFF
+            };
+            let raw_rb = if pc + 1 < code.len() {
+                (code[pc + 1] >> 4) & 0x0F
+            } else {
+                0xFF
+            };
+            let raw_rd = if pc + 2 < code.len() {
+                code[pc + 2] & 0x0F
+            } else {
+                0xFF
+            };
+            let fc = fast_cost_from_raw(
+                opcode_byte,
+                raw_ra,
+                raw_rb,
+                raw_rd,
+                pc as u32,
+                code,
+                bitmask,
+            );
             sim.feed(&fc);
-            if fc.is_terminator { break; }
+            if fc.is_terminator {
+                break;
+            }
             let skip = skip_distance(bitmask, pc);
             pc += 1 + skip;
         }

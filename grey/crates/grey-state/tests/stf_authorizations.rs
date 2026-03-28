@@ -3,9 +3,9 @@
 mod common;
 
 use common::{discover_test_stems, hash_from_hex};
-use grey_state::authorizations::{update_authorizations, AuthorizationInput};
-use grey_types::config::Config;
+use grey_state::authorizations::{AuthorizationInput, update_authorizations};
 use grey_types::Hash;
+use grey_types::config::Config;
 
 fn run_authorizations_test(dir: &str, stem: &str) {
     let json = common::load_jar_test(dir, stem);
@@ -84,11 +84,7 @@ fn run_authorizations_test(dir: &str, stem: &str) {
         path
     );
     for (core, (got, exp)) in auth_pools.iter().zip(expected_pools.iter()).enumerate() {
-        assert_eq!(
-            got, exp,
-            "auth pool mismatch for core {} in {}",
-            core, path
-        );
+        assert_eq!(got, exp, "auth pool mismatch for core {} in {}", core, path);
     }
 }
 

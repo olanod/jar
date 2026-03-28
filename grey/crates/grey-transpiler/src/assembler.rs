@@ -9,19 +9,19 @@ use crate::emitter;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Reg {
-    RA = 0,   // Return address / reg 0
-    SP = 1,   // Stack pointer / reg 1
-    T0 = 2,   // Temporary 0
-    T1 = 3,   // Temporary 1
-    T2 = 4,   // Temporary 2
-    S0 = 5,   // Saved 0
-    S1 = 6,   // Saved 1
-    A0 = 7,   // Argument 0 (also host-call arg/return)
-    A1 = 8,   // Argument 1
-    A2 = 9,   // Argument 2
-    A3 = 10,  // Argument 3
-    A4 = 11,  // Argument 4
-    A5 = 12,  // Argument 5
+    RA = 0,  // Return address / reg 0
+    SP = 1,  // Stack pointer / reg 1
+    T0 = 2,  // Temporary 0
+    T1 = 3,  // Temporary 1
+    T2 = 4,  // Temporary 2
+    S0 = 5,  // Saved 0
+    S1 = 6,  // Saved 1
+    A0 = 7,  // Argument 0 (also host-call arg/return)
+    A1 = 8,  // Argument 1
+    A2 = 9,  // Argument 2
+    A3 = 10, // Argument 3
+    A4 = 11, // Argument 4
+    A5 = 12, // Argument 5
 }
 
 /// PVM program assembler.
@@ -491,16 +491,28 @@ pub fn build_sample_service_precise() -> Vec<u8> {
     // Save the argument pointer first
     // move_reg S0, A0 (save arg base)
     push_inst(&mut code, &mut bitmask, 100); // opcode: move_reg
-    push_data(&mut code, &mut bitmask, (Reg::S0 as u8) | ((Reg::A0 as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::S0 as u8) | ((Reg::A0 as u8) << 4),
+    );
 
     // move_reg S1, A1 (save arg len)
     push_inst(&mut code, &mut bitmask, 100);
-    push_data(&mut code, &mut bitmask, (Reg::S1 as u8) | ((Reg::A1 as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::S1 as u8) | ((Reg::A1 as u8) << 4),
+    );
 
     // Allocate stack space: SP -= 16
     // add_imm_64 SP, SP, -16 (opcode 149)
     push_inst(&mut code, &mut bitmask, 149); // add_imm_64
-    push_data(&mut code, &mut bitmask, (Reg::SP as u8) | ((Reg::SP as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::SP as u8) | ((Reg::SP as u8) << 4),
+    );
     // immediate -16 in 4 bytes LE (sign-extended)
     let neg16 = (-16i32).to_le_bytes();
     for b in &neg16 {
@@ -519,7 +531,11 @@ pub fn build_sample_service_precise() -> Vec<u8> {
 
     // store_ind_u8 T0, SP, 0 (store key byte at SP+0)
     push_inst(&mut code, &mut bitmask, 120); // store_ind_u8
-    push_data(&mut code, &mut bitmask, (Reg::T0 as u8) | ((Reg::SP as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::T0 as u8) | ((Reg::SP as u8) << 4),
+    );
     push_data(&mut code, &mut bitmask, 0x00); // imm = 0
     push_data(&mut code, &mut bitmask, 0x00);
     push_data(&mut code, &mut bitmask, 0x00);
@@ -535,7 +551,11 @@ pub fn build_sample_service_precise() -> Vec<u8> {
 
     // store_ind_u8 T0, SP, 8 (store value byte at SP+8)
     push_inst(&mut code, &mut bitmask, 120);
-    push_data(&mut code, &mut bitmask, (Reg::T0 as u8) | ((Reg::SP as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::T0 as u8) | ((Reg::SP as u8) << 4),
+    );
     push_data(&mut code, &mut bitmask, 0x08); // imm = 8
     push_data(&mut code, &mut bitmask, 0x00);
     push_data(&mut code, &mut bitmask, 0x00);
@@ -549,7 +569,11 @@ pub fn build_sample_service_precise() -> Vec<u8> {
 
     // move_reg A0, SP
     push_inst(&mut code, &mut bitmask, 100);
-    push_data(&mut code, &mut bitmask, (Reg::A0 as u8) | ((Reg::SP as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::A0 as u8) | ((Reg::SP as u8) << 4),
+    );
 
     // load_imm A1, 1
     push_inst(&mut code, &mut bitmask, 51);
@@ -561,7 +585,11 @@ pub fn build_sample_service_precise() -> Vec<u8> {
 
     // add_imm_64 A2, SP, 8
     push_inst(&mut code, &mut bitmask, 149);
-    push_data(&mut code, &mut bitmask, (Reg::A2 as u8) | ((Reg::SP as u8) << 4));
+    push_data(
+        &mut code,
+        &mut bitmask,
+        (Reg::A2 as u8) | ((Reg::SP as u8) << 4),
+    );
     push_data(&mut code, &mut bitmask, 0x08);
     push_data(&mut code, &mut bitmask, 0x00);
     push_data(&mut code, &mut bitmask, 0x00);
@@ -653,10 +681,10 @@ pub fn build_sample_service_precise() -> Vec<u8> {
 
     // Build the standard program blob
     emitter::build_standard_program(
-        &[],     // no ro_data
-        &[],     // no rw_data
-        1,       // 1 heap page
-        4096,    // 4K stack
+        &[],  // no ro_data
+        &[],  // no rw_data
+        1,    // 1 heap page
+        4096, // 4K stack
         &code,
         &bitmask,
         &jump_table,
@@ -687,27 +715,34 @@ mod tests {
         assert!(!blob.is_empty());
         // Verify it can be loaded by PVM
         let pvm = javm::program::initialize_program(&blob, &[], 1_000_000);
-        assert!(pvm.is_some(), "Sample service blob should be loadable by PVM");
+        assert!(
+            pvm.is_some(),
+            "Sample service blob should be loadable by PVM"
+        );
     }
 
     #[test]
     fn test_sample_service_refine_halts() {
         let blob = build_sample_service();
         let args = b"hello world";
-        let mut pvm = javm::program::initialize_program(&blob, args, 1_000_000)
-            .expect("should initialize");
+        let mut pvm =
+            javm::program::initialize_program(&blob, args, 1_000_000).expect("should initialize");
         // Refine starts at PC=0 (jump → refine body → halt)
         let (exit, _gas) = pvm.run();
-        assert_eq!(exit, javm::vm::ExitReason::Halt,
-            "Refine should halt cleanly, got {:?}", exit);
+        assert_eq!(
+            exit,
+            javm::vm::ExitReason::Halt,
+            "Refine should halt cleanly, got {:?}",
+            exit
+        );
     }
 
     #[test]
     fn test_sample_service_accumulate_host_call() {
         let blob = build_sample_service();
         let args = b"test";
-        let mut pvm = javm::program::initialize_program(&blob, args, 1_000_000)
-            .expect("should initialize");
+        let mut pvm =
+            javm::program::initialize_program(&blob, args, 1_000_000).expect("should initialize");
         // Set PC to accumulate entry (byte 5)
         pvm.pc = 5;
         pvm.tracing_enabled = true;
@@ -718,7 +753,11 @@ mod tests {
         }
         eprintln!("  SP={:#x} regs={:?}", pvm.registers[1], &pvm.registers[..]);
         // Should reach a host call (ecalli 4 = host_write)
-        assert_eq!(exit, javm::vm::ExitReason::HostCall(4),
-            "Accumulate should hit host_write call, got {:?}", exit);
+        assert_eq!(
+            exit,
+            javm::vm::ExitReason::HostCall(4),
+            "Accumulate should hit host_write call, got {:?}",
+            exit
+        );
     }
 }

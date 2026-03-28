@@ -78,7 +78,11 @@ impl GasSimulator {
     /// Return block gas cost: max(max_done - 3, 1).
     #[inline]
     pub fn flush_and_get_cost(&self) -> u32 {
-        if self.max_done > 3 { self.max_done - 3 } else { 1 }
+        if self.max_done > 3 {
+            self.max_done - 3
+        } else {
+            1
+        }
     }
 
     /// Reset for the next gas block.

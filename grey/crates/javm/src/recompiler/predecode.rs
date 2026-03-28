@@ -57,19 +57,25 @@ pub fn predecode(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<PreDeco
         let (ra, rb, rd) = match args {
             Args::ThreeReg { ra, rb, rd } => (ra as u8, rb as u8, rd as u8),
             Args::TwoReg { rd: d, ra: a } => (a as u8, 0xFF, d as u8),
-            Args::TwoRegImm { ra, rb, .. } | Args::TwoRegOffset { ra, rb, .. }
+            Args::TwoRegImm { ra, rb, .. }
+            | Args::TwoRegOffset { ra, rb, .. }
             | Args::TwoRegTwoImm { ra, rb, .. } => (ra as u8, rb as u8, 0xFF),
-            Args::RegImm { ra, .. } | Args::RegExtImm { ra, .. }
-            | Args::RegTwoImm { ra, .. } | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
+            Args::RegImm { ra, .. }
+            | Args::RegExtImm { ra, .. }
+            | Args::RegTwoImm { ra, .. }
+            | Args::RegImmOffset { ra, .. } => (ra as u8, 0xFF, 0xFF),
             _ => (0xFF, 0xFF, 0xFF),
         };
         instrs.push(PreDecodedInst {
-            opcode, args,
+            opcode,
+            args,
             pc: pc as u32,
             next_pc: next_pc as u32,
             gas_cost: 0,
             is_gas_block_start: false,
-            ra, rb, rd,
+            ra,
+            rb,
+            rd,
         });
 
         pc = next_pc;
@@ -173,15 +179,24 @@ pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Ve
                 crate::instruction::InstructionCategory::OneOffset => {
                     // Jump: offset is signed, relative to pc
                     let raw = args::decode_args(code, pc, skip, category);
-                    match raw { Args::Offset { offset } => Some(offset as usize), _ => None }
+                    match raw {
+                        Args::Offset { offset } => Some(offset as usize),
+                        _ => None,
+                    }
                 }
                 crate::instruction::InstructionCategory::OneRegImmOffset => {
                     let raw = args::decode_args(code, pc, skip, category);
-                    match raw { Args::RegImmOffset { offset, .. } => Some(offset as usize), _ => None }
+                    match raw {
+                        Args::RegImmOffset { offset, .. } => Some(offset as usize),
+                        _ => None,
+                    }
                 }
                 crate::instruction::InstructionCategory::TwoRegOneOffset => {
                     let raw = args::decode_args(code, pc, skip, category);
-                    match raw { Args::TwoRegOffset { offset, .. } => Some(offset as usize), _ => None }
+                    match raw {
+                        Args::TwoRegOffset { offset, .. } => Some(offset as usize),
+                        _ => None,
+                    }
                 }
                 _ => None,
             };

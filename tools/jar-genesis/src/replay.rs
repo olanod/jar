@@ -28,9 +28,7 @@ fn collect_entries(
         let commit_json = match git::parse_trailer(message, "Genesis-Commit") {
             Some(json) => json,
             None => {
-                eprintln!(
-                    "WARNING: No Genesis-Commit trailer for merge {hash}. Cannot replay."
-                );
+                eprintln!("WARNING: No Genesis-Commit trailer for merge {hash}. Cannot replay.");
                 // Still track the stored index
                 let stored_index: serde_json::Value = serde_json::from_str(&index_json)?;
                 entries.push(GenesisCommitEntry {
@@ -106,12 +104,7 @@ fn get_ranking_snapshot(
     // Find the last index with epoch < target epoch
     let last = indices
         .iter()
-        .filter(|idx| {
-            idx["epoch"]
-                .as_u64()
-                .map(|e| e < epoch)
-                .unwrap_or(false)
-        })
+        .filter(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))
         .last()?;
 
     let commit_hash = last["commitHash"].as_str()?;
@@ -170,10 +163,7 @@ fn replay_incremental(
             lean::invoke("genesis_ranking", &ranking_input, spec_dir)?;
         let snapshot = ranking_output["ranking"].clone();
 
-        let commit_hash = index["commitHash"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let commit_hash = index["commitHash"].as_str().unwrap_or("").to_string();
         rankings.insert(commit_hash, snapshot);
     }
 
@@ -317,7 +307,10 @@ pub fn verify_cache() -> Result<(), Box<dyn std::error::Error>> {
                         errors += 1;
                     }
                 } else {
-                    eprintln!("RANKING MISMATCH: key {} not in cache.", &key[..8.min(key.len())]);
+                    eprintln!(
+                        "RANKING MISMATCH: key {} not in cache.",
+                        &key[..8.min(key.len())]
+                    );
                     errors += 1;
                 }
             }

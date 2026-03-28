@@ -108,10 +108,7 @@ impl Decode for u16 {
 impl Decode for u32 {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         ensure_bytes(data, 4)?;
-        Ok((
-            u32::from_le_bytes([data[0], data[1], data[2], data[3]]),
-            4,
-        ))
+        Ok((u32::from_le_bytes([data[0], data[1], data[2], data[3]]), 4))
     }
 }
 
@@ -267,16 +264,29 @@ use grey_types::work::*;
 impl Decode for RefinementContext {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (anchor, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (state_root, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (beefy_root, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (lookup_anchor, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (lookup_anchor_timeslot, c) = u32::decode(&data[off..])?; off += c;
-        let (prerequisites, c) = Vec::<grey_types::Hash>::decode(&data[off..])?; off += c;
-        Ok((RefinementContext {
-            anchor, state_root, beefy_root, lookup_anchor,
-            lookup_anchor_timeslot, prerequisites,
-        }, off))
+        let (anchor, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (state_root, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (beefy_root, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (lookup_anchor, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (lookup_anchor_timeslot, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (prerequisites, c) = Vec::<grey_types::Hash>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            RefinementContext {
+                anchor,
+                state_root,
+                beefy_root,
+                lookup_anchor,
+                lookup_anchor_timeslot,
+                prerequisites,
+            },
+            off,
+        ))
     }
 }
 
@@ -301,24 +311,42 @@ impl Decode for WorkResult {
 impl Decode for WorkDigest {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (service_id, c) = u32::decode(&data[off..])?; off += c;
-        let (code_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (payload_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (accumulate_gas, c) = u64::decode(&data[off..])?; off += c;
-        let (result, c) = WorkResult::decode(&data[off..])?; off += c;
+        let (service_id, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (code_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (payload_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (accumulate_gas, c) = u64::decode(&data[off..])?;
+        off += c;
+        let (result, c) = WorkResult::decode(&data[off..])?;
+        off += c;
         // RefineLoad fields use compact encoding
-        let (gas_used, c) = decode_compact(&data[off..])?; off += c;
-        let (imports_count, c) = decode_compact(&data[off..])?; off += c;
-        let (extrinsics_count, c) = decode_compact(&data[off..])?; off += c;
-        let (extrinsics_size, c) = decode_compact(&data[off..])?; off += c;
-        let (exports_count, c) = decode_compact(&data[off..])?; off += c;
-        Ok((WorkDigest {
-            service_id, code_hash, payload_hash, accumulate_gas, result,
-            gas_used, imports_count: imports_count as u16,
-            extrinsics_count: extrinsics_count as u16,
-            extrinsics_size: extrinsics_size as u32,
-            exports_count: exports_count as u16,
-        }, off))
+        let (gas_used, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (imports_count, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (extrinsics_count, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (extrinsics_size, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (exports_count, c) = decode_compact(&data[off..])?;
+        off += c;
+        Ok((
+            WorkDigest {
+                service_id,
+                code_hash,
+                payload_hash,
+                accumulate_gas,
+                result,
+                gas_used,
+                imports_count: imports_count as u16,
+                extrinsics_count: extrinsics_count as u16,
+                extrinsics_size: extrinsics_size as u32,
+                exports_count: exports_count as u16,
+            },
+            off,
+        ))
     }
 }
 
@@ -333,70 +361,128 @@ impl Decode for ImportSegment {
 impl Decode for WorkItem {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (service_id, c) = u32::decode(&data[off..])?; off += c;
-        let (code_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (gas_limit, c) = u64::decode(&data[off..])?; off += c;
-        let (accumulate_gas_limit, c) = u64::decode(&data[off..])?; off += c;
-        let (exports_count, c) = u16::decode(&data[off..])?; off += c;
-        let (payload, c) = Vec::<u8>::decode(&data[off..])?; off += c;
-        let (imports, c) = Vec::<ImportSegment>::decode(&data[off..])?; off += c;
-        let (extrinsics, c) = Vec::<(grey_types::Hash, u32)>::decode(&data[off..])?; off += c;
-        Ok((WorkItem {
-            service_id, code_hash, gas_limit, accumulate_gas_limit,
-            exports_count, payload, imports, extrinsics,
-        }, off))
+        let (service_id, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (code_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (gas_limit, c) = u64::decode(&data[off..])?;
+        off += c;
+        let (accumulate_gas_limit, c) = u64::decode(&data[off..])?;
+        off += c;
+        let (exports_count, c) = u16::decode(&data[off..])?;
+        off += c;
+        let (payload, c) = Vec::<u8>::decode(&data[off..])?;
+        off += c;
+        let (imports, c) = Vec::<ImportSegment>::decode(&data[off..])?;
+        off += c;
+        let (extrinsics, c) = Vec::<(grey_types::Hash, u32)>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            WorkItem {
+                service_id,
+                code_hash,
+                gas_limit,
+                accumulate_gas_limit,
+                exports_count,
+                payload,
+                imports,
+                extrinsics,
+            },
+            off,
+        ))
     }
 }
 
 impl Decode for AvailabilitySpec {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (package_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (bundle_length, c) = u32::decode(&data[off..])?; off += c;
-        let (erasure_root, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (exports_root, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (exports_count, c) = u16::decode(&data[off..])?; off += c;
-        Ok((AvailabilitySpec {
-            package_hash, bundle_length, erasure_root, exports_root, exports_count,
-        }, off))
+        let (package_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (bundle_length, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (erasure_root, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (exports_root, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (exports_count, c) = u16::decode(&data[off..])?;
+        off += c;
+        Ok((
+            AvailabilitySpec {
+                package_hash,
+                bundle_length,
+                erasure_root,
+                exports_root,
+                exports_count,
+            },
+            off,
+        ))
     }
 }
 
 impl Decode for WorkReport {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (package_spec, c) = AvailabilitySpec::decode(&data[off..])?; off += c;
-        let (context, c) = RefinementContext::decode(&data[off..])?; off += c;
+        let (package_spec, c) = AvailabilitySpec::decode(&data[off..])?;
+        off += c;
+        let (context, c) = RefinementContext::decode(&data[off..])?;
+        off += c;
         // core_index uses compact encoding
-        let (core_index_val, c) = decode_compact(&data[off..])?; off += c;
-        let (authorizer_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
+        let (core_index_val, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (authorizer_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
         // auth_gas_used uses compact encoding
-        let (auth_gas_used, c) = decode_compact(&data[off..])?; off += c;
-        let (auth_output, c) = Vec::<u8>::decode(&data[off..])?; off += c;
-        let (segment_root_lookup, c) = std::collections::BTreeMap::<grey_types::Hash, grey_types::Hash>::decode(&data[off..])?; off += c;
-        let (results, c) = Vec::<WorkDigest>::decode(&data[off..])?; off += c;
-        Ok((WorkReport {
-            package_spec, context,
-            core_index: core_index_val as u16,
-            authorizer_hash, auth_gas_used, auth_output,
-            segment_root_lookup, results,
-        }, off))
+        let (auth_gas_used, c) = decode_compact(&data[off..])?;
+        off += c;
+        let (auth_output, c) = Vec::<u8>::decode(&data[off..])?;
+        off += c;
+        let (segment_root_lookup, c) =
+            std::collections::BTreeMap::<grey_types::Hash, grey_types::Hash>::decode(&data[off..])?;
+        off += c;
+        let (results, c) = Vec::<WorkDigest>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            WorkReport {
+                package_spec,
+                context,
+                core_index: core_index_val as u16,
+                authorizer_hash,
+                auth_gas_used,
+                auth_output,
+                segment_root_lookup,
+                results,
+            },
+            off,
+        ))
     }
 }
 
 impl Decode for WorkPackage {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (auth_code_host, c) = u32::decode(&data[off..])?; off += c;
-        let (auth_code_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (context, c) = RefinementContext::decode(&data[off..])?; off += c;
-        let (authorization, c) = Vec::<u8>::decode(&data[off..])?; off += c;
-        let (authorizer_config, c) = Vec::<u8>::decode(&data[off..])?; off += c;
-        let (items, c) = Vec::<WorkItem>::decode(&data[off..])?; off += c;
-        Ok((WorkPackage {
-            auth_code_host, auth_code_hash, context,
-            authorization, authorizer_config, items,
-        }, off))
+        let (auth_code_host, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (auth_code_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (context, c) = RefinementContext::decode(&data[off..])?;
+        off += c;
+        let (authorization, c) = Vec::<u8>::decode(&data[off..])?;
+        off += c;
+        let (authorizer_config, c) = Vec::<u8>::decode(&data[off..])?;
+        off += c;
+        let (items, c) = Vec::<WorkItem>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            WorkPackage {
+                auth_code_host,
+                auth_code_hash,
+                context,
+                authorization,
+                authorizer_config,
+                items,
+            },
+            off,
+        ))
     }
 }
 
@@ -421,31 +507,63 @@ impl Decode for TicketProof {
 impl Decode for Judgment {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (is_valid, c) = bool::decode(&data[off..])?; off += c;
-        let (validator_index, c) = u16::decode(&data[off..])?; off += c;
-        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?; off += c;
-        Ok((Judgment { is_valid, validator_index, signature }, off))
+        let (is_valid, c) = bool::decode(&data[off..])?;
+        off += c;
+        let (validator_index, c) = u16::decode(&data[off..])?;
+        off += c;
+        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?;
+        off += c;
+        Ok((
+            Judgment {
+                is_valid,
+                validator_index,
+                signature,
+            },
+            off,
+        ))
     }
 }
 
 impl Decode for Culprit {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (validator_key, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?; off += c;
-        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?; off += c;
-        Ok((Culprit { report_hash, validator_key, signature }, off))
+        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (validator_key, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?;
+        off += c;
+        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?;
+        off += c;
+        Ok((
+            Culprit {
+                report_hash,
+                validator_key,
+                signature,
+            },
+            off,
+        ))
     }
 }
 
 impl Decode for Fault {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (is_valid, c) = bool::decode(&data[off..])?; off += c;
-        let (validator_key, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?; off += c;
-        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?; off += c;
-        Ok((Fault { report_hash, is_valid, validator_key, signature }, off))
+        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (is_valid, c) = bool::decode(&data[off..])?;
+        off += c;
+        let (validator_key, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?;
+        off += c;
+        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?;
+        off += c;
+        Ok((
+            Fault {
+                report_hash,
+                is_valid,
+                validator_key,
+                signature,
+            },
+            off,
+        ))
     }
 }
 
@@ -455,8 +573,10 @@ impl Decode for Fault {
 impl DecodeWithConfig for Verdict {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (age, c) = u32::decode(&data[off..])?; off += c;
+        let (report_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (age, c) = u32::decode(&data[off..])?;
+        off += c;
         // Fixed-size: super_majority judgments, no length prefix
         let count = config.super_majority() as usize;
         let mut judgments = Vec::with_capacity(count);
@@ -465,7 +585,14 @@ impl DecodeWithConfig for Verdict {
             off += c;
             judgments.push(j);
         }
-        Ok((Verdict { report_hash, age, judgments }, off))
+        Ok((
+            Verdict {
+                report_hash,
+                age,
+                judgments,
+            },
+            off,
+        ))
     }
 }
 
@@ -475,16 +602,26 @@ impl DecodeWithConfig for DisputesExtrinsic {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
         // Verdicts: length-prefixed, each verdict needs config
-        let (verdict_count, c) = decode_natural(&data[off..])?; off += c;
+        let (verdict_count, c) = decode_natural(&data[off..])?;
+        off += c;
         let mut verdicts = Vec::with_capacity(verdict_count);
         for _ in 0..verdict_count {
             let (v, c) = Verdict::decode_with_config(&data[off..], config)?;
             off += c;
             verdicts.push(v);
         }
-        let (culprits, c) = Vec::<Culprit>::decode(&data[off..])?; off += c;
-        let (faults, c) = Vec::<Fault>::decode(&data[off..])?; off += c;
-        Ok((DisputesExtrinsic { verdicts, culprits, faults }, off))
+        let (culprits, c) = Vec::<Culprit>::decode(&data[off..])?;
+        off += c;
+        let (faults, c) = Vec::<Fault>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            DisputesExtrinsic {
+                verdicts,
+                culprits,
+                faults,
+            },
+            off,
+        ))
     }
 }
 
@@ -492,15 +629,26 @@ impl DecodeWithConfig for DisputesExtrinsic {
 impl DecodeWithConfig for Assurance {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (anchor, c) = grey_types::Hash::decode(&data[off..])?; off += c;
+        let (anchor, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
         // Bitfield: fixed-size, ceil(C/8) bytes, no length prefix
         let bf_len = config.avail_bitfield_bytes();
         ensure_bytes(&data[off..], bf_len)?;
         let bitfield = data[off..off + bf_len].to_vec();
         off += bf_len;
-        let (validator_index, c) = u16::decode(&data[off..])?; off += c;
-        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?; off += c;
-        Ok((Assurance { anchor, bitfield, validator_index, signature }, off))
+        let (validator_index, c) = u16::decode(&data[off..])?;
+        off += c;
+        let (signature, c) = grey_types::Ed25519Signature::decode(&data[off..])?;
+        off += c;
+        Ok((
+            Assurance {
+                anchor,
+                bitfield,
+                validator_index,
+                signature,
+            },
+            off,
+        ))
     }
 }
 
@@ -508,10 +656,20 @@ impl DecodeWithConfig for Assurance {
 impl Decode for Guarantee {
     fn decode(data: &[u8]) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (report, c) = WorkReport::decode(&data[off..])?; off += c;
-        let (timeslot, c) = u32::decode(&data[off..])?; off += c;
-        let (credentials, c) = Vec::<(u16, grey_types::Ed25519Signature)>::decode(&data[off..])?; off += c;
-        Ok((Guarantee { report, timeslot, credentials }, off))
+        let (report, c) = WorkReport::decode(&data[off..])?;
+        off += c;
+        let (timeslot, c) = u32::decode(&data[off..])?;
+        off += c;
+        let (credentials, c) = Vec::<(u16, grey_types::Ed25519Signature)>::decode(&data[off..])?;
+        off += c;
+        Ok((
+            Guarantee {
+                report,
+                timeslot,
+                credentials,
+            },
+            off,
+        ))
     }
 }
 
@@ -519,17 +677,28 @@ impl Decode for Guarantee {
 impl DecodeWithConfig for EpochMarker {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (entropy, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (entropy_previous, c) = grey_types::Hash::decode(&data[off..])?; off += c;
+        let (entropy, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (entropy_previous, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
         // Fixed-size: V validator (bandersnatch, ed25519) pairs, no length prefix
         let count = config.validators_count as usize;
         let mut validators = Vec::with_capacity(count);
         for _ in 0..count {
-            let (bk, c) = grey_types::BandersnatchPublicKey::decode(&data[off..])?; off += c;
-            let (ek, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?; off += c;
+            let (bk, c) = grey_types::BandersnatchPublicKey::decode(&data[off..])?;
+            off += c;
+            let (ek, c) = grey_types::Ed25519PublicKey::decode(&data[off..])?;
+            off += c;
             validators.push((bk, ek));
         }
-        Ok((EpochMarker { entropy, entropy_previous, validators }, off))
+        Ok((
+            EpochMarker {
+                entropy,
+                entropy_previous,
+                validators,
+            },
+            off,
+        ))
     }
 }
 
@@ -538,12 +707,16 @@ impl DecodeWithConfig for EpochMarker {
 impl DecodeWithConfig for Extrinsic {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (tickets, c) = Vec::<TicketProof>::decode(&data[off..])?; off += c;
+        let (tickets, c) = Vec::<TicketProof>::decode(&data[off..])?;
+        off += c;
         // Preimages: Vec<(ServiceId, Vec<u8>)>
-        let (preimages, c) = Vec::<(u32, Vec<u8>)>::decode(&data[off..])?; off += c;
-        let (guarantees, c) = Vec::<Guarantee>::decode(&data[off..])?; off += c;
+        let (preimages, c) = Vec::<(u32, Vec<u8>)>::decode(&data[off..])?;
+        off += c;
+        let (guarantees, c) = Vec::<Guarantee>::decode(&data[off..])?;
+        off += c;
         // Assurances: length-prefixed, each needs config
-        let (assurance_count, c) = decode_natural(&data[off..])?; off += c;
+        let (assurance_count, c) = decode_natural(&data[off..])?;
+        off += c;
         let mut assurances = Vec::with_capacity(assurance_count);
         for _ in 0..assurance_count {
             let (a, c) = Assurance::decode_with_config(&data[off..], config)?;
@@ -551,8 +724,18 @@ impl DecodeWithConfig for Extrinsic {
             assurances.push(a);
         }
         // Disputes need config
-        let (disputes, c) = DisputesExtrinsic::decode_with_config(&data[off..], config)?; off += c;
-        Ok((Extrinsic { tickets, preimages, guarantees, assurances, disputes }, off))
+        let (disputes, c) = DisputesExtrinsic::decode_with_config(&data[off..], config)?;
+        off += c;
+        Ok((
+            Extrinsic {
+                tickets,
+                preimages,
+                guarantees,
+                assurances,
+                disputes,
+            },
+            off,
+        ))
     }
 }
 
@@ -560,15 +743,22 @@ impl DecodeWithConfig for Extrinsic {
 impl DecodeWithConfig for Header {
     fn decode_with_config(data: &[u8], config: &Config) -> Result<(Self, usize), CodecError> {
         let mut off = 0;
-        let (parent_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (state_root, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (extrinsic_hash, c) = grey_types::Hash::decode(&data[off..])?; off += c;
-        let (timeslot, c) = u32::decode(&data[off..])?; off += c;
+        let (parent_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (state_root, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (extrinsic_hash, c) = grey_types::Hash::decode(&data[off..])?;
+        off += c;
+        let (timeslot, c) = u32::decode(&data[off..])?;
+        off += c;
 
         // epoch_marker: Optional, config-dependent inner
         ensure_bytes(&data[off..], 1)?;
         let epoch_marker = match data[off] {
-            0 => { off += 1; None }
+            0 => {
+                off += 1;
+                None
+            }
             1 => {
                 off += 1;
                 let (em, c) = EpochMarker::decode_with_config(&data[off..], config)?;
@@ -581,7 +771,10 @@ impl DecodeWithConfig for Header {
         // tickets_marker: Optional, fixed-size E entries (no length prefix)
         ensure_bytes(&data[off..], 1)?;
         let tickets_marker = match data[off] {
-            0 => { off += 1; None }
+            0 => {
+                off += 1;
+                None
+            }
             1 => {
                 off += 1;
                 let count = config.epoch_length as usize;
@@ -596,16 +789,30 @@ impl DecodeWithConfig for Header {
             d => return Err(CodecError::InvalidDiscriminator(d)),
         };
 
-        let (author_index, c) = u16::decode(&data[off..])?; off += c;
-        let (vrf_signature, c) = grey_types::BandersnatchSignature::decode(&data[off..])?; off += c;
-        let (offenders_marker, c) = Vec::<grey_types::Ed25519PublicKey>::decode(&data[off..])?; off += c;
-        let (seal, c) = grey_types::BandersnatchSignature::decode(&data[off..])?; off += c;
+        let (author_index, c) = u16::decode(&data[off..])?;
+        off += c;
+        let (vrf_signature, c) = grey_types::BandersnatchSignature::decode(&data[off..])?;
+        off += c;
+        let (offenders_marker, c) = Vec::<grey_types::Ed25519PublicKey>::decode(&data[off..])?;
+        off += c;
+        let (seal, c) = grey_types::BandersnatchSignature::decode(&data[off..])?;
+        off += c;
 
-        Ok((Header {
-            parent_hash, state_root, extrinsic_hash, timeslot,
-            epoch_marker, tickets_marker, author_index,
-            vrf_signature, offenders_marker, seal,
-        }, off))
+        Ok((
+            Header {
+                parent_hash,
+                state_root,
+                extrinsic_hash,
+                timeslot,
+                epoch_marker,
+                tickets_marker,
+                author_index,
+                vrf_signature,
+                offenders_marker,
+                seal,
+            },
+            off,
+        ))
     }
 }
 
@@ -621,7 +828,7 @@ impl DecodeWithConfig for Block {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::encode::{encode_natural, Encode};
+    use crate::encode::{Encode, encode_natural};
 
     #[test]
     fn test_decode_natural_roundtrip() {
@@ -692,7 +899,9 @@ mod tests {
         original.insert(grey_types::Hash([1; 32]), grey_types::Hash([2; 32]));
         original.insert(grey_types::Hash([3; 32]), grey_types::Hash([4; 32]));
         let encoded = original.encode();
-        let (decoded, consumed) = std::collections::BTreeMap::<grey_types::Hash, grey_types::Hash>::decode(&encoded).unwrap();
+        let (decoded, consumed) =
+            std::collections::BTreeMap::<grey_types::Hash, grey_types::Hash>::decode(&encoded)
+                .unwrap();
         assert_eq!(decoded, original);
         assert_eq!(consumed, encoded.len());
     }
@@ -712,7 +921,8 @@ mod tests {
 
     #[test]
     fn test_decode_refine_context_roundtrip() {
-        let bin = include_bytes!("../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.bin");
+        let bin =
+            include_bytes!("../../../../spec/tests/vectors/codec/refine_context.gp072_tiny.bin");
         let (ctx, consumed) = RefinementContext::decode(bin).unwrap();
         assert_eq!(consumed, bin.len());
         let re_encoded = ctx.encode();
@@ -732,13 +942,25 @@ mod tests {
     fn test_decode_header_tiny_roundtrip() {
         let config = Config::tiny();
         for (name, bin) in [
-            ("header_0", include_bytes!("../../../../spec/tests/vectors/codec/header_0.gp072_tiny.bin").as_slice()),
-            ("header_1", include_bytes!("../../../../spec/tests/vectors/codec/header_1.gp072_tiny.bin").as_slice()),
+            (
+                "header_0",
+                include_bytes!("../../../../spec/tests/vectors/codec/header_0.gp072_tiny.bin")
+                    .as_slice(),
+            ),
+            (
+                "header_1",
+                include_bytes!("../../../../spec/tests/vectors/codec/header_1.gp072_tiny.bin")
+                    .as_slice(),
+            ),
         ] {
             let (header, consumed) = Header::decode_with_config(bin, &config).unwrap();
             assert_eq!(consumed, bin.len(), "{name}: consumed mismatch");
             let re_encoded = header.encode();
-            assert_eq!(&re_encoded[..], &bin[..], "{name}: re-encoded bytes mismatch");
+            assert_eq!(
+                &re_encoded[..],
+                &bin[..],
+                "{name}: re-encoded bytes mismatch"
+            );
         }
     }
 
@@ -759,7 +981,11 @@ mod tests {
         let (block, consumed) = Block::decode_with_config(block_bin, &config).unwrap();
         assert_eq!(consumed, block_bin.len());
         let re_encoded = block.encode();
-        assert_eq!(re_encoded.len(), block_bin.len(), "re-encoded length mismatch");
+        assert_eq!(
+            re_encoded.len(),
+            block_bin.len(),
+            "re-encoded length mismatch"
+        );
         assert_eq!(&re_encoded[..], &block_bin[..], "re-encoded bytes mismatch");
     }
 }
