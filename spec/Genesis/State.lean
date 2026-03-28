@@ -14,7 +14,7 @@
   The current spec on master evaluates ALL past commits correctly.
   Spec changes (algorithms) must remain backward compatible.
   Parameter changes use the variant schedule — no backward compat needed.
-  CI enforces via `genesis-replay.sh --verify`.
+  CI enforces via `cargo run -p jar-genesis -- replay --mode verify`.
 -/
 
 import Genesis.Types
@@ -49,6 +49,7 @@ def founderWeight : Nat := 1
 def genesisSchedule : List (Epoch × GenesisVariant) :=
   [ (0, GenesisVariant.v1)
   , (1774188000, GenesisVariant.v2)  -- 2026-03-22 14:00 UTC: rank-based target selection
+  , (4102444800, GenesisVariant.v3)  -- 2100-01-01 00:00 UTC: Bradley-Terry ranking (inactive placeholder)
   ]
 
 /-- Resolve the active variant for a given epoch. -/

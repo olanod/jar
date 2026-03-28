@@ -18,7 +18,7 @@
 
   In practice: the current spec on master evaluates ALL past commits correctly.
   Spec changes MUST preserve results for all already-scored commits. This is
-  enforced by CI (`genesis-replay.sh --verify`).
+  enforced by CI (`cargo run -p jar-genesis -- replay --mode verify`).
 
   Each evaluation produces a list of non-negative, capped balance deltas:
     (+contributor_reward, +reviewer1_reward, +reviewer2_reward, ...)
@@ -70,6 +70,9 @@ structure GenesisConfig where
   /-- When true, comparison targets are selected by global quality ranking (v2)
       instead of time-based buckets (v1). Requires ranking.json on genesis-state. -/
   useRankedTargets : Bool
+  /-- When true, global ranking uses Bradley-Terry model (v3) instead of
+      deduplicated net-wins (v2). Fixes observation-frequency bias. -/
+  useBradleyTerry : Bool
   deriving Repr
 
 /-- Protocol configuration typeclass. All configurable constants are
@@ -91,6 +94,7 @@ def GenesisConfig.v1 : GenesisConfig where
   designWeight := 3
   numWeightedDimensions := 5
   useRankedTargets := false
+  useBradleyTerry := false
 
 instance GenesisVariant.v1 : GenesisVariant where
   toGenesisConfig := .v1
@@ -105,9 +109,25 @@ def GenesisConfig.v2 : GenesisConfig where
   designWeight := 3
   numWeightedDimensions := 5
   useRankedTargets := true
+  useBradleyTerry := false
 
 instance GenesisVariant.v2 : GenesisVariant where
   toGenesisConfig := .v2
+
+def GenesisConfig.v3 : GenesisConfig where
+  name := "genesis_v3"
+  reviewerThreshold := 500
+  minReviews := 1
+  rankingSize := 7
+  quantileNum := 1
+  quantileDen := 3
+  designWeight := 3
+  numWeightedDimensions := 5
+  useRankedTargets := true
+  useBradleyTerry := true
+
+instance GenesisVariant.v3 : GenesisVariant where
+  toGenesisConfig := .v3
 
 /-! ### Core Types -/
 
@@ -170,6 +190,15 @@ def Ratio.zero : Ratio where num := 0; den := 1
 def Ratio.one : Ratio where num := 1; den := 1
 def Ratio.ofNat (n : Nat) : Ratio where num := n; den := 1
 def Ratio.toNat (r : Ratio) : Nat := r.num / r.den
+
+/-- Division: a / b. Returns zero if b.num = 0. -/
+def Ratio.div (a b : Ratio) : Ratio :=
+  if h : a.den * b.num > 0 then
+    Ratio.normalize { num := a.num * b.den, den := a.den * b.num, den_pos := h }
+  else Ratio.zero
+
+/-- Strict greater-than comparison via cross-multiplication. -/
+def Ratio.gt (a b : Ratio) : Bool := a.num * b.den > b.num * a.den
 
 instance : Inhabited Ratio where
   default := Ratio.zero

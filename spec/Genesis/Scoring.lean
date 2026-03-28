@@ -278,7 +278,9 @@ structure RankingCommitCtx where
   variant : GenesisVariant
   getWeight : ContributorId → Nat
 
-def computeRanking
+/-! ### Net-Wins Ranking (v2) -/
+
+def computeRankingNetWins
     (signedCommits : List SignedCommit)
     (contexts : List RankingCommitCtx) : List CommitId :=
   let allCommitIds := signedCommits.map (·.id)
@@ -297,6 +299,133 @@ def computeRanking
     if nw1 != nw2 then nw1 > nw2 else i1 < i2
   ) |>.toList
   sorted.map (fun ((c, _), _) => c)
+
+/-! ### Bradley-Terry Ranking (v3)
+
+  Replaces net-wins with a maximum-likelihood strength model.
+  Fixes observation-frequency bias: frequently-targeted commits no longer
+  accumulate disproportionate losses from deduplicated pairwise counting.
+
+  Algorithm: iterative MM (minorization-maximization).
+  For each commit i: strength_i = W_i / Σ_j(n_ij / (strength_i + strength_j))
+  where W_i = total wins, n_ij = total comparisons between i and j.
+  Uses exact rational arithmetic (Ratio) for determinism.
+-/
+
+/-- Collect ALL pairwise outcomes (no deduplication) from quantile-selected
+    reviewers. Each review contributes all its (winner, loser) pairs. -/
+def collectAllPairwise
+    (signedCommits : List SignedCommit)
+    (contexts : List RankingCommitCtx) : List (CommitId × CommitId) :=
+  signedCommits.zip contexts |>.foldl (fun acc (commit, ctx) =>
+    letI := ctx.variant
+    match selectQuantileReviewer commit.reviews ctx.getWeight commit.id with
+    | some review => acc ++ extractPairwise review
+    | none => acc
+  ) []
+
+/-- Precomputed pairwise statistics for Bradley-Terry. -/
+structure BTStats where
+  /-- Total wins per commit. -/
+  wins : List (CommitId × Nat)
+  /-- Comparison counts between ordered pairs: (ci, cj, count) where ci < cj by index. -/
+  comparisons : List (CommitId × CommitId × Nat)
+
+/-- Build pairwise statistics from a flat list of outcomes. -/
+def buildBTStats (pairs : List (CommitId × CommitId))
+    (commits : List CommitId) : BTStats :=
+  let wins := commits.map fun c =>
+    (c, pairs.foldl (fun n (w, _) => if w == c then n + 1 else n) 0)
+  let indexed := commits.zip (List.range commits.length)
+  let comparisons := indexed.foldl (fun acc (ci, ii) =>
+    acc ++ indexed.filterMap (fun (cj, ij) =>
+      if ii < ij then
+        let n := pairs.foldl (fun cnt (w, l) =>
+          if (w == ci && l == cj) || (w == cj && l == ci) then cnt + 1 else cnt) 0
+        if n > 0 then some (ci, cj, n) else none
+      else none)
+  ) []
+  { wins, comparisons }
+
+/-- Look up comparison count between two commits. -/
+private def lookupComparisons (stats : BTStats) (ci cj : CommitId) : Nat :=
+  stats.comparisons.foldl (fun cnt (a, b, n) =>
+    if (a == ci && b == cj) || (a == cj && b == ci) then cnt + n else cnt) 0
+
+/-- One iteration of the Bradley-Terry MM update.
+    strength_i = W_i / Σ_j(n_ij / (strength_i + strength_j))
+    Only updates commits with at least 1 win. Zero-win commits are
+    excluded from iteration (assigned rank at the bottom later).
+    Normalize so strengths of active commits sum to N_active. -/
+def bradleyTerryStep
+    (activeCommits : List CommitId)
+    (stats : BTStats)
+    (strengths : List (CommitId × Ratio)) : List (CommitId × Ratio) :=
+  let n := Ratio.ofNat activeCommits.length
+  let getStrength (c : CommitId) : Ratio :=
+    (strengths.find? (fun (x, _) => x == c)).map (·.2) |>.getD Ratio.one
+  let raw := activeCommits.map fun ci =>
+    let si := getStrength ci
+    let wi := (stats.wins.find? (fun (c, _) => c == ci)).map (·.2) |>.getD 0
+    let denom := activeCommits.foldl (fun acc cj =>
+      if cj == ci then acc
+      else
+        let nij := lookupComparisons stats ci cj
+        if nij == 0 then acc
+        else Ratio.add acc (Ratio.div (Ratio.ofNat nij) (Ratio.add si (getStrength cj)))
+    ) Ratio.zero
+    if denom.num == 0 then (ci, Ratio.one)
+    else (ci, Ratio.div (Ratio.ofNat wi) denom)
+  -- Normalize: scale so sum = N_active
+  let total := raw.foldl (fun acc (_, s) => Ratio.add acc s) Ratio.zero
+  if total.num == 0 then raw
+  else raw.map (fun (c, s) => (c, Ratio.div (Ratio.mul s n) total))
+
+/-- Run Bradley-Terry MM algorithm for a fixed number of iterations.
+    Zero-win commits are excluded from iteration and given floor strength. -/
+def bradleyTerry
+    (commits : List CommitId)
+    (pairs : List (CommitId × CommitId))
+    (iterations : Nat := 20) : List (CommitId × Ratio) :=
+  let stats := buildBTStats pairs commits
+  -- Partition: only iterate on commits with ≥1 win
+  let hasWins (c : CommitId) : Bool :=
+    match (stats.wins.find? (fun (x, _) => x == c)).map (·.2) with
+    | some w => w != 0
+    | none => false
+  let activeCommits := commits.filter hasWins
+  let zeroWinCommits := commits.filter (fun c => !hasWins c)
+  let init := activeCommits.map (fun c => (c, Ratio.one))
+  let result := Nat.fold iterations
+    (fun _ _ strengths => bradleyTerryStep activeCommits stats strengths) init
+  -- Append zero-win commits with floor strength (ranked last, tiebreak by input order)
+  result ++ zeroWinCommits.map (fun c => (c, Ratio.zero))
+
+/-- Compute ranking using Bradley-Terry model. -/
+def computeRankingBT
+    (signedCommits : List SignedCommit)
+    (contexts : List RankingCommitCtx) : List CommitId :=
+  let allCommitIds := signedCommits.map (·.id)
+  let pairs := collectAllPairwise signedCommits contexts
+  if pairs.isEmpty then allCommitIds
+  else
+    let strengths := bradleyTerry allCommitIds pairs
+    let indexed := strengths.zip (List.range strengths.length)
+    let sorted := indexed.toArray.qsort (fun ((_, s1), i1) ((_, s2), i2) =>
+      if Ratio.gt s1 s2 then true
+      else if Ratio.gt s2 s1 then false
+      else i1 < i2
+    ) |>.toList
+    sorted.map (fun ((c, _), _) => c)
+
+/-! ### Ranking Dispatch -/
+
+def computeRanking
+    (signedCommits : List SignedCommit)
+    (contexts : List RankingCommitCtx) : List CommitId :=
+  let useBT := contexts.getLast?.map (·.variant.useBradleyTerry) |>.getD false
+  if useBT then computeRankingBT signedCommits contexts
+  else computeRankingNetWins signedCommits contexts
 
 /-- Select comparison targets using global ranking (v2).
     Sorts eligible commits by their position in the ranking,
