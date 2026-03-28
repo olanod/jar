@@ -170,9 +170,6 @@ pub struct Compiler {
     oog_label: Label,
     /// Label for panic exit.
     panic_label: Label,
-    /// Label for shared page fault exit (sets PAGE_FAULT + jumps to exit).
-    #[allow(dead_code)]
-    fault_exit_label: Label,
     /// Label for OOG handler that reads PC from SCRATCH: stores PC, then falls through to oog_label.
     oog_pc_label: Label,
     /// Per-gas-block OOG stubs: (label, pvm_pc) — emitted as cold code after main body.
@@ -181,11 +178,6 @@ pub struct Compiler {
     fault_stubs: Vec<(Label, u32)>,
     /// Helper function addresses.
     helpers: HelperFns,
-    /// Jump table (borrowed, read-only during compilation).
-    #[allow(dead_code)]
-    jump_table_ptr: *const u32,
-    #[allow(dead_code)]
-    jump_table_len: usize,
     /// Bitmask reference (1 = instruction start). Stored as raw pointer for self-referential use.
     bitmask_ptr: *const u8,
     bitmask_len: usize,
@@ -228,7 +220,6 @@ impl Compiler {
         let exit_label = asm.new_label();
         let oog_label = asm.new_label();
         let panic_label = asm.new_label();
-        let fault_exit_label = asm.new_label();
         let oog_pc_label = asm.new_label();
         // Pre-create one label per PC for O(1) lookup in label_for_pc.
         // With LABEL_UNBOUND=0, bulk allocation uses zeroed pages (calloc/COW).
@@ -243,7 +234,6 @@ impl Compiler {
             exit_label,
             oog_label,
             panic_label,
-            fault_exit_label,
             oog_pc_label,
             oog_stubs: Vec::with_capacity(1024),
             fault_stubs: Vec::with_capacity(256),
@@ -251,8 +241,6 @@ impl Compiler {
             reg_defs_active: 0,
             last_add_cf: None,
             helpers,
-            jump_table_ptr: jump_table.as_ptr(),
-            jump_table_len: jump_table.len(),
             bitmask_ptr: bitmask.as_ptr(),
             bitmask_len: bitmask.len(),
             #[cfg(feature = "signals")]
