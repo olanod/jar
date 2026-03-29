@@ -19,6 +19,18 @@ mod tickets;
 use clap::Parser;
 use grey_types::config::Config;
 
+/// Log output format.
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
+enum LogFormat {
+    /// Human-readable single-line output (default).
+    #[default]
+    Plain,
+    /// Coloured multi-line output for local development.
+    Pretty,
+    /// JSON Lines — one JSON object per log line. Ideal for log aggregators.
+    Json,
+}
+
 /// Grey — JAM blockchain node
 #[derive(Parser, Debug)]
 #[command(name = "grey", about = "JAM blockchain node implementation")]
@@ -78,19 +90,69 @@ struct Cli {
     /// Enable permissive CORS on the RPC server
     #[arg(long)]
     rpc_cors: bool,
+
+    /// RPC listen address (use 0.0.0.0 to bind all interfaces)
+    #[arg(long, default_value = "127.0.0.1")]
+    rpc_host: String,
+
+    /// Log output format.
+    #[arg(long, value_enum, default_value_t = LogFormat::Plain)]
+    log_format: LogFormat,
+
+    /// Minimum log level. Supports per-module filtering using the EnvFilter syntax
+    /// (e.g. `grey_network=debug,grey_rpc=info`). Falls back to RUST_LOG env var, then
+    /// `info`.
+    #[arg(long)]
+    log_level: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let cli = Cli::parse();
+
+    // Build EnvFilter: CLI arg > RUST_LOG env var > "info"
+    let env_filter = cli
+        .log_level
+        .clone()
+        .or_else(|| std::env::var("RUST_LOG").ok())
+        .unwrap_or_else(|| "info".to_string());
+
+    // Select format layer
+    let log_format = match cli.log_format {
+        LogFormat::Json => {
+            tracing_subscriber::fmt::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from(&env_filter)
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .json()
+                .flatten_entry(true)
+                .finish()
+        }
+        LogFormat::Pretty => {
+            tracing_subscriber::fmt::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from(&env_filter)
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .pretty()
+                .flatten_entry(true)
+                .finish()
+        }
+        LogFormat::Plain => {
+            tracing_subscriber::fmt::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from(&env_filter)
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .flatten_entry(true)
+                .finish()
+        }
+    };
+
+    tracing_subscriber::registry()
+        .with(log_format)
+        .init();
 
     let config = if cli.tiny {
         Config::tiny()
