@@ -614,6 +614,12 @@ mod tests_sort {
 
     /// Run blob on both interpreter and recompiler, assert a0 and gas match.
     fn assert_interp_recomp_match(blob: &[u8], expected_a0: u64, name: &str) {
+        assert_interp_recomp_match_gas(blob, expected_a0, 100_000, name);
+    }
+
+    /// Run blob on both interpreter and recompiler, assert a0 and gas match.
+    /// `min_gas` sets the minimum expected gas consumption.
+    fn assert_interp_recomp_match_gas(blob: &[u8], expected_a0: u64, min_gas: u64, name: &str) {
         let gas = 100_000_000_000u64;
 
         // Run interpreter
@@ -647,8 +653,8 @@ mod tests_sort {
         assert_eq!(interp_a0, expected_a0, "{name}: interpreter a0 mismatch");
         assert_eq!(recomp_a0, expected_a0, "{name}: recompiler a0 mismatch");
         assert!(
-            interp_gas > 1_000,
-            "{name}: should use >1K gas, got {interp_gas}"
+            interp_gas > min_gas,
+            "{name}: should use >{min_gas} gas, got {interp_gas}"
         );
         assert_eq!(
             interp_gas, recomp_gas,
