@@ -1,6 +1,6 @@
 fn main() {
     // Don't recurse: build-crate sets JAVM_GUEST_BUILD when spawning guest builds.
-    if std::env::var("JAVM_GUEST_BUILD").is_ok() {
+    if std::env::var("BUILD_CRATE_GUEST_BUILD").is_ok() {
         return;
     }
 
