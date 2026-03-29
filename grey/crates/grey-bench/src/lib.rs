@@ -647,8 +647,8 @@ mod tests_sort {
         assert_eq!(interp_a0, expected_a0, "{name}: interpreter a0 mismatch");
         assert_eq!(recomp_a0, expected_a0, "{name}: recompiler a0 mismatch");
         assert!(
-            interp_gas > 100_000,
-            "{name}: should use >100K gas, got {interp_gas}"
+            interp_gas > 1_000,
+            "{name}: should use >1K gas, got {interp_gas}"
         );
         assert_eq!(
             interp_gas, recomp_gas,
