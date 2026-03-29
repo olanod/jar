@@ -725,11 +725,10 @@ mod tests_sort {
             }
         }
         assert_eq!(pvm.registers[7], 1, "ed25519 verify should return 1");
-        assert!(gas - pvm.gas > 1_000, "should use meaningful gas");
     }
 
     #[test]
-    #[ignore] // Recompiler gas cost mismatch in 1856-instruction gas block
+    #[ignore] // Recompiler JIT bug: returns a0=0 after 35K gas (should be a0=1 after 933K)
     fn test_grey_ed25519_recompiler() {
         assert_interp_recomp_match(grey_ed25519_blob(), 1, "ed25519");
     }

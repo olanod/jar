@@ -598,6 +598,7 @@ impl Compiler {
             self.asm.patch_i32(patch_offset, cost as i32);
             self.oog_stubs.push((stub_label, block_pc, cost));
         }
+
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
 
