@@ -713,7 +713,7 @@ mod tests_sort {
     // permutation itself is correct (verified manually). See bench-crypto branch.
 
     #[test]
-    #[ignore] // PageFault — separate transpiler bug (batched AUIPC or field element address)
+    #[ignore] // PageFault — transpiler bug, callee receives field element instead of pointer in φ[9]
     fn test_grey_ed25519_recompiler() {
         assert_interp_recomp_consistent(grey_ed25519_blob(), 1_000, "ed25519");
     }
