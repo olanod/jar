@@ -117,42 +117,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .or_else(|| std::env::var("RUST_LOG").ok())
         .unwrap_or_else(|| "info".to_string());
 
-    // Select format layer
-    let log_format = match cli.log_format {
+    // Select format layer and initialise tracing
+    match cli.log_format {
         LogFormat::Json => {
-            tracing_subscriber::fmt::fmt()
+            tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from(&env_filter)
                         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
                 )
                 .json()
-                .flatten_entry(true)
-                .finish()
+                .flatten_event(true)
+                .init();
         }
         LogFormat::Pretty => {
-            tracing_subscriber::fmt::fmt()
+            tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from(&env_filter)
                         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
                 )
                 .pretty()
-                .flatten_entry(true)
-                .finish()
+                .init();
         }
         LogFormat::Plain => {
-            tracing_subscriber::fmt::fmt()
+            tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from(&env_filter)
                         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
                 )
-                .flatten_entry(true)
-                .finish()
+                .init();
         }
     };
-
-    tracing_subscriber::registry()
-        .with(log_format)
-        .init();
 
     let config = if cli.tiny {
         Config::tiny()
