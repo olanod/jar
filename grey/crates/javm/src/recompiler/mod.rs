@@ -176,9 +176,8 @@ impl FlatMemory {
         let buf = unsafe { region.add(HEADER_SIZE) };
 
         // Set all pages in [0, mem_size) as read-write in the permission table.
-        // With signals feature, bounds checking uses guard pages instead of the
-        // permission table, so we skip the 1MB write.
-        #[cfg(not(feature = "signals"))]
+        // This is needed for software bounds checking (without signals feature)
+        // AND for write_bytes/read_bytes which always check the permission table.
         {
             let num_pages = (layout.mem_size as usize + 4095) / 4096;
             unsafe {
