@@ -179,7 +179,7 @@ impl FlatMemory {
         // This is needed for software bounds checking (without signals feature)
         // AND for write_bytes/read_bytes which always check the permission table.
         {
-            let num_pages = (layout.mem_size as usize + 4095) / 4096;
+            let num_pages = layout.mem_size.div_ceil(4096) as usize;
             unsafe {
                 std::ptr::write_bytes(perms, 2u8, num_pages.min(NUM_PAGES));
             }
