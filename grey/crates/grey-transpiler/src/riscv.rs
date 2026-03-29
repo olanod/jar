@@ -1700,19 +1700,6 @@ impl TranslationContext {
         self.jump_table.push(0); // placeholder
         self.return_fixups.push((jt_idx, rv_ret_addr));
         let jt_addr = ((jt_idx + 1) * 2) as i64;
-        // Debug: write all call sites to a temp file
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/transpiler_calls.log")
-        {
-            use std::io::Write;
-            let _ = writeln!(
-                f,
-                "jt_idx={jt_idx} rv_ret=0x{rv_ret_addr:X} target=0x{target:X} pvm_pc={}",
-                self.code.len()
-            );
-        }
         self.emit_load_imm_jump(rd, jt_addr, target)
     }
 
