@@ -728,7 +728,6 @@ mod tests_sort {
     }
 
     #[test]
-    #[ignore] // Recompiler JIT bug: returns a0=0 after 35K gas (should be a0=1 after 933K)
     fn test_grey_ed25519_recompiler() {
         assert_interp_recomp_match(grey_ed25519_blob(), 1, "ed25519");
     }

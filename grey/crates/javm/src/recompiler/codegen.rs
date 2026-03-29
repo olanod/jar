@@ -517,13 +517,17 @@ impl Compiler {
                 Opcode::Add64 => {
                     self.try_fuse_scaled_index_raw(code, bitmask, pc, &decoded_args, &mut gas_sim)
                 }
-                Opcode::Mul64 => {
-                    self.try_fuse_mul_pair_raw(code, bitmask, pc, &decoded_args, &mut gas_sim)
-                }
+                // Mul64+MulUpper fusion disabled: corrupts results when φ[11] (RAX)
+                // is involved as both source and destination. The push/restore sequence
+                // conflicts with rd_hi/rd_lo assignments when they alias RAX.
+                // Opcode::Mul64 => {
+                //     self.try_fuse_mul_pair_raw(code, bitmask, pc, &decoded_args, &mut gas_sim)
+                // }
                 _ => None,
             };
 
             if let Some(advance) = fused {
+                self.last_add_cf = None; // fused instruction clobbers flags
                 pc += advance;
                 continue;
             }

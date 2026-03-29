@@ -258,9 +258,7 @@ fn bench_keccak(c: &mut Criterion) {
 }
 
 fn bench_ed25519(c: &mut Criterion) {
-    // NOTE: grey recompiler has gas cost mismatch for ed25519 (returns wrong result).
-    // Use no_validate to skip cross-VM check (recompiler timing is unreliable).
-    bench_standard_no_validate(c, "ed25519", grey_ed25519_blob(), polkavm_ed25519_blob());
+    bench_standard(c, "ed25519", grey_ed25519_blob(), polkavm_ed25519_blob());
 }
 
 fn bench_ecrecover(c: &mut Criterion) {
