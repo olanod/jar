@@ -383,7 +383,13 @@ pub async fn start_rpc_server(
     let middleware = tower::ServiceBuilder::new()
         .layer(cors_layer)
         .layer(health_layer);
+    // Work packages can be up to ~14MB (MAX_WORK_PACKAGE_BLOB_SIZE), and hex
+    // encoding doubles the size. Allow 30MB to accommodate the largest valid
+    // request with JSON-RPC overhead.
     let server = Server::builder()
+        .max_request_body_size(30 * 1024 * 1024)
+        .max_response_body_size(30 * 1024 * 1024)
+        .max_connections(100)
         .set_http_middleware(middleware)
         .build(&addr)
         .await?;
