@@ -132,7 +132,7 @@ pub struct AccumulateOutput {
     /// Per-service gas usage from accumulation — needed for π_S statistics.
     pub gas_usage: Vec<(ServiceId, Gas)>,
     /// Accumulation statistics S (GP eq at line 1892):
-    /// S[s] = (G(s), N(s)) where G = total gas, N = work item count.
+    /// `S[s]` = (G(s), N(s)) where G = total gas, N = work item count.
     /// Only includes services where G(s) + N(s) ≠ 0.
     pub accumulation_stats: BTreeMap<ServiceId, (Gas, u32)>,
 }

@@ -197,7 +197,7 @@ pub fn process_work_package(
 }
 
 /// Encode a guarantee for network transmission.
-/// Format: [report_hash (32)][timeslot (4)][credential_count (2)][credentials...]
+/// Format: `[report_hash (32)][timeslot (4)][credential_count (2)][credentials...]`
 pub fn encode_guarantee(guarantee: &Guarantee) -> Vec<u8> {
     let encoded_report = guarantee.report.encode();
     let report_hash = grey_crypto::blake2b_256(&encoded_report);

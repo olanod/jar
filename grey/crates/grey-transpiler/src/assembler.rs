@@ -370,11 +370,11 @@ impl Assembler {
 ///
 /// The service has two entry points:
 /// - Entry 0 (PC=0): is_authorized / refine — reads arguments, returns result
-/// - Entry 5 (PC=jump_table[2]): accumulate — reads work items, writes state
+/// - Entry 5 (PC=`jump_table[2]`): accumulate — reads work items, writes state
 ///
 /// This builds a simple "echo" service that:
 /// - Refine: returns the input payload as-is (output = input)
-/// - Accumulate: writes the first work item's result to storage key [0]
+/// - Accumulate: writes the first work item's result to storage key `[0]`
 pub fn build_sample_service() -> Vec<u8> {
     let mut asm = Assembler::new();
     asm.set_stack_size(4096);

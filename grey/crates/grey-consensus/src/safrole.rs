@@ -62,7 +62,7 @@ pub fn outside_in_sequence<T: Clone>(items: &[T]) -> Vec<T> {
 ///
 /// For each slot i in 0..E:
 ///   idx = LE32(H(r ++ LE32(i))[0..4]) mod |k|
-///   result[i] = k[idx].bandersnatch
+///   `result[i]` = `k[idx]`.bandersnatch
 pub fn fallback_key_sequence(
     entropy: &Hash,
     validators: &[ValidatorKey],

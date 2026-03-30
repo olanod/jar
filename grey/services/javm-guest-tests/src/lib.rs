@@ -9,7 +9,7 @@
 //!
 //! Input: `[test_id: u32 LE] [test_args: ...]`
 //! Output: written to `OUTPUT` buffer; `dispatch()` returns bytes written.
-//! After PVM halt: φ[7] = output_ptr, φ[8] = output_len.
+//! After PVM halt: `φ[7]` = output_ptr, `φ[8]` = output_len.
 
 #![cfg_attr(target_os = "none", no_std)]
 

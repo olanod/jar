@@ -844,7 +844,7 @@ impl Assembler {
         self.flush_instbuf(ib);
     }
 
-    /// movzx r64, byte [rax] (simple deref, no SIB needed) — for perm table lookup
+    /// movzx r64, byte `[rax]` (simple deref, no SIB needed) — for perm table lookup
     pub fn movzx_load8_deref(&mut self, dst: Reg, base: Reg) {
         let mut ib = InstBuf::new();
         ib.push(0x48 | (dst.hi() << 2) | base.hi());
@@ -877,7 +877,7 @@ impl Assembler {
         self.flush_instbuf(ib);
     }
 
-    /// cmp byte [reg], imm8 — compare memory byte with immediate
+    /// cmp byte `[reg]`, imm8 — compare memory byte with immediate
     pub fn cmp_byte_deref_imm(&mut self, base: Reg, imm: u8) {
         let mut ib = InstBuf::new();
         if base.needs_rex() {
@@ -1656,7 +1656,7 @@ impl Assembler {
         }
     }
 
-    /// Resolve fixups and return the code as a Vec<u8> (for Vec-backed buffers).
+    /// Resolve fixups and return the code as a `Vec<u8>` (for Vec-backed buffers).
     pub fn finalize(&mut self) -> Vec<u8> {
         self.resolve_fixups();
         match &mut self.code_buf {

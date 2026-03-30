@@ -94,8 +94,8 @@ fn mmr_append(peaks: &mut Vec<Option<Hash>>, leaf: Hash) {
 ///
 /// Filters out None entries from the peaks, then recursively combines:
 /// - MR([]) = H_0 (zero hash)
-/// - MR([h]) = h
-/// - MR(h) = H_K("peak" || MR(h[..n-1]) || h[n-1])
+/// - MR(`[h]`) = h
+/// - MR(h) = H_K("peak" || MR(`h[..n-1]`) || `h[n-1]`)
 pub fn mmr_super_peak(peaks: &[Option<Hash>]) -> Hash {
     // Collect non-None peaks
     let non_none: Vec<Hash> = peaks.iter().filter_map(|p| *p).collect();

@@ -353,7 +353,7 @@ pub fn verify_vote(vote: &Vote, vote_type: VoteType, state: &grey_types::state::
 }
 
 /// Encode a vote message for network transmission.
-/// Format: [type(1)][block_hash(32)][block_slot(4)][round(8)][validator_index(2)][signature(64)]
+/// Format: `[type(1)][block_hash(32)][block_slot(4)][round(8)][validator_index(2)][signature(64)]`
 pub fn encode_vote_message(msg: &VoteMessage) -> Vec<u8> {
     let mut buf = Vec::with_capacity(1 + 32 + 4 + 8 + 2 + 64);
     buf.push(match msg.vote_type {

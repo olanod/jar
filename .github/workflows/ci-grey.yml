@@ -52,6 +52,11 @@ jobs:
         env:
           SKIP_GUEST_BUILD: 1
 
+      - name: cargo doc
+        run: cargo doc --workspace --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
   test:
     name: Tests
     runs-on: ubuntu-latest

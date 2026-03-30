@@ -1008,7 +1008,7 @@ fn instruction_cost_fast(
 
 /// Compute block gas costs for all gas block starts in the program.
 /// Gas block starts are {PC=0} ∪ {post-terminator PCs} (branch targets excluded).
-/// Returns a Vec indexed by PC: block_gas_costs[pc] = cost if pc is a gas block start, 0 otherwise.
+/// Returns a Vec indexed by PC: `block_gas_costs[pc]` = cost if pc is a gas block start, 0 otherwise.
 pub fn compute_block_gas_costs(code: &[u8], bitmask: &[u8]) -> Vec<u64> {
     let mut costs = vec![0u64; code.len()];
     let bb_starts = crate::vm::compute_gas_block_starts(code, bitmask);

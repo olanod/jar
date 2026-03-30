@@ -4,20 +4,20 @@
 //! becomes a native basic block with gas metering at entry. PVM registers are
 //! mapped to x86-64 registers for the duration of execution.
 //!
-//! Register mapping (PVM φ[i] → x86-64):
-//!   φ[0]  → RBP   (callee-saved) — RA, rarely used as memory base
-//!   φ[1]  → RBX   (callee-saved) — SP, avoids RBP encoding penalty
-//!   φ[2]  → R12   (callee-saved)
-//!   φ[3]  → R13   (callee-saved)
-//!   φ[4]  → R14   (callee-saved)
-//!   φ[5]  → RSI   (caller-saved)
-//!   φ[6]  → RDI   (caller-saved)
-//!   φ[7]  → R8    (caller-saved)
-//!   φ[8]  → R9    (caller-saved)
-//!   φ[9]  → R10   (caller-saved)
-//!   φ[10] → R11   (caller-saved)
-//!   φ[11] → RAX   (caller-saved)
-//!   φ[12] → RCX   (caller-saved)
+//! Register mapping (PVM `φ[i]` → x86-64):
+//!   `φ[0]`  → RBP   (callee-saved) — RA, rarely used as memory base
+//!   `φ[1]`  → RBX   (callee-saved) — SP, avoids RBP encoding penalty
+//!   `φ[2]`  → R12   (callee-saved)
+//!   `φ[3]`  → R13   (callee-saved)
+//!   `φ[4]`  → R14   (callee-saved)
+//!   `φ[5]`  → RSI   (caller-saved)
+//!   `φ[6]`  → RDI   (caller-saved)
+//!   `φ[7]`  → R8    (caller-saved)
+//!   `φ[8]`  → R9    (caller-saved)
+//!   `φ[9]`  → R10   (caller-saved)
+//!   `φ[10]` → R11   (caller-saved)
+//!   `φ[11]` → RAX   (caller-saved)
+//!   `φ[12]` → RCX   (caller-saved)
 //!
 //! Reserved: R15 = JitContext pointer, RDX = scratch, RSP = native stack.
 

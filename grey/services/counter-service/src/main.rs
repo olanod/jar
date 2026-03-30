@@ -1,8 +1,8 @@
 //! Counter JAM service compiled to RISC-V for transpilation to PVM.
 //!
 //! - **Refine**: echoes input payload as output (identity function)
-//! - **Accumulate**: increments a counter at storage key [0x01] and
-//!   stores the latest payload hash at key [0x02]
+//! - **Accumulate**: increments a counter at storage key `[0x01]` and
+//!   stores the latest payload hash at key `[0x02]`
 
 #![cfg_attr(target_env = "javm", no_std)]
 #![cfg_attr(target_env = "javm", no_main)]

@@ -4,7 +4,7 @@ use grey_types::Hash;
 
 /// Fisher-Yates shuffle of a sequence using a sequence of random naturals (eq F.1).
 ///
-/// F(s, r): selects s[r[0] % |s|] as the first output element, replaces it
+/// F(s, r): selects `s[r[0] % |s|]` as the first output element, replaces it
 /// with the last element, then recurses on the shortened sequence (Gray Paper eq 329).
 pub fn fisher_yates_shuffle<T: Clone>(sequence: &mut [T], entropy: &[u32]) {
     let n = sequence.len();

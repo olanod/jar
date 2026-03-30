@@ -144,7 +144,7 @@ pub fn predecode(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<PreDeco
 }
 
 /// Compute gas block start bitmap from raw code+bitmask (no full Args decoding).
-/// Returns Vec<bool> indexed by PVM byte offset. True = this PC starts a gas block.
+/// Returns `Vec<bool>` indexed by PVM byte offset. True = this PC starts a gas block.
 pub fn compute_gas_blocks(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<bool> {
     let mut gas_starts = vec![false; code.len()];
 

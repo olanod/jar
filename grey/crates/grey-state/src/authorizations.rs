@@ -19,8 +19,8 @@ pub struct AuthorizationInput {
 /// Apply the authorization pool rotation.
 ///
 /// For each core c (eq 8.2-8.3):
-///   F(c) = α[c] \ {auth_hash} if auth was used for core c, else α[c]
-///   α'[c] = ←O (F(c) ⌢ ϕ[c][slot mod Q])
+///   F(c) = `α[c]` \ {auth_hash} if auth was used for core c, else `α[c]`
+///   `α'[c]` = ←O (F(c) ⌢ `ϕ[c][slot mod Q]`)
 pub fn update_authorizations(
     config: &Config,
     auth_pools: &mut [Vec<Hash>],

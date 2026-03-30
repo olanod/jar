@@ -2617,8 +2617,8 @@ fn smod_i64(a: i64, b: i64) -> i64 {
 }
 
 /// Compute the set of basic block start indices (ϖ, eq A.5).
-/// Compact bitset: 1 bit per code byte, stored as Vec<u64>.
-/// 64x more cache-friendly than Vec<bool> for the compilation hot loop.
+/// Compact bitset: 1 bit per code byte, stored as `Vec<u64>`.
+/// 64x more cache-friendly than `Vec<bool>` for the compilation hot loop.
 pub struct BitSet {
     pub words: Vec<u64>,
 }
@@ -2644,7 +2644,7 @@ impl BitSet {
     }
 
     /// Build a rank index for O(1) rank queries.
-    /// rank_index[i] = number of set bits in words[0..i] (prefix popcount sum).
+    /// `rank_index[i]` = number of set bits in `words[0..i]` (prefix popcount sum).
     pub fn build_rank_index(&self) -> Vec<u32> {
         let mut idx = Vec::with_capacity(self.words.len());
         let mut sum = 0u32;
@@ -2686,7 +2686,7 @@ impl BitSet {
 }
 
 /// Compute basic block starts as a compact bitset + precomputed skip table.
-/// The bitset is 64x smaller than Vec<bool>, improving L1 cache utilization
+/// The bitset is 64x smaller than `Vec<bool>`, improving L1 cache utilization
 /// during the hot compilation loop (~1.75KB vs ~112KB for ecrecover).
 /// Compute the skip (number of argument bytes) for instruction at `pc` by
 /// scanning the bitmask for the next instruction start.
@@ -2736,8 +2736,8 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
 }
 
 /// Compute basic block starts AND a precomputed skip table in a single pass.
-/// skip_table[pc] = number of bytes to skip after the opcode byte (instruction size - 1).
-/// Only valid at instruction-start PCs (where bitmask[pc] == 1).
+/// `skip_table[pc]` = number of bytes to skip after the opcode byte (instruction size - 1).
+/// Only valid at instruction-start PCs (where `bitmask[pc]` == 1).
 pub fn compute_basic_block_starts_with_skips(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) {
     let (starts, skip_table) = compute_bb_starts_inner(code, bitmask);
     (starts, skip_table)

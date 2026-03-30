@@ -98,9 +98,9 @@ pub fn grey_hostcall_blob(n: u64) -> Vec<u8> {
 ///
 /// Sorts an array of `n` u32 elements on the stack using insertion sort.
 /// The array is initialized with a descending sequence (worst case):
-///   arr[i] = n - i  →  [n, n-1, n-2, ..., 2, 1]
+///   `arr[i]` = n - i  →  `[n, n-1, n-2, ..., 2, 1]`
 ///
-/// After sorting, result = arr[0] (should be 1).
+/// After sorting, result = `arr[0]` (should be 1).
 ///
 /// This exercises realistic compute+memory interleaving:
 ///   - Inner loop: load, compare, store (memory) + index arithmetic (ALU)

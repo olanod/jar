@@ -293,7 +293,7 @@ fn filter_offenders(keys: &[ValidatorKey], offenders: &[Ed25519PublicKey]) -> Ve
 ///
 /// For each slot i in 0..E:
 ///   idx = LE32(H(r ++ LE32(i))[0..4]) mod |k|
-///   result[i] = k[idx].bandersnatch
+///   `result[i]` = `k[idx]`.bandersnatch
 pub fn fallback_key_sequence(
     config: &Config,
     entropy: &Hash,

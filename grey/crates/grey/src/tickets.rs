@@ -165,7 +165,7 @@ fn derive_ticket_id(proof: &TicketProof, _state: &State) -> Hash {
 }
 
 /// Encode a ticket proof for gossipsub transmission.
-/// Format: [attempt(1)][proof_len(2)][proof(N)]
+/// Format: `[attempt(1)][proof_len(2)][proof(N)]`
 pub fn encode_ticket_proof(proof: &TicketProof) -> Vec<u8> {
     let mut buf = Vec::with_capacity(1 + 2 + proof.proof.len());
     buf.push(proof.attempt);

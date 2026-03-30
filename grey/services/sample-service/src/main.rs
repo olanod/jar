@@ -1,7 +1,7 @@
 //! Sample JAM service compiled to RISC-V for transpilation to PVM.
 //!
 //! - **Refine**: echoes input payload as output (identity)
-//! - **Accumulate**: writes [0x42] to storage key [0x01] via host_write
+//! - **Accumulate**: writes `[0x42]` to storage key `[0x01]` via host_write
 
 #![cfg_attr(target_env = "javm", no_std)]
 #![cfg_attr(target_env = "javm", no_main)]
