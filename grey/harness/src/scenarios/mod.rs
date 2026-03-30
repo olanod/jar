@@ -1,5 +1,6 @@
 //! Integration test scenarios.
 
+pub mod invalid_wp;
 pub mod liveness;
 pub mod repeat;
 pub mod serial;
