@@ -115,7 +115,7 @@ Remember the comment URL/ID so you can edit it later if needed.
 
 5. **Interactive mode:** If the implementation is complex or ambiguous, pause and explain the approach to the user. Ask for confirmation before proceeding.
 
-   **Auto mode:** Proceed with the most conservative correct approach. If the task touches security-critical code, stop and comment on the issue explaining why.
+   **Auto mode:** Don't "work around" an issue or create patchwork fixes. If the correct solution requires refactoring, do the refactoring. Independently assess whether the approach needs human guidance (e.g., touches security-critical code, requires a design decision between multiple valid approaches, or has significant blast radius). If so, do NOT fall back to a less elegant patch — instead, stop and comment on the issue explaining the situation and the approach you'd recommend, then wait for guidance.
 
 ### 4. Submit results
 
