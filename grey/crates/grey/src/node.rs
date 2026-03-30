@@ -213,7 +213,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                 my_assurance.bitfield.iter().map(|b| b.count_ones()).sum::<u32>()
                             );
                             let assurance_data = guarantor::encode_assurance(&my_assurance);
-                            let _ = net_commands.send(NetworkCommand::BroadcastAssurance {
+                            let _ = net_commands.try_send(NetworkCommand::BroadcastAssurance {
                                 data: assurance_data,
                             });
                             collected_assurances.push(my_assurance);
@@ -241,7 +241,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         );
                         for ticket in &new_tickets {
                             let ticket_data = tickets::encode_ticket_proof(ticket);
-                            let _ = net_commands.send(NetworkCommand::BroadcastTicket {
+                            let _ = net_commands.try_send(NetworkCommand::BroadcastTicket {
                                 data: ticket_data,
                             });
                         }
@@ -304,7 +304,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                     // Broadcast only the new guarantee to peers
                                     if let Some(g) = guarantor_state.pending_guarantees.last() {
                                         let g_data = guarantor::encode_guarantee(g);
-                                        let _ = net_commands.send(NetworkCommand::BroadcastGuarantee {
+                                        let _ = net_commands.try_send(NetworkCommand::BroadcastGuarantee {
                                             data: g_data,
                                         });
                                     }
@@ -545,7 +545,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
 
                                 // Broadcast block
                                 let block_data = encode_block_message(&block, &header_hash);
-                                let _ = net_commands.send(NetworkCommand::BroadcastBlock {
+                                let _ = net_commands.try_send(NetworkCommand::BroadcastBlock {
                                     data: block_data,
                                 });
 
@@ -558,7 +558,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                     my_secrets,
                                 ) {
                                     let vote_data = finality::encode_vote_message(&prevote_msg);
-                                    let _ = net_commands.send(NetworkCommand::BroadcastFinalityVote {
+                                    let _ = net_commands.try_send(NetworkCommand::BroadcastFinalityVote {
                                         data: vote_data,
                                     });
                                 }
@@ -569,7 +569,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                     my_secrets,
                                 ) {
                                     let vote_data = finality::encode_vote_message(&precommit_msg);
-                                    let _ = net_commands.send(NetworkCommand::BroadcastFinalityVote {
+                                    let _ = net_commands.try_send(NetworkCommand::BroadcastFinalityVote {
                                         data: vote_data,
                                     });
                                 }
@@ -629,7 +629,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                     if is_valid { "VALID" } else { "INVALID" }
                                 );
                                 let ann_data = audit::encode_announcement(&ann);
-                                let _ = net_commands.send(NetworkCommand::BroadcastAnnouncement {
+                                let _ = net_commands.try_send(NetworkCommand::BroadcastAnnouncement {
                                     data: ann_data,
                                 });
                                 audit_state.add_announcement(ann);
@@ -766,7 +766,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                         my_secrets,
                                     ) {
                                         let vote_data = finality::encode_vote_message(&prevote_msg);
-                                        let _ = net_commands.send(NetworkCommand::BroadcastFinalityVote {
+                                        let _ = net_commands.try_send(NetworkCommand::BroadcastFinalityVote {
                                             data: vote_data,
                                         });
                                     }
@@ -775,7 +775,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                         my_secrets,
                                     ) {
                                         let vote_data = finality::encode_vote_message(&precommit_msg);
-                                        let _ = net_commands.send(NetworkCommand::BroadcastFinalityVote {
+                                        let _ = net_commands.try_send(NetworkCommand::BroadcastFinalityVote {
                                             data: vote_data,
                                         });
                                     }
@@ -820,7 +820,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                                 my_secrets,
                                             ) {
                                                 let vote_data = finality::encode_vote_message(&precommit_msg);
-                                                let _ = net_commands.send(NetworkCommand::BroadcastFinalityVote {
+                                                let _ = net_commands.try_send(NetworkCommand::BroadcastFinalityVote {
                                                     data: vote_data,
                                                 });
                                             }
@@ -994,7 +994,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                             // Broadcast only the new guarantee to peers
                                             if let Some(g) = guarantor_state.pending_guarantees.last() {
                                                 let g_data = guarantor::encode_guarantee(g);
-                                                let _ = net_commands.send(NetworkCommand::BroadcastGuarantee {
+                                                let _ = net_commands.try_send(NetworkCommand::BroadcastGuarantee {
                                                     data: g_data,
                                                 });
                                             }

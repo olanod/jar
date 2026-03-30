@@ -239,17 +239,26 @@ impl request_response::Codec for JamProtocol {
 /// Create and run the network service.
 ///
 /// Returns channels for communication with the network service.
+/// Channel capacity for network events (network → node).
+/// Sized for bursts: a full validator set can each send a block + vote + assurance
+/// in a single slot. 1024 provides headroom without unbounded growth.
+const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Channel capacity for network commands (node → network).
+/// Node sends at a controlled rate (one broadcast per event processed).
+const COMMAND_CHANNEL_CAPACITY: usize = 256;
+
+/// Create and run the network service.
+///
+/// Returns channels for communication with the network service.
 pub async fn start_network(
     config: NetworkConfig,
 ) -> Result<
-    (
-        mpsc::UnboundedReceiver<NetworkEvent>,
-        mpsc::UnboundedSender<NetworkCommand>,
-    ),
+    (mpsc::Receiver<NetworkEvent>, mpsc::Sender<NetworkCommand>),
     Box<dyn std::error::Error + Send + Sync>,
 > {
-    let (event_tx, event_rx) = mpsc::unbounded_channel();
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel(EVENT_CHANNEL_CAPACITY);
+    let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
 
     // Build the swarm
     let mut swarm = build_swarm()?;
@@ -412,12 +421,25 @@ fn build_swarm() -> Result<Swarm<JamBehaviour>, Box<dyn std::error::Error + Send
 
 async fn run_network_loop(
     mut swarm: Swarm<JamBehaviour>,
-    event_tx: mpsc::UnboundedSender<NetworkEvent>,
-    mut cmd_rx: mpsc::UnboundedReceiver<NetworkCommand>,
+    event_tx: mpsc::Sender<NetworkEvent>,
+    mut cmd_rx: mpsc::Receiver<NetworkCommand>,
     topics: TopicSet,
     validator_index: u16,
 ) {
     let mut peers = PeerTracker::new();
+
+    // Helper: try_send an event, warn and drop on full (never block the network loop).
+    macro_rules! send_event {
+        ($event:expr) => {
+            if let Err(mpsc::error::TrySendError::Full(_)) = event_tx.try_send($event) {
+                tracing::warn!(
+                    "Validator {} network event channel full, dropping message",
+                    validator_index,
+                );
+            }
+        };
+    }
+
     // Track pending request-response callbacks
     let mut pending_chunk_requests: HashMap<
         request_response::OutboundRequestId,
@@ -436,32 +458,32 @@ async fn run_network_loop(
                     )) => {
                         let topic = message.topic.as_str();
                         if topic == BLOCKS_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::BlockReceived {
+                            send_event!(NetworkEvent::BlockReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
                         } else if topic == FINALITY_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::FinalityVote {
+                            send_event!(NetworkEvent::FinalityVote {
                                 data: message.data,
                                 source: propagation_source,
                             });
                         } else if topic == GUARANTEES_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::GuaranteeReceived {
+                            send_event!(NetworkEvent::GuaranteeReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
                         } else if topic == ASSURANCES_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::AssuranceReceived {
+                            send_event!(NetworkEvent::AssuranceReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
                         } else if topic == ANNOUNCEMENTS_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::AnnouncementReceived {
+                            send_event!(NetworkEvent::AnnouncementReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
                         } else if topic == TICKETS_TOPIC {
-                            let _ = event_tx.send(NetworkEvent::TicketReceived {
+                            send_event!(NetworkEvent::TicketReceived {
                                 data: message.data,
                                 source: propagation_source,
                             });
@@ -483,7 +505,7 @@ async fn run_network_loop(
                                             let chunk_index = u16::from_le_bytes([request[33], request[34]]);
 
                                             let (tx, rx) = oneshot::channel();
-                                            let _ = event_tx.send(NetworkEvent::ChunkRequest {
+                                            send_event!(NetworkEvent::ChunkRequest {
                                                 report_hash,
                                                 chunk_index,
                                                 response_tx: tx,
@@ -497,7 +519,7 @@ async fn run_network_loop(
                                             block_hash.copy_from_slice(&request[1..33]);
 
                                             let (tx, rx) = oneshot::channel();
-                                            let _ = event_tx.send(NetworkEvent::BlockRequest {
+                                            send_event!(NetworkEvent::BlockRequest {
                                                 block_hash,
                                                 response_tx: tx,
                                             });
@@ -546,7 +568,7 @@ async fn run_network_loop(
                         if let Some(idx) = vi {
                             peers.set_validator(peer_id, idx);
                         }
-                        let _ = event_tx.send(NetworkEvent::PeerIdentified {
+                        send_event!(NetworkEvent::PeerIdentified {
                             peer_id,
                             validator_index: vi,
                         });
