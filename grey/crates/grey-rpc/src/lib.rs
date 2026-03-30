@@ -599,6 +599,7 @@ where
                 drop(status);
 
                 let stored_blocks = state.store.block_count().unwrap_or(0);
+                let stored_states = state.store.state_count().unwrap_or(0);
 
                 let body = format!(
                     "# HELP grey_block_height Current head slot.\n\
@@ -616,6 +617,9 @@ where
                      # HELP grey_stored_blocks Number of blocks in the database.\n\
                      # TYPE grey_stored_blocks gauge\n\
                      grey_stored_blocks {stored_blocks}\n\
+                     # HELP grey_stored_states Number of state entries in the database.\n\
+                     # TYPE grey_stored_states gauge\n\
+                     grey_stored_states {stored_states}\n\
                      # HELP grey_validator_index Validator index of this node.\n\
                      # TYPE grey_validator_index gauge\n\
                      grey_validator_index {validator_index}\n"
@@ -1298,6 +1302,7 @@ mod tests {
         assert!(body.contains("grey_blocks_produced_total 10"));
         assert!(body.contains("grey_blocks_imported_total 40"));
         assert!(body.contains("grey_stored_blocks 1"));
+        assert!(body.contains("grey_stored_states 0"));
         assert!(body.contains("# TYPE grey_block_height gauge"));
         assert!(body.contains("# TYPE grey_blocks_produced_total counter"));
     }

@@ -215,6 +215,13 @@ impl Store {
         Ok(table.len()?)
     }
 
+    /// Count the number of stored state entries.
+    pub fn state_count(&self) -> Result<u64, StoreError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(STATE)?;
+        Ok(table.len()?)
+    }
+
     // ── State ───────────────────────────────────────────────────────────
 
     /// Store chain state for a given block hash.
