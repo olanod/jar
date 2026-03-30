@@ -1198,4 +1198,41 @@ mod tests {
             .await;
         assert!(err.is_err(), "non-existent slot should return error");
     }
+
+    #[tokio::test]
+    async fn test_concurrent_requests() {
+        let (url, state, _rx, _store, _dir) = setup().await;
+        {
+            let mut status = state.status.write().await;
+            status.head_slot = 42;
+            status.head_hash = "abc".into();
+        }
+
+        // Fire 100 concurrent get_status requests
+        let mut handles = Vec::new();
+        for _ in 0..100 {
+            let url = url.clone();
+            handles.push(tokio::spawn(async move {
+                let client = HttpClientBuilder::default().build(&url).unwrap();
+                client
+                    .request::<serde_json::Value, _>("jam_getStatus", rpc_params![])
+                    .await
+            }));
+        }
+
+        let mut successes = 0u32;
+        let mut failures = 0u32;
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(val) => {
+                    assert_eq!(val["head_slot"], 42);
+                    successes += 1;
+                }
+                Err(_) => failures += 1,
+            }
+        }
+
+        assert_eq!(successes, 100, "all 100 concurrent requests should succeed");
+        assert_eq!(failures, 0);
+    }
 }
