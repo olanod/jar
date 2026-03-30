@@ -18,3 +18,8 @@ tracing = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 hex = { workspace = true }
+
+[dev-dependencies]
+jsonrpsee = { version = "0.24", features = ["client"] }
+tempfile = "3"
+grey-consensus = { workspace = true }

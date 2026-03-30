@@ -303,6 +303,13 @@ pub async fn start_rpc_server(
     Ok((bound_addr, join))
 }
 
+/// Start the RPC server on an ephemeral port (port 0). Useful for testing.
+pub async fn start_rpc_server_ephemeral(
+    state: Arc<RpcState>,
+) -> Result<(SocketAddr, tokio::task::JoinHandle<()>), Box<dyn std::error::Error + Send + Sync>> {
+    start_rpc_server(0, state, false).await
+}
+
 /// Create RPC state and command channel.
 pub fn create_rpc_channel(
     store: Arc<Store>,
@@ -327,4 +334,219 @@ pub fn create_rpc_channel(
     });
 
     (state, rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grey_types::BandersnatchSignature;
+    use grey_types::header::{Block, Extrinsic, Header};
+    use jsonrpsee::core::client::ClientT;
+    use jsonrpsee::http_client::HttpClientBuilder;
+    use jsonrpsee::rpc_params;
+
+    /// Create a temp store, RPC state, and start an ephemeral server.
+    /// Returns (client_url, rpc_state, command_rx, store, _tempdir).
+    async fn setup() -> (
+        String,
+        Arc<RpcState>,
+        mpsc::Receiver<RpcCommand>,
+        Arc<Store>,
+        tempfile::TempDir,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(dir.path().join("test.redb")).unwrap());
+        let config = Config::tiny();
+        let (state, rx) = create_rpc_channel(store.clone(), config, 0);
+        let (addr, _handle) = start_rpc_server_ephemeral(state.clone()).await.unwrap();
+        let url = format!("http://{}", addr);
+        (url, state, rx, store, dir)
+    }
+
+    fn test_block(slot: u32) -> Block {
+        Block {
+            header: Header {
+                parent_hash: Hash([1u8; 32]),
+                state_root: Hash([2u8; 32]),
+                extrinsic_hash: Hash([3u8; 32]),
+                timeslot: slot,
+                epoch_marker: None,
+                tickets_marker: None,
+                author_index: 5,
+                vrf_signature: BandersnatchSignature([7u8; 96]),
+                offenders_marker: vec![],
+                seal: BandersnatchSignature([8u8; 96]),
+            },
+            extrinsic: Extrinsic::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_status() {
+        let (url, state, _rx, _store, _dir) = setup().await;
+        {
+            let mut status = state.status.write().await;
+            status.head_slot = 42;
+            status.head_hash = "abc123".into();
+            status.blocks_authored = 10;
+        }
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client
+            .request("jam_getStatus", rpc_params![])
+            .await
+            .unwrap();
+        assert_eq!(result["head_slot"], 42);
+        assert_eq!(result["head_hash"], "abc123");
+        assert_eq!(result["blocks_authored"], 10);
+        assert_eq!(result["validator_index"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_head_empty() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client.request("jam_getHead", rpc_params![]).await.unwrap();
+        assert!(result["hash"].is_null());
+        assert_eq!(result["slot"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_head_with_block() {
+        let (url, _state, _rx, store, _dir) = setup().await;
+        let block = test_block(100);
+        let hash = store.put_block(&block).unwrap();
+        store.set_head(&hash, 100).unwrap();
+
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client.request("jam_getHead", rpc_params![]).await.unwrap();
+        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["slot"], 100);
+    }
+
+    #[tokio::test]
+    async fn test_get_block() {
+        let (url, _state, _rx, store, _dir) = setup().await;
+        let block = test_block(50);
+        let hash = store.put_block(&block).unwrap();
+
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client
+            .request("jam_getBlock", rpc_params![hex::encode(hash.0)])
+            .await
+            .unwrap();
+        assert_eq!(result["timeslot"], 50);
+        assert_eq!(result["author_index"], 5);
+    }
+
+    #[tokio::test]
+    async fn test_get_block_not_found() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: Result<serde_json::Value, _> = client
+            .request("jam_getBlock", rpc_params![hex::encode([0u8; 32])])
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_block_invalid_hex() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: Result<serde_json::Value, _> =
+            client.request("jam_getBlock", rpc_params!["not_hex"]).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_block_wrong_length() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: Result<serde_json::Value, _> =
+            client.request("jam_getBlock", rpc_params!["aabb"]).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_block_by_slot() {
+        let (url, _state, _rx, store, _dir) = setup().await;
+        let block = test_block(77);
+        let hash = store.put_block(&block).unwrap();
+
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client
+            .request("jam_getBlockBySlot", rpc_params![77])
+            .await
+            .unwrap();
+        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["slot"], 77);
+    }
+
+    #[tokio::test]
+    async fn test_get_block_by_slot_not_found() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: Result<serde_json::Value, _> = client
+            .request("jam_getBlockBySlot", rpc_params![9999])
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_get_finalized_empty() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client
+            .request("jam_getFinalized", rpc_params![])
+            .await
+            .unwrap();
+        assert!(result["hash"].is_null());
+        assert_eq!(result["slot"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_finalized_with_block() {
+        let (url, _state, _rx, store, _dir) = setup().await;
+        let block = test_block(60);
+        let hash = store.put_block(&block).unwrap();
+        store.set_finalized(&hash, 60).unwrap();
+
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: serde_json::Value = client
+            .request("jam_getFinalized", rpc_params![])
+            .await
+            .unwrap();
+        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["slot"], 60);
+    }
+
+    #[tokio::test]
+    async fn test_submit_work_package() {
+        let (url, _state, mut rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let data = hex::encode([0xAB; 16]);
+        let result: serde_json::Value = client
+            .request("jam_submitWorkPackage", rpc_params![data])
+            .await
+            .unwrap();
+        assert_eq!(result["status"], "submitted");
+        assert!(result["hash"].is_string());
+
+        // Verify command was received
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            RpcCommand::SubmitWorkPackage { data } => {
+                assert_eq!(data, vec![0xAB; 16]);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_submit_empty_work_package() {
+        let (url, _state, _rx, _store, _dir) = setup().await;
+        let client = HttpClientBuilder::default().build(&url).unwrap();
+        let result: Result<serde_json::Value, _> = client
+            .request("jam_submitWorkPackage", rpc_params![""])
+            .await;
+        assert!(result.is_err());
+    }
 }
