@@ -840,4 +840,57 @@ mod tests {
         assert_eq!(tracker.get_peer_for_validator(5), None);
         assert_eq!(tracker.get_peer_for_validator(10), Some(&peer2));
     }
+
+    #[test]
+    fn test_peer_tracker_remove_nonexistent() {
+        let mut tracker = PeerTracker::new();
+        let peer = PeerId::random();
+        // Removing a peer that was never added should not panic
+        tracker.remove_peer(&peer);
+        assert_eq!(tracker.peer_count(), 0);
+    }
+
+    #[test]
+    fn test_peer_tracker_reassign_validator() {
+        let mut tracker = PeerTracker::new();
+        let peer = PeerId::random();
+        tracker.add_peer(peer);
+
+        // Assign to validator 5, then reassign to validator 10
+        tracker.set_validator(peer, 5);
+        assert_eq!(tracker.get_peer_for_validator(5), Some(&peer));
+
+        tracker.set_validator(peer, 10);
+        assert_eq!(tracker.get_peer_for_validator(10), Some(&peer));
+        // Old mapping should be overwritten (peer maps to 10 now)
+    }
+
+    #[test]
+    fn test_peer_tracker_duplicate_add() {
+        let mut tracker = PeerTracker::new();
+        let peer = PeerId::random();
+        tracker.add_peer(peer);
+        tracker.add_peer(peer); // duplicate add should not increase count
+        assert_eq!(tracker.peer_count(), 1);
+    }
+
+    #[test]
+    fn test_parse_validator_index_edge_cases() {
+        // Max u16
+        assert_eq!(
+            parse_validator_index_from_agent("jam-validator-65535"),
+            Some(65535)
+        );
+        // Overflow u16 (65536)
+        assert_eq!(
+            parse_validator_index_from_agent("jam-validator-65536"),
+            None
+        );
+        // Negative-looking
+        assert_eq!(parse_validator_index_from_agent("jam-validator--1"), None);
+        // Trailing space
+        assert_eq!(parse_validator_index_from_agent("jam-validator-5 "), None);
+        // Just the prefix
+        assert_eq!(parse_validator_index_from_agent("jam-validator-"), None);
+    }
 }
