@@ -62,6 +62,9 @@ const STATE_CHECKSUMS: TableDefinition<&[u8; 32], &[u8; 32]> =
     TableDefinition::new("state_checksums");
 // GRANDPA votes: key = round(8) + type(1) + validator(2) = 11 bytes -> value = hash(32) + slot(4) + sig(64) = 100 bytes
 const GRANDPA_VOTES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("grandpa_votes");
+// Chunk metadata: report_hash (32 bytes) -> creation_slot (u32 LE, 4 bytes)
+// Tracks when chunks were first stored for TTL-based expiration.
+const CHUNK_META: TableDefinition<&[u8; 32], u32> = TableDefinition::new("chunk_meta");
 
 const META_SCHEMA_VERSION: &str = "schema_version";
 const META_HEAD_HASH: &str = "head_hash";
@@ -115,6 +118,7 @@ impl Store {
             let _ = txn.open_table(CHUNKS)?;
             let _ = txn.open_table(STATE_CHECKSUMS)?;
             let _ = txn.open_table(GRANDPA_VOTES)?;
+            let _ = txn.open_table(CHUNK_META)?;
 
             // Check or initialize schema version.
             // Read first, drop the guard, then write if needed.
@@ -514,6 +518,30 @@ impl Store {
         Ok(())
     }
 
+    /// Store an erasure-coded chunk with creation slot metadata for TTL tracking.
+    pub fn put_chunk_with_slot(
+        &self,
+        report_hash: &Hash,
+        chunk_index: u16,
+        data: &[u8],
+        creation_slot: u32,
+    ) -> Result<(), StoreError> {
+        let key = chunk_key(report_hash, chunk_index);
+
+        let txn = self.db.begin_write()?;
+        {
+            let mut table = txn.open_table(CHUNKS)?;
+            table.insert(key.as_slice(), data)?;
+            // Record creation slot (only first chunk per report sets the metadata)
+            let mut meta = txn.open_table(CHUNK_META)?;
+            if meta.get(&report_hash.0)?.is_none() {
+                meta.insert(&report_hash.0, creation_slot)?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
     /// Get an erasure-coded chunk.
     pub fn get_chunk(&self, report_hash: &Hash, chunk_index: u16) -> Result<Vec<u8>, StoreError> {
         let key = chunk_key(report_hash, chunk_index);
@@ -549,6 +577,59 @@ impl Store {
         }
         txn.commit()?;
         Ok(deleted)
+    }
+
+    /// Remove all expired chunks: chunks whose creation slot is older than
+    /// `current_slot - ttl_slots`. Returns the number of reports cleaned up.
+    pub fn prune_expired_chunks(
+        &self,
+        current_slot: u32,
+        ttl_slots: u32,
+    ) -> Result<u32, StoreError> {
+        let cutoff = current_slot.saturating_sub(ttl_slots);
+        if cutoff == 0 {
+            return Ok(0);
+        }
+
+        // Collect expired report hashes from metadata
+        let txn = self.db.begin_read()?;
+        let meta_table = txn.open_table(CHUNK_META)?;
+        let mut expired_reports: Vec<[u8; 32]> = Vec::new();
+        for entry in meta_table.iter()? {
+            let entry = entry?;
+            let creation_slot = entry.1.value();
+            if creation_slot < cutoff {
+                expired_reports.push(*entry.0.value());
+            }
+        }
+        drop(meta_table);
+        drop(txn);
+
+        if expired_reports.is_empty() {
+            return Ok(0);
+        }
+
+        let count = expired_reports.len() as u32;
+        // Delete chunks and metadata for each expired report
+        for report_hash in &expired_reports {
+            self.delete_chunks_for_report(&Hash(*report_hash))?;
+        }
+        // Clean up metadata entries
+        let txn = self.db.begin_write()?;
+        {
+            let mut meta = txn.open_table(CHUNK_META)?;
+            for report_hash in &expired_reports {
+                meta.remove(report_hash)?;
+            }
+        }
+        txn.commit()?;
+
+        tracing::info!(
+            "Pruned chunks for {} expired reports (cutoff slot {})",
+            count,
+            cutoff
+        );
+        Ok(count)
     }
 
     // ── Pruning ─────────────────────────────────────────────────────────
@@ -1261,5 +1342,44 @@ mod tests {
         // Round 2 should still have its vote
         let votes = store.get_grandpa_votes_for_round(2).unwrap();
         assert_eq!(votes.len(), 1);
+    }
+
+    #[test]
+    fn test_chunk_expiration() {
+        let (store, _dir) = temp_store();
+        let report_old = Hash([1u8; 32]);
+        let report_new = Hash([2u8; 32]);
+        let chunk_data = vec![0xAB; 100];
+
+        // Store old chunks at slot 10
+        store
+            .put_chunk_with_slot(&report_old, 0, &chunk_data, 10)
+            .unwrap();
+        store
+            .put_chunk_with_slot(&report_old, 1, &chunk_data, 10)
+            .unwrap();
+
+        // Store new chunks at slot 100
+        store
+            .put_chunk_with_slot(&report_new, 0, &chunk_data, 100)
+            .unwrap();
+
+        // Verify all chunks exist
+        assert!(store.get_chunk(&report_old, 0).is_ok());
+        assert!(store.get_chunk(&report_new, 0).is_ok());
+
+        // Prune with current_slot=200, TTL=100 → cutoff=100, old (slot 10) expires
+        let pruned = store.prune_expired_chunks(200, 100).unwrap();
+        assert_eq!(pruned, 1, "one report should be pruned");
+
+        // Old chunks should be gone
+        assert!(store.get_chunk(&report_old, 0).is_err());
+        assert!(store.get_chunk(&report_old, 1).is_err());
+
+        // New chunks should remain
+        assert!(store.get_chunk(&report_new, 0).is_ok());
+
+        // Prune again — no-op
+        assert_eq!(store.prune_expired_chunks(200, 100).unwrap(), 0);
     }
 }
