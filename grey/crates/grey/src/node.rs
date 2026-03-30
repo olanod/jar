@@ -139,6 +139,9 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     // to apply it after the missing ones arrive.
     let mut pending_blocks: std::collections::BTreeMap<Timeslot, (Block, Hash)> =
         std::collections::BTreeMap::new();
+    /// Maximum number of out-of-order blocks to buffer. Prevents memory
+    /// exhaustion from peers sending blocks far ahead of our current state.
+    const MAX_PENDING_BLOCKS: usize = 100;
 
     tracing::info!(
         "Validator {} node started, genesis_time={}",
@@ -659,6 +662,23 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                         let h = compute_header_hash(&block.header);
                                         (block, h)
                                     });
+
+                                    // Evict the furthest-ahead block if buffer is full.
+                                    // Keeps blocks closest to current state (most useful).
+                                    while pending_blocks.len() > MAX_PENDING_BLOCKS {
+                                        if let Some((&evicted_slot, _)) =
+                                            pending_blocks.iter().next_back()
+                                        {
+                                            tracing::warn!(
+                                                "Validator {} pending blocks buffer full ({}), \
+                                                 evicting slot {}",
+                                                config.validator_index,
+                                                pending_blocks.len(),
+                                                evicted_slot
+                                            );
+                                            pending_blocks.remove(&evicted_slot);
+                                        }
+                                    }
                                 }
                             }
                             None => {
