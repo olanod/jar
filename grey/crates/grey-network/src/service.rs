@@ -144,6 +144,68 @@ impl PeerTracker {
     }
 }
 
+/// Per-peer message rate tracker for gossipsub topics.
+///
+/// Tracks how many messages each peer has sent per topic within a sliding
+/// window. When a peer exceeds the configured limit, a warning is logged.
+struct PeerRateTracker {
+    /// (PeerId, topic) → (count, window_start)
+    counters: HashMap<(PeerId, &'static str), (u64, std::time::Instant)>,
+    /// Time window for rate counting.
+    window: Duration,
+    /// Per-topic message limits per peer per window.
+    limits: HashMap<&'static str, u64>,
+}
+
+impl PeerRateTracker {
+    fn new(window: Duration) -> Self {
+        let mut limits = HashMap::new();
+        // Blocks: ~1 per 6s slot, allow some margin
+        limits.insert(BLOCKS_TOPIC, 5);
+        // Finality votes: V votes per round, allow generous headroom
+        limits.insert(FINALITY_TOPIC, 50);
+        // Guarantees: bounded by cores * validators
+        limits.insert(GUARANTEES_TOPIC, 100);
+        // Assurances: 1 per validator per slot
+        limits.insert(ASSURANCES_TOPIC, 20);
+        // Announcements: infrequent
+        limits.insert(ANNOUNCEMENTS_TOPIC, 20);
+        // Tickets: bounded by tickets_per_validator
+        limits.insert(TICKETS_TOPIC, 50);
+
+        Self {
+            counters: HashMap::new(),
+            window,
+            limits,
+        }
+    }
+
+    /// Record a message from a peer on a topic. Returns true if within
+    /// the rate limit, false if the peer exceeded the limit.
+    fn record(&mut self, peer: &PeerId, topic: &'static str) -> bool {
+        let now = std::time::Instant::now();
+        let key = (*peer, topic);
+        let entry = self.counters.entry(key).or_insert((0, now));
+
+        // Reset window if expired
+        if now.duration_since(entry.1) >= self.window {
+            *entry = (0, now);
+        }
+
+        entry.0 += 1;
+
+        let limit = self.limits.get(topic).copied().unwrap_or(100);
+        entry.0 <= limit
+    }
+
+    /// Remove stale entries to bound memory usage.
+    fn prune_stale(&mut self) {
+        let now = std::time::Instant::now();
+        self.counters
+            .retain(|_, (_, start)| now.duration_since(*start) < self.window * 2);
+    }
+}
+
 /// Read a length-prefixed message from an async reader.
 /// Format: 4-byte LE length prefix, then that many bytes of payload.
 async fn read_length_prefixed<T>(io: &mut T, max_size: usize) -> std::io::Result<Vec<u8>>
@@ -481,6 +543,10 @@ async fn run_network_loop(
         oneshot::Sender<Option<Vec<u8>>>,
     > = HashMap::new();
 
+    // Per-peer gossipsub message rate tracking (1-minute window)
+    let mut rate_tracker = PeerRateTracker::new(Duration::from_secs(60));
+    let mut rate_prune_interval = tokio::time::interval(Duration::from_secs(30));
+
     loop {
         tokio::select! {
             // Handle incoming swarm events
@@ -492,6 +558,32 @@ async fn run_network_loop(
                         gossipsub::Event::Message { message, propagation_source, .. }
                     )) => {
                         let topic = message.topic.as_str();
+                        // Map dynamic topic string to static for rate tracking
+                        let static_topic: &'static str = if topic == BLOCKS_TOPIC {
+                            BLOCKS_TOPIC
+                        } else if topic == FINALITY_TOPIC {
+                            FINALITY_TOPIC
+                        } else if topic == GUARANTEES_TOPIC {
+                            GUARANTEES_TOPIC
+                        } else if topic == ASSURANCES_TOPIC {
+                            ASSURANCES_TOPIC
+                        } else if topic == ANNOUNCEMENTS_TOPIC {
+                            ANNOUNCEMENTS_TOPIC
+                        } else if topic == TICKETS_TOPIC {
+                            TICKETS_TOPIC
+                        } else {
+                            // Unknown topic, skip rate tracking
+                            ""
+                        };
+                        if !static_topic.is_empty()
+                            && !rate_tracker.record(&propagation_source, static_topic)
+                        {
+                            tracing::warn!(
+                                "Peer {} exceeding message rate limit on topic '{}'",
+                                propagation_source,
+                                static_topic,
+                            );
+                        }
                         if topic == BLOCKS_TOPIC {
                             send_event!(NetworkEvent::BlockReceived {
                                 data: message.data,
@@ -726,6 +818,11 @@ async fn run_network_loop(
                     }
                 }
             }
+
+            // Periodic cleanup of stale rate-tracking entries
+            _ = rate_prune_interval.tick() => {
+                rate_tracker.prune_stale();
+            }
         }
     }
 }
@@ -833,5 +930,74 @@ mod tests {
         assert_eq!(parse_validator_index_from_agent("jam-validator-5 "), None);
         // Just the prefix
         assert_eq!(parse_validator_index_from_agent("jam-validator-"), None);
+    }
+
+    #[test]
+    fn test_rate_tracker_within_limit() {
+        let mut tracker = PeerRateTracker::new(Duration::from_secs(60));
+        let peer = PeerId::random();
+
+        // First 5 block messages should be within limit
+        for _ in 0..5 {
+            assert!(tracker.record(&peer, BLOCKS_TOPIC));
+        }
+    }
+
+    #[test]
+    fn test_rate_tracker_exceeds_limit() {
+        let mut tracker = PeerRateTracker::new(Duration::from_secs(60));
+        let peer = PeerId::random();
+
+        // Blocks limit is 5 per window
+        for _ in 0..5 {
+            assert!(tracker.record(&peer, BLOCKS_TOPIC));
+        }
+        // 6th should exceed the limit
+        assert!(!tracker.record(&peer, BLOCKS_TOPIC));
+    }
+
+    #[test]
+    fn test_rate_tracker_different_peers_independent() {
+        let mut tracker = PeerRateTracker::new(Duration::from_secs(60));
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+
+        // Fill peer A's limit
+        for _ in 0..5 {
+            tracker.record(&peer_a, BLOCKS_TOPIC);
+        }
+        assert!(!tracker.record(&peer_a, BLOCKS_TOPIC));
+
+        // Peer B should still have full allowance
+        assert!(tracker.record(&peer_b, BLOCKS_TOPIC));
+    }
+
+    #[test]
+    fn test_rate_tracker_different_topics_independent() {
+        let mut tracker = PeerRateTracker::new(Duration::from_secs(60));
+        let peer = PeerId::random();
+
+        // Fill block limit
+        for _ in 0..5 {
+            tracker.record(&peer, BLOCKS_TOPIC);
+        }
+        assert!(!tracker.record(&peer, BLOCKS_TOPIC));
+
+        // Finality topic should still be fine (limit 50)
+        assert!(tracker.record(&peer, FINALITY_TOPIC));
+    }
+
+    #[test]
+    fn test_rate_tracker_prune_stale() {
+        let mut tracker = PeerRateTracker::new(Duration::from_millis(1));
+        let peer = PeerId::random();
+
+        tracker.record(&peer, BLOCKS_TOPIC);
+        assert_eq!(tracker.counters.len(), 1);
+
+        // Wait for window to expire
+        std::thread::sleep(Duration::from_millis(5));
+        tracker.prune_stale();
+        assert_eq!(tracker.counters.len(), 0);
     }
 }
