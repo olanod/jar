@@ -89,6 +89,6 @@ Grey's interpreter wins 6 of 8. PolkaVM wins ed25519 (1.6x) and ecrecover (1.1x)
 
 - Date: 2026-03-30
 - Grey: javm recompiler with `signals` feature
-- PolkaVM: v0.18.0, generic sandbox, `full-l1-hit` cost model
+- PolkaVM: v0.32.0, generic sandbox, `full-l1-hit` cost model
 - Rust: 1.94.1, release mode
 - Hardware: Intel Core i9-13900K
