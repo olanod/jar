@@ -29,6 +29,7 @@ fn error_refine_result(item: &WorkItem, result: WorkResult, gas_used: Gas) -> Re
             exports_count: 0,
         },
         exported_segments: vec![],
+        expunge_requests: vec![],
     }
 }
 
@@ -162,6 +163,8 @@ pub fn invoke_is_authorized(
 pub struct RefineResult {
     pub digest: WorkDigest,
     pub exported_segments: Vec<Vec<u8>>,
+    /// Preimage hashes requested for expunge during refinement.
+    pub expunge_requests: Vec<Hash>,
 }
 
 /// Run the Refine invocation Ψ_R for a single work item (GP eq B.3-B.5).
@@ -185,6 +188,7 @@ pub fn invoke_refine(
     // Entry point for refine: PC=0 (default)
     let initial_gas = pvm.gas();
     let mut exported_segments: Vec<Vec<u8>> = Vec::new();
+    let mut expunge_requests: Vec<Hash> = Vec::new();
 
     loop {
         let exit = pvm.run();
@@ -218,6 +222,7 @@ pub fn invoke_refine(
                         exports_count,
                     },
                     exported_segments,
+                    expunge_requests,
                 };
             }
             ExitReason::Panic => {
@@ -244,6 +249,7 @@ pub fn invoke_refine(
                     export_offset,
                     import_data,
                     lookup_ctx,
+                    expunge_requests: &mut expunge_requests,
                 };
                 if !handle_refine_host_call(id, &mut pvm, &mut ctx, 0) {
                     // Host call signaled OOG or page fault
@@ -386,6 +392,8 @@ struct RefineHostContext<'a> {
     export_offset: u16,
     /// Resolved import segment data (populated by caller if available).
     import_data: &'a [Vec<u8>],
+    /// Preimage hashes requested for expunge.
+    expunge_requests: &'a mut Vec<Hash>,
     /// External context for preimage/storage lookups.
     lookup_ctx: Option<&'a dyn RefineContext>,
 }
@@ -470,9 +478,16 @@ fn handle_refine_host_call(
             // Gas used by sub-call is deducted from caller.
             refine_invoke(pvm, ctx, depth)
         }
+        10 => {
+            // expunge(): request preimage deletion. GP §14.
+            // φ[7] = hash_ptr (32 bytes in memory).
+            // Records the request; actual deletion happens after D timeslots
+            // when the work report is processed during state transition.
+            // Returns: φ[7] = HOST_OK (0) on success, HOST_OOB on page fault.
+            refine_expunge(pvm, ctx)
+        }
         _ => {
-            // Unimplemented: expunge(10).
-            tracing::trace!(id, "unimplemented refine host call");
+            tracing::trace!(id, "unknown refine host call");
             pvm.set_reg(7, HOST_WHAT);
             true
         }
@@ -710,6 +725,24 @@ fn refine_peek(pvm: &mut PvmInstance, ctx: &RefineHostContext<'_>) -> bool {
 /// The invoked program has access to: gas, grow_heap, fetch (payload only),
 /// machine, pages, and invoke (recursive, depth-limited).
 /// It does NOT have access to: export, peek, poke, historical_lookup.
+/// expunge for refine context: request preimage deletion.
+/// Records the hash for later processing during state transition.
+fn refine_expunge(pvm: &mut PvmInstance, ctx: &mut RefineHostContext<'_>) -> bool {
+    let hash_ptr = pvm.reg(7) as u32;
+
+    // Read the 32-byte hash from PVM memory
+    let hash_data = match pvm.try_read_bytes(hash_ptr, 32) {
+        Some(d) => d,
+        None => return false, // page fault → PANIC
+    };
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&hash_data);
+
+    ctx.expunge_requests.push(Hash(hash));
+    pvm.set_reg(7, 0); // HOST_OK
+    true
+}
+
 fn refine_invoke(pvm: &mut PvmInstance, ctx: &mut RefineHostContext<'_>, depth: u32) -> bool {
     if depth >= MAX_INVOKE_DEPTH {
         pvm.set_reg(7, HOST_WHAT);
@@ -863,12 +896,22 @@ fn run_sub_invoke(
                         sub_pvm.set_reg(7, pages);
                         true
                     }
+                    2 => {
+                        // fetch: invoked programs can read their own input
+                        // (payload was passed as args, accessible via PVM memory)
+                        // Also allows reading import segments from parent context.
+                        refine_fetch(sub_pvm, ctx)
+                    }
+                    3 => {
+                        // historical_lookup: invoked programs can look up preimages
+                        refine_historical_lookup(sub_pvm, ctx)
+                    }
                     9 => {
                         // Recursive invoke (depth-limited)
                         refine_invoke(sub_pvm, ctx, depth)
                     }
                     _ => {
-                        // export, peek, poke, historical_lookup, expunge, fetch
+                        // export(4), peek(6), poke(7), expunge(10)
                         // not available in invoked context
                         sub_pvm.set_reg(7, HOST_WHAT);
                         true
@@ -1179,6 +1222,48 @@ mod tests {
             WorkResult::Ok(_) => {}
             other => panic!("expected Ok (NONE in A0), got: {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_refine_expunge_hostcall() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(10) = expunge: request preimage deletion
+        // First grow heap so we have writable memory, then write a hash, then expunge it
+        let mut asm = grey_transpiler::assembler::Assembler::new();
+        asm.set_stack_size(4096);
+        asm.set_heap_pages(4);
+        asm.add_jump_entry();
+
+        // Grow heap to 8 pages
+        asm.load_imm(Reg::A0, 8);
+        asm.ecalli(1);
+
+        // Write a fake hash (all 0x42) to 0x2000
+        for i in 0..32u32 {
+            asm.load_imm(Reg::T0, 0x42);
+            asm.store_u8(Reg::T0, 0x2000 + i);
+        }
+
+        // Call expunge with hash ptr
+        asm.load_imm(Reg::A0, 0x2000);
+        asm.ecalli(10);
+
+        // Halt
+        asm.load_imm_64(Reg::T0, 0xFFFF0000u64);
+        asm.jump_ind(Reg::T0, 0);
+
+        let blob = asm.build();
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok, got: {:?}", other),
+        }
+        // Verify the expunge request was recorded
+        assert_eq!(result.expunge_requests.len(), 1);
+        assert_eq!(result.expunge_requests[0].0, [0x42u8; 32]);
     }
 
     #[test]
