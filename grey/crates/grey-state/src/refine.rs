@@ -541,7 +541,10 @@ fn refine_machine(pvm: &mut PvmInstance, ctx: &RefineHostContext<'_>) -> bool {
         1 => {
             // Code hash: write to buffer at φ[8], return 32
             let buf_ptr = pvm.reg(8) as u32;
-            if pvm.try_write_bytes(buf_ptr, &ctx.item.code_hash.0).is_none() {
+            if pvm
+                .try_write_bytes(buf_ptr, &ctx.item.code_hash.0)
+                .is_none()
+            {
                 return false;
             }
             pvm.set_reg(7, 32);
