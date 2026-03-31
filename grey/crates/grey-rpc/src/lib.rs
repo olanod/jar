@@ -436,7 +436,11 @@ impl JamRpcServer for RpcImpl {
     async fn get_chain_spec(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
         self.track_request("jam_getChainSpec");
         let c = &self.state.config;
+        let config_blob = c.encode_config_blob();
+        let genesis_hash = grey_crypto::blake2b_256(&config_blob);
         Ok(serde_json::json!({
+            "protocol_version": "0.7.2",
+            "genesis_hash": hex::encode(genesis_hash.0),
             "validators_count": c.validators_count,
             "core_count": c.core_count,
             "epoch_length": c.epoch_length,
@@ -1533,6 +1537,12 @@ mod tests {
         assert_eq!(result["epoch_length"], 12);
         assert_eq!(result["slot_period"], 6);
         assert!(result["gas_total_accumulation"].as_u64().unwrap() > 0);
+        // New fields: protocol_version and genesis_hash
+        assert_eq!(result["protocol_version"], "0.7.2");
+        assert!(
+            result["genesis_hash"].as_str().unwrap().len() == 64,
+            "genesis_hash should be 32-byte hex"
+        );
     }
 
     #[tokio::test]
