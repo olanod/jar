@@ -175,6 +175,7 @@ pub fn invoke_refine(
     item: &WorkItem,
     export_offset: u16,
     import_data: &[Vec<u8>],
+    lookup_ctx: Option<&dyn RefineContext>,
 ) -> RefineResult {
     let mut pvm = match PvmInstance::initialize(code_blob, &item.payload, item.gas_limit) {
         Some(p) => p,
@@ -242,6 +243,7 @@ pub fn invoke_refine(
                     exported_segments: &mut exported_segments,
                     export_offset,
                     import_data,
+                    lookup_ctx,
                 };
                 if !handle_refine_host_call(id, &mut pvm, &mut ctx) {
                     // Host call signaled OOG or page fault
@@ -297,7 +299,14 @@ pub fn process_work_package(
         // TODO: resolve import segments from availability store
         let import_data: Vec<Vec<u8>> = Vec::new();
 
-        let refine_result = invoke_refine(config, &item_code, item, export_offset, &import_data);
+        let refine_result = invoke_refine(
+            config,
+            &item_code,
+            item,
+            export_offset,
+            &import_data,
+            Some(ctx),
+        );
         export_offset += refine_result.exported_segments.len() as u16;
         all_exported_segments.extend(refine_result.exported_segments);
         results.push(refine_result.digest);
@@ -374,6 +383,8 @@ struct RefineHostContext<'a> {
     export_offset: u16,
     /// Resolved import segment data (populated by caller if available).
     import_data: &'a [Vec<u8>],
+    /// External context for preimage/storage lookups.
+    lookup_ctx: Option<&'a dyn RefineContext>,
 }
 
 /// Handle host calls available during refinement (Ψ_R).
@@ -422,9 +433,33 @@ fn handle_refine_host_call(
             // φ[7]=mode. Mode 0 = service_id, mode 1 = code_hash.
             refine_machine(pvm, ctx)
         }
+        3 => {
+            // historical_lookup(): look up a preimage by hash.
+            // φ[7]=hash_ptr, φ[8]=out_ptr, φ[9]=offset, φ[10]=max_len
+            // Returns: φ[7] = total data length, or NONE if not found.
+            refine_historical_lookup(pvm, ctx)
+        }
+        6 => {
+            // peek(): read from service storage by key.
+            // φ[7]=key_ptr, φ[8]=key_len, φ[9]=out_ptr, φ[10]=offset, φ[11]=max_len
+            // Returns: φ[7] = total value length, or NONE if not found.
+            refine_peek(pvm, ctx)
+        }
+        7 => {
+            // poke(): not available in refine context (read-only).
+            pvm.set_reg(7, HOST_WHAT);
+            true
+        }
+        8 => {
+            // pages(): query memory page count.
+            // φ[7] = 0 → return current page count.
+            let ps = javm::PVM_PAGE_SIZE;
+            let current_pages = (pvm.heap_top() as u64).div_ceil(ps as u64);
+            pvm.set_reg(7, current_pages);
+            true
+        }
         _ => {
-            // Unimplemented: historical_lookup(3), peek(6), poke(7),
-            // pages(8), invoke(9), expunge(10).
+            // Unimplemented: invoke(9), expunge(10).
             tracing::trace!(id, "unimplemented refine host call");
             pvm.set_reg(7, HOST_WHAT);
             true
@@ -556,6 +591,92 @@ fn refine_machine(pvm: &mut PvmInstance, ctx: &RefineHostContext<'_>) -> bool {
     true
 }
 
+/// historical_lookup for refine context: look up a preimage by hash.
+/// Uses the RefineContext's get_preimage if available.
+fn refine_historical_lookup(pvm: &mut PvmInstance, ctx: &RefineHostContext<'_>) -> bool {
+    let hash_ptr = pvm.reg(7) as u32;
+    let out_ptr = pvm.reg(8) as u32;
+    let offset = pvm.reg(9);
+    let max_len = pvm.reg(10);
+
+    // Read the 32-byte hash from PVM memory
+    let hash_data = match pvm.try_read_bytes(hash_ptr, 32) {
+        Some(d) => d,
+        None => return false, // page fault → PANIC
+    };
+    let mut hash = [0u8; 32];
+    hash.copy_from_slice(&hash_data);
+    let hash = Hash(hash);
+
+    // Look up the preimage via the external context
+    let data = ctx.lookup_ctx.and_then(|lctx| lctx.get_preimage(&hash));
+
+    let data = match data {
+        Some(d) => d,
+        None => {
+            pvm.set_reg(7, u64::MAX); // NONE
+            return true;
+        }
+    };
+
+    let data_len = data.len() as u64;
+    let f = offset.min(data_len);
+    let l = max_len.min(data_len - f);
+
+    if l > 0 {
+        let src = &data[f as usize..(f + l) as usize];
+        if pvm.try_write_bytes(out_ptr, src).is_none() {
+            return false; // page fault → PANIC
+        }
+    }
+
+    pvm.set_reg(7, data_len);
+    true
+}
+
+/// peek for refine context: read from service storage.
+/// In refine, this is read-only access to the service's own storage.
+fn refine_peek(pvm: &mut PvmInstance, ctx: &RefineHostContext<'_>) -> bool {
+    let key_ptr = pvm.reg(7) as u32;
+    let key_len = pvm.reg(8) as u32;
+    let out_ptr = pvm.reg(9) as u32;
+    let offset = pvm.reg(10);
+    let max_len = pvm.reg(11);
+
+    // Read the key from PVM memory
+    let key = match pvm.try_read_bytes(key_ptr, key_len) {
+        Some(d) => d,
+        None => return false, // page fault → PANIC
+    };
+
+    // Look up storage value via the external context
+    let data = ctx
+        .lookup_ctx
+        .and_then(|lctx| lctx.get_storage(ctx.item.service_id, &key));
+
+    let data = match data {
+        Some(d) => d,
+        None => {
+            pvm.set_reg(7, u64::MAX); // NONE
+            return true;
+        }
+    };
+
+    let data_len = data.len() as u64;
+    let f = offset.min(data_len);
+    let l = max_len.min(data_len - f);
+
+    if l > 0 {
+        let src = &data[f as usize..(f + l) as usize];
+        if pvm.try_write_bytes(out_ptr, src).is_none() {
+            return false; // page fault → PANIC
+        }
+    }
+
+    pvm.set_reg(7, data_len);
+    true
+}
+
 /// Simple work-package encoding for hashing and authorization.
 fn encode_work_package_simple(pkg: &WorkPackage) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -669,6 +790,158 @@ mod tests {
         match result.unwrap_err() {
             RefineError::CodeNotFound(h) => assert_eq!(h.0, [99u8; 32]),
             other => panic!("expected CodeNotFound, got: {}", other),
+        }
+    }
+
+    /// Build a minimal PVM blob that calls ecalli(id) then halts.
+    /// Before the ecalli, loads immediate values into registers as specified.
+    fn build_hostcall_blob(
+        id: u32,
+        reg_setup: &[(grey_transpiler::assembler::Reg, u64)],
+    ) -> Vec<u8> {
+        use grey_transpiler::assembler::{Assembler, Reg};
+        let mut asm = Assembler::new();
+        asm.set_stack_size(4096);
+        asm.set_heap_pages(4); // 4 pages = 16KB writable memory
+
+        // Jump table entry 0 → refine entry
+        asm.add_jump_entry();
+
+        // Set up registers
+        for &(reg, val) in reg_setup {
+            asm.load_imm_64(reg, val);
+        }
+
+        // Host call
+        asm.ecalli(id);
+
+        // Halt: jump to 0xFFFF0000
+        asm.load_imm_64(Reg::T0, 0xFFFF0000u64);
+        asm.jump_ind(Reg::T0, 0);
+
+        asm.build()
+    }
+
+    fn make_test_item(payload: Vec<u8>, gas: Gas) -> WorkItem {
+        WorkItem {
+            service_id: 42,
+            code_hash: Hash([1u8; 32]),
+            gas_limit: gas,
+            accumulate_gas_limit: 1000,
+            exports_count: 0,
+            payload,
+            imports: vec![],
+            extrinsics: vec![],
+        }
+    }
+
+    #[test]
+    fn test_refine_gas_hostcall() {
+        // ecalli(0) = gas: should return remaining gas in A0
+        let blob = build_hostcall_blob(0, &[]);
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok, got: {:?}", other),
+        }
+        // Gas was consumed (host call costs 10 + some for setup)
+        assert!(result.digest.gas_used > 0, "should have used some gas");
+    }
+
+    #[test]
+    fn test_refine_grow_heap_hostcall() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(1) = grow_heap: request 8 pages, should return previous count
+        let blob = build_hostcall_blob(1, &[(Reg::A0, 8)]);
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_refine_machine_hostcall() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(5) = machine: mode 0 returns service_id
+        let blob = build_hostcall_blob(5, &[(Reg::A0, 0)]);
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_refine_historical_lookup_not_found() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(3) = historical_lookup with a hash that doesn't exist
+        // A0 = hash_ptr (point to zeros in memory), A1 = out_ptr, A2 = offset=0, A3 = max_len
+        let blob = build_hostcall_blob(
+            3,
+            &[
+                (Reg::A0, 0x1000), // hash ptr (in writable memory)
+                (Reg::A1, 0x1100), // output ptr
+                (Reg::A2, 0),      // offset
+                (Reg::A3, 256),    // max_len
+            ],
+        );
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        // No lookup context → returns NONE
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok (NONE returned in A0), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_refine_peek_no_context() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(6) = peek: read storage, no context → NONE
+        let blob = build_hostcall_blob(
+            6,
+            &[
+                (Reg::A0, 0x1000), // key ptr
+                (Reg::A1, 4),      // key len
+                (Reg::A2, 0x1100), // out ptr
+                (Reg::A3, 0),      // offset
+                (Reg::A4, 256),    // max len
+            ],
+        );
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok (NONE), got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_refine_pages_hostcall() {
+        use grey_transpiler::assembler::Reg;
+        // ecalli(8) = pages: query current page count
+        let blob = build_hostcall_blob(8, &[(Reg::A0, 0)]);
+        let item = make_test_item(vec![], 1_000_000);
+        let config = Config::tiny();
+
+        let result = invoke_refine(&config, &blob, &item, 0, &[], None);
+        match &result.digest.result {
+            WorkResult::Ok(_) => {}
+            other => panic!("expected Ok, got: {:?}", other),
         }
     }
 }

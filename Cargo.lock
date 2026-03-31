@@ -1675,6 +1675,7 @@ dependencies = [
  "grey-codec",
  "grey-crypto",
  "grey-merkle",
+ "grey-transpiler",
  "grey-types",
  "hex",
  "javm",
