@@ -209,6 +209,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if cli.log_level.is_none() {
             cli.log_level = cfg.logging.level;
         }
+        // Apply log format from config file if CLI uses default (Plain)
+        if matches!(cli.log_format, LogFormat::Plain)
+            && let Some(ref fmt) = cfg.logging.format
+        {
+            match fmt.as_str() {
+                "json" => cli.log_format = LogFormat::Json,
+                "pretty" => cli.log_format = LogFormat::Pretty,
+                "plain" => {}
+                other => eprintln!("warning: unknown log format in config: {:?}", other),
+            }
+        }
     }
 
     // Build EnvFilter: CLI arg > config file > RUST_LOG env var > "info"
