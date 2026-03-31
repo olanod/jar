@@ -89,11 +89,11 @@ fn main() {
         Command::Workflow { action } => {
             // In CI, wait for earlier genesis workflow runs to complete (FIFO queue).
             // Skipped locally (GITHUB_RUN_ID not set).
-            if std::env::var("GITHUB_RUN_ID").is_ok() {
-                if let Err(e) = queue::wait_for_queue() {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
-                }
+            if std::env::var("GITHUB_RUN_ID").is_ok()
+                && let Err(e) = queue::wait_for_queue()
+            {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
             }
             match action {
                 WorkflowAction::Merge {
