@@ -82,7 +82,43 @@ impl RpcClient {
         }
     }
 
+    /// Maximum number of retry attempts for transient HTTP failures.
+    const MAX_RETRIES: u32 = 3;
+    /// Base delay between retries (doubled each attempt).
+    const RETRY_BASE_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+    /// Call an RPC method with automatic retry on transient HTTP errors.
+    /// JSON-RPC errors (method not found, invalid params) are not retried.
     async fn call<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<T, RpcError> {
+        let mut last_err = None;
+        for attempt in 0..=Self::MAX_RETRIES {
+            match self.call_once::<T>(method, params.clone()).await {
+                Ok(result) => return Ok(result),
+                Err(RpcError::Http { .. }) if attempt < Self::MAX_RETRIES => {
+                    let delay = Self::RETRY_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(
+                        "RPC call {} failed (attempt {}/{}), retrying in {:?}",
+                        method,
+                        attempt + 1,
+                        Self::MAX_RETRIES + 1,
+                        delay
+                    );
+                    tokio::time::sleep(delay).await;
+                    last_err = None; // Will be set on next failure
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap_or(RpcError::MissingResult {
+            method: method.to_string(),
+        }))
+    }
+
+    async fn call_once<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,
