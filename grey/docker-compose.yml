@@ -27,6 +27,7 @@ services:
       - "--tiny"
       - "--db-path=/data"
       - "--rpc-port=9933"
+      - "--rpc-host=0.0.0.0"
       - "--rpc-cors"
     ports:
       - "9000:9000"   # P2P
