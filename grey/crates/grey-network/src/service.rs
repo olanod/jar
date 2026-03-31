@@ -144,6 +144,40 @@ impl PeerTracker {
     }
 }
 
+/// Read a length-prefixed message from an async reader.
+/// Format: 4-byte LE length prefix, then that many bytes of payload.
+async fn read_length_prefixed<T>(io: &mut T, max_size: usize) -> std::io::Result<Vec<u8>>
+where
+    T: futures::AsyncRead + Unpin + Send,
+{
+    use futures::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    io.read_exact(&mut len_buf).await?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > max_size {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "message too large",
+        ));
+    }
+    let mut buf = vec![0u8; len];
+    io.read_exact(&mut buf).await?;
+    Ok(buf)
+}
+
+/// Write a length-prefixed message to an async writer and close.
+async fn write_length_prefixed<T>(io: &mut T, data: &[u8]) -> std::io::Result<()>
+where
+    T: futures::AsyncWrite + Unpin + Send,
+{
+    use futures::AsyncWriteExt;
+    let len = (data.len() as u32).to_le_bytes();
+    io.write_all(&len).await?;
+    io.write_all(data).await?;
+    io.close().await?;
+    Ok(())
+}
+
 /// JAM request-response protocol codec.
 #[derive(Debug, Clone, Default)]
 pub struct JamProtocol;
@@ -163,19 +197,7 @@ impl request_response::Codec for JamProtocol {
     where
         T: futures::AsyncRead + Unpin + Send,
     {
-        use futures::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        io.read_exact(&mut len_buf).await?;
-        let len = u32::from_le_bytes(len_buf) as usize;
-        if len > 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "request too large",
-            ));
-        }
-        let mut buf = vec![0u8; len];
-        io.read_exact(&mut buf).await?;
-        Ok(buf)
+        read_length_prefixed(io, 1024 * 1024).await
     }
 
     async fn read_response<T>(
@@ -186,19 +208,7 @@ impl request_response::Codec for JamProtocol {
     where
         T: futures::AsyncRead + Unpin + Send,
     {
-        use futures::AsyncReadExt;
-        let mut len_buf = [0u8; 4];
-        io.read_exact(&mut len_buf).await?;
-        let len = u32::from_le_bytes(len_buf) as usize;
-        if len > 10 * 1024 * 1024 {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "response too large",
-            ));
-        }
-        let mut buf = vec![0u8; len];
-        io.read_exact(&mut buf).await?;
-        Ok(buf)
+        read_length_prefixed(io, 10 * 1024 * 1024).await
     }
 
     async fn write_request<T>(
@@ -210,12 +220,7 @@ impl request_response::Codec for JamProtocol {
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
-        use futures::AsyncWriteExt;
-        let len = (req.len() as u32).to_le_bytes();
-        io.write_all(&len).await?;
-        io.write_all(&req).await?;
-        io.close().await?;
-        Ok(())
+        write_length_prefixed(io, &req).await
     }
 
     async fn write_response<T>(
@@ -227,12 +232,7 @@ impl request_response::Codec for JamProtocol {
     where
         T: futures::AsyncWrite + Unpin + Send,
     {
-        use futures::AsyncWriteExt;
-        let len = (resp.len() as u32).to_le_bytes();
-        io.write_all(&len).await?;
-        io.write_all(&resp).await?;
-        io.close().await?;
-        Ok(())
+        write_length_prefixed(io, &resp).await
     }
 }
 
@@ -279,36 +279,20 @@ pub async fn start_network(
     let announcements_topic = gossipsub::IdentTopic::new(ANNOUNCEMENTS_TOPIC);
     let tickets_topic = gossipsub::IdentTopic::new(TICKETS_TOPIC);
 
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&blocks_topic)
-        .map_err(|e| format!("Failed to subscribe to blocks topic: {e}"))?;
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&finality_topic)
-        .map_err(|e| format!("Failed to subscribe to finality topic: {e}"))?;
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&guarantees_topic)
-        .map_err(|e| format!("Failed to subscribe to guarantees topic: {e}"))?;
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&assurances_topic)
-        .map_err(|e| format!("Failed to subscribe to assurances topic: {e}"))?;
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&announcements_topic)
-        .map_err(|e| format!("Failed to subscribe to announcements topic: {e}"))?;
-    swarm
-        .behaviour_mut()
-        .gossipsub
-        .subscribe(&tickets_topic)
-        .map_err(|e| format!("Failed to subscribe to tickets topic: {e}"))?;
+    for (topic, name) in [
+        (&blocks_topic, "blocks"),
+        (&finality_topic, "finality"),
+        (&guarantees_topic, "guarantees"),
+        (&assurances_topic, "assurances"),
+        (&announcements_topic, "announcements"),
+        (&tickets_topic, "tickets"),
+    ] {
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(topic)
+            .map_err(|e| format!("Failed to subscribe to {name} topic: {e}"))?;
+    }
 
     // Listen on the configured port
     let listen_addr: Multiaddr = format!("/ip4/{}/tcp/{}", config.listen_addr, config.listen_port)
@@ -692,78 +676,41 @@ async fn run_network_loop(
             // Handle outgoing commands
             cmd = cmd_rx.recv() => {
                 let Some(cmd) = cmd else { break };
+                // Macro to reduce boilerplate for broadcast commands.
+                macro_rules! publish {
+                    ($topic:expr, $data:expr, $name:expr) => {
+                        if let Err(e) = swarm
+                            .behaviour_mut()
+                            .gossipsub
+                            .publish($topic.clone(), $data)
+                        {
+                            tracing::warn!(
+                                "Validator {} failed to publish {}: {}",
+                                validator_index,
+                                $name,
+                                e
+                            );
+                        }
+                    };
+                }
                 match cmd {
                     NetworkCommand::BroadcastBlock { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.blocks.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish block: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.blocks, data, "block");
                     }
                     NetworkCommand::BroadcastFinalityVote { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.finality.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish finality vote: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.finality, data, "finality vote");
                     }
                     NetworkCommand::BroadcastGuarantee { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.guarantees.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish guarantee: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.guarantees, data, "guarantee");
                     }
                     NetworkCommand::BroadcastAssurance { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.assurances.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish assurance: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.assurances, data, "assurance");
                     }
                     NetworkCommand::BroadcastAnnouncement { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.announcements.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish announcement: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.announcements, data, "announcement");
                     }
                     NetworkCommand::BroadcastTicket { data } => {
-                        if let Err(e) = swarm.behaviour_mut().gossipsub.publish(
-                            topics.tickets.clone(),
-                            data,
-                        ) {
-                            tracing::warn!(
-                                "Validator {} failed to publish ticket: {}",
-                                validator_index,
-                                e
-                            );
-                        }
+                        publish!(topics.tickets, data, "ticket");
                     }
                     NetworkCommand::FetchChunk { peer, report_hash, chunk_index, response_tx } => {
                         // Build request: [0x01][report_hash(32)][chunk_idx(2)]
