@@ -99,6 +99,38 @@ pub struct Store {
     db: Database,
 }
 
+/// Run schema migrations from `from_version` to `to_version`.
+///
+/// Migrations run sequentially: v_from→v_from+1, v_from+1→v_from+2, etc.
+/// Each step is a match arm that performs the upgrade and advances `current`.
+///
+/// To add a new migration when bumping SCHEMA_VERSION:
+/// 1. Add a new arm for the old version number.
+/// 2. The migration receives the META table for metadata updates.
+///
+/// Example (when bumping to v2):
+/// ```ignore
+/// 1 => {
+///     tracing::info!("Migrating v1 → v2: adding new_table");
+///     // ... create new table, reformat data, etc.
+///     current += 1;
+/// }
+/// ```
+fn run_migrations(
+    from_version: u32,
+    to_version: u32,
+    _meta: &mut redb::Table<&str, &[u8]>,
+) -> Result<(), StoreError> {
+    // No migrations registered yet (SCHEMA_VERSION = 1, first version).
+    // When SCHEMA_VERSION is bumped, add migration arms here.
+    if from_version < to_version {
+        return Err(StoreError::Codec(format!(
+            "no migration path from schema v{from_version} to v{to_version}"
+        )));
+    }
+    Ok(())
+}
+
 impl Store {
     /// Open or create a store at the given path.
     ///
@@ -132,11 +164,17 @@ impl Store {
             });
 
             match stored_version {
-                Some(v) if v != SCHEMA_VERSION => {
+                Some(v) if v > SCHEMA_VERSION => {
+                    // Database is newer than this binary — cannot downgrade
                     return Err(StoreError::IncompatibleSchema {
                         found: v,
                         expected: SCHEMA_VERSION,
                     });
+                }
+                Some(v) if v < SCHEMA_VERSION => {
+                    // Run migrations from v to SCHEMA_VERSION
+                    run_migrations(v, SCHEMA_VERSION, &mut meta)?;
+                    meta.insert(META_SCHEMA_VERSION, SCHEMA_VERSION.to_le_bytes().as_slice())?;
                 }
                 None => {
                     meta.insert(META_SCHEMA_VERSION, SCHEMA_VERSION.to_le_bytes().as_slice())?;
@@ -1240,6 +1278,73 @@ mod tests {
         assert!(
             msg.contains("incompatible schema version"),
             "expected IncompatibleSchema error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_schema_migration_no_path_errors() {
+        // If SCHEMA_VERSION is 1, there's no migration from 0→1 (fresh DBs skip migration).
+        // A DB at version 0 would trigger a migration attempt, but there's no migration
+        // registered for 0→1 (version 0 never existed), so it should error gracefully.
+        if SCHEMA_VERSION <= 1 {
+            // With SCHEMA_VERSION=1, we can't test migration because version 0
+            // isn't a real schema. Skip until we have version 2+.
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+
+        // Write an old version
+        {
+            let db = Database::create(&path).unwrap();
+            let txn = db.begin_write().unwrap();
+            {
+                let mut meta = txn.open_table(META).unwrap();
+                let old_version: u32 = 0;
+                meta.insert(META_SCHEMA_VERSION, old_version.to_le_bytes().as_slice())
+                    .unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Opening should attempt migration from 0 → SCHEMA_VERSION
+        let result = Store::open(&path);
+        // Since there's no registered migration from 0→1, it should fail
+        let msg = result.err().expect("expected migration error").to_string();
+        assert!(
+            msg.contains("no migration path"),
+            "expected 'no migration path' error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_schema_future_version_rejected() {
+        // A DB from a newer binary (future version) should be rejected — can't downgrade
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.redb");
+
+        {
+            let db = Database::create(&path).unwrap();
+            let txn = db.begin_write().unwrap();
+            {
+                let mut meta = txn.open_table(META).unwrap();
+                let future_version: u32 = SCHEMA_VERSION + 1;
+                meta.insert(META_SCHEMA_VERSION, future_version.to_le_bytes().as_slice())
+                    .unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        let result = Store::open(&path);
+        let msg = result
+            .err()
+            .expect("expected IncompatibleSchema")
+            .to_string();
+        assert!(
+            msg.contains("incompatible schema version"),
+            "expected IncompatibleSchema, got: {}",
             msg
         );
     }
