@@ -208,32 +208,34 @@ impl Store {
         Ok(table.get(&hash.0)?.is_some())
     }
 
+    /// Count rows in a table.
+    fn table_count<K: redb::Key + 'static, V: redb::Value + 'static>(
+        &self,
+        table_def: redb::TableDefinition<K, V>,
+    ) -> Result<u64, StoreError> {
+        let txn = self.db.begin_read()?;
+        let table = txn.open_table(table_def)?;
+        Ok(table.len()?)
+    }
+
     /// Count the number of stored blocks.
     pub fn block_count(&self) -> Result<u64, StoreError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(BLOCKS)?;
-        Ok(table.len()?)
+        self.table_count(BLOCKS)
     }
 
     /// Count the number of stored state entries.
     pub fn state_count(&self) -> Result<u64, StoreError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(STATE)?;
-        Ok(table.len()?)
+        self.table_count(STATE)
     }
 
     /// Count the number of stored DA chunks.
     pub fn chunk_count(&self) -> Result<u64, StoreError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(CHUNKS)?;
-        Ok(table.len()?)
+        self.table_count(CHUNKS)
     }
 
     /// Count the number of stored GRANDPA votes.
     pub fn vote_count(&self) -> Result<u64, StoreError> {
-        let txn = self.db.begin_read()?;
-        let table = txn.open_table(GRANDPA_VOTES)?;
-        Ok(table.len()?)
+        self.table_count(GRANDPA_VOTES)
     }
 
     // ── State ───────────────────────────────────────────────────────────
@@ -355,6 +357,13 @@ impl Store {
         decode_state_kvs(val.value()).ok_or_else(|| StoreError::Codec("invalid state KVs".into()))
     }
 
+    /// Find a value by key in decoded state KV pairs.
+    fn find_in_kvs<'a>(kvs: &'a StateKvs, key: &[u8; 31]) -> Option<&'a [u8]> {
+        kvs.iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_slice())
+    }
+
     /// Look up a specific service storage entry by computing the expected state key.
     /// Returns None if the entry doesn't exist.
     pub fn get_service_storage(
@@ -366,12 +375,7 @@ impl Store {
         let kvs = self.load_state_kvs(block_hash)?;
         let expected_key =
             grey_merkle::state_serial::compute_storage_state_key(service_id, storage_key);
-        for (key, value) in &kvs {
-            if *key == expected_key {
-                return Ok(Some(value.clone()));
-            }
-        }
-        Ok(None)
+        Ok(Self::find_in_kvs(&kvs, &expected_key).map(|v| v.to_vec()))
     }
 
     /// Look up a service account's code hash directly from state KVs.
@@ -383,18 +387,16 @@ impl Store {
     ) -> Result<Option<Hash>, StoreError> {
         let kvs = self.load_state_kvs(block_hash)?;
         let expected_key = grey_merkle::state_serial::key_for_service_pub(255, service_id);
-        for (key, value) in &kvs {
-            if *key == expected_key {
-                // Service account: version(1) + code_hash(32) + ...
-                if value.len() >= 33 {
-                    let mut h = [0u8; 32];
-                    h.copy_from_slice(&value[1..33]);
-                    return Ok(Some(Hash(h)));
-                }
-                return Ok(None);
+        Ok(Self::find_in_kvs(&kvs, &expected_key).and_then(|value| {
+            // Service account: version(1) + code_hash(32) + ...
+            if value.len() >= 33 {
+                let mut h = [0u8; 32];
+                h.copy_from_slice(&value[1..33]);
+                Some(Hash(h))
+            } else {
+                None
             }
-        }
-        Ok(None)
+        }))
     }
 
     /// Look up a service account's metadata (all fixed-size header fields).
@@ -410,52 +412,50 @@ impl Store {
     ) -> Result<Option<ServiceMetadata>, StoreError> {
         let kvs = self.load_state_kvs(block_hash)?;
         let expected_key = grey_merkle::state_serial::key_for_service_pub(255, service_id);
-        for (key, value) in &kvs {
-            if *key == expected_key {
-                if value.len() < 89 {
-                    return Err(StoreError::Codec(format!(
-                        "service metadata too short: {} bytes (need 89)",
-                        value.len()
-                    )));
-                }
-                let v = value;
-                let mut pos = 1; // skip version byte
-                let mut code_hash = [0u8; 32];
-                code_hash.copy_from_slice(&v[pos..pos + 32]);
-                pos += 32;
-                let balance = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
-                pos += 8;
-                let min_accumulate_gas = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
-                pos += 8;
-                let min_on_transfer_gas = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
-                pos += 8;
-                let total_footprint = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
-                pos += 8;
-                let free_storage_offset = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
-                pos += 8;
-                let accumulation_counter = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
-                pos += 4;
-                let last_accumulation = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
-                pos += 4;
-                let last_activity = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
-                pos += 4;
-                let preimage_count = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
-
-                return Ok(Some(ServiceMetadata {
-                    code_hash: Hash(code_hash),
-                    balance,
-                    min_accumulate_gas,
-                    min_on_transfer_gas,
-                    total_footprint,
-                    free_storage_offset,
-                    accumulation_counter,
-                    last_accumulation,
-                    last_activity,
-                    preimage_count,
-                }));
-            }
+        let Some(value) = Self::find_in_kvs(&kvs, &expected_key) else {
+            return Ok(None);
+        };
+        if value.len() < 89 {
+            return Err(StoreError::Codec(format!(
+                "service metadata too short: {} bytes (need 89)",
+                value.len()
+            )));
         }
-        Ok(None)
+        let v = value;
+        let mut pos = 1; // skip version byte
+        let mut code_hash = [0u8; 32];
+        code_hash.copy_from_slice(&v[pos..pos + 32]);
+        pos += 32;
+        let balance = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let min_accumulate_gas = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let min_on_transfer_gas = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let total_footprint = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let free_storage_offset = u64::from_le_bytes(v[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let accumulation_counter = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        let last_accumulation = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        let last_activity = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        let preimage_count = u32::from_le_bytes(v[pos..pos + 4].try_into().unwrap());
+
+        Ok(Some(ServiceMetadata {
+            code_hash: Hash(code_hash),
+            balance,
+            min_accumulate_gas,
+            min_on_transfer_gas,
+            total_footprint,
+            free_storage_offset,
+            accumulation_counter,
+            last_accumulation,
+            last_activity,
+            preimage_count,
+        }))
     }
 
     /// Look up a raw state KV by key from state KVs.
@@ -465,12 +465,7 @@ impl Store {
         state_key: &[u8; 31],
     ) -> Result<Option<Vec<u8>>, StoreError> {
         let kvs = self.load_state_kvs(block_hash)?;
-        for (key, value) in &kvs {
-            if key == state_key {
-                return Ok(Some(value.clone()));
-            }
-        }
-        Ok(None)
+        Ok(Self::find_in_kvs(&kvs, state_key).map(|v| v.to_vec()))
     }
 
     /// Get the accumulation root (beefy_root) for a given anchor block.
