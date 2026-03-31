@@ -70,6 +70,10 @@ pub struct RpcState {
     pub pending_blocks_depth: std::sync::atomic::AtomicU32,
     /// Total work packages submitted via RPC.
     pub work_packages_submitted: std::sync::atomic::AtomicU64,
+    /// Per-method RPC request counts for Prometheus metrics.
+    pub request_counts: std::sync::Mutex<std::collections::HashMap<String, u64>>,
+    /// Total RPC requests received (all methods).
+    pub rpc_requests_total: std::sync::atomic::AtomicU64,
 }
 
 #[rpc(server)]
@@ -169,6 +173,14 @@ struct RpcImpl {
     state: Arc<RpcState>,
 }
 
+impl RpcImpl {
+    fn track_request(&self, method: &str) {
+        if let Ok(mut counts) = self.state.request_counts.lock() {
+            *counts.entry(method.to_string()).or_insert(0) += 1;
+        }
+    }
+}
+
 fn internal_error(msg: impl Into<String>) -> ErrorObjectOwned {
     ErrorObjectOwned::owned(-32603, msg.into(), None::<()>)
 }
@@ -192,11 +204,13 @@ fn parse_hash_hex(hex_str: &str) -> Result<Hash, ErrorObjectOwned> {
 #[async_trait]
 impl JamRpcServer for RpcImpl {
     async fn get_status(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getStatus");
         let status = self.state.status.read().await;
         serde_json::to_value(&*status).map_err(|e| internal_error(e.to_string()))
     }
 
     async fn get_head(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getHead");
         match self.state.store.get_head() {
             Ok((hash, slot)) => Ok(serde_json::json!({
                 "hash": hex::encode(hash.0),
@@ -210,6 +224,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_block(&self, hash_hex: String) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getBlock");
         let hash = parse_hash_hex(&hash_hex)?;
 
         match self.state.store.get_block(&hash) {
@@ -229,6 +244,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_block_by_slot(&self, slot: u32) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getBlockBySlot");
         match self.state.store.get_block_hash_by_slot(slot) {
             Ok(hash) => Ok(serde_json::json!({
                 "hash": hex::encode(hash.0),
@@ -243,6 +259,7 @@ impl JamRpcServer for RpcImpl {
         &self,
         data_hex: String,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_submitWorkPackage");
         let data = hex::decode(data_hex.trim_start_matches("0x"))
             .map_err(|e| internal_error(format!("invalid hex: {}", e)))?;
 
@@ -286,6 +303,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_finalized(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getFinalized");
         match self.state.store.get_finalized() {
             Ok((hash, slot)) => Ok(serde_json::json!({
                 "hash": hex::encode(hash.0),
@@ -303,6 +321,7 @@ impl JamRpcServer for RpcImpl {
         service_id: u32,
         key_hex: String,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_readStorage");
         let (head_hash, head_slot) = self
             .state
             .store
@@ -338,6 +357,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_context(&self, service_id: u32) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getContext");
         let (head_hash, head_slot) = self
             .state
             .store
@@ -382,6 +402,7 @@ impl JamRpcServer for RpcImpl {
         &self,
         service_id: u32,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getServiceAccount");
         let (head_hash, head_slot) = self
             .state
             .store
@@ -413,6 +434,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_chain_spec(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getChainSpec");
         let c = &self.state.config;
         Ok(serde_json::json!({
             "validators_count": c.validators_count,
@@ -438,6 +460,7 @@ impl JamRpcServer for RpcImpl {
         &self,
         block_hash_hex: Option<String>,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getStateSummary");
         // Resolve block hash: use provided hash or default to head
         let (block_hash, slot) = if let Some(hex) = block_hash_hex {
             let hash = parse_hash_hex(&hex)?;
@@ -507,6 +530,7 @@ impl JamRpcServer for RpcImpl {
         &self,
         set: Option<String>,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getValidators");
         let set_name = set.as_deref().unwrap_or("current");
 
         // Component indices: 7=pending (ι), 8=current (κ), 9=previous (λ)
@@ -574,6 +598,7 @@ impl JamRpcServer for RpcImpl {
         from_slot: u32,
         to_slot: u32,
     ) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getBlockRange");
         if to_slot < from_slot {
             return Err(internal_error("to_slot must be >= from_slot"));
         }
@@ -602,6 +627,7 @@ impl JamRpcServer for RpcImpl {
     }
 
     async fn get_peers(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
+        self.track_request("jam_getPeers");
         let peer_count = self
             .state
             .peer_count
@@ -744,6 +770,10 @@ where
                 }
             })
         } else {
+            // Count non-health/metrics/ready requests (i.e., JSON-RPC calls)
+            self.state
+                .rpc_requests_total
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let fut = self.inner.call(req);
             Box::pin(fut)
         }
@@ -884,6 +914,9 @@ pub async fn format_metrics(state: &RpcState) -> String {
     let wp_submitted = state
         .work_packages_submitted
         .load(std::sync::atomic::Ordering::Relaxed);
+    let rpc_total = state
+        .rpc_requests_total
+        .load(std::sync::atomic::Ordering::Relaxed);
     drop(status);
 
     let stored_blocks = state.store.block_count().unwrap_or(0);
@@ -891,7 +924,7 @@ pub async fn format_metrics(state: &RpcState) -> String {
     let stored_chunks = state.store.chunk_count().unwrap_or(0);
     let stored_votes = state.store.vote_count().unwrap_or(0);
 
-    format!(
+    let mut base = format!(
         "# HELP grey_block_height Current head slot.\n\
          # TYPE grey_block_height gauge\n\
          grey_block_height {head_slot}\n\
@@ -942,8 +975,28 @@ pub async fn format_metrics(state: &RpcState) -> String {
          grey_finality_lag {finality_lag}\n\
          # HELP grey_work_packages_submitted_total Work packages submitted via RPC.\n\
          # TYPE grey_work_packages_submitted_total counter\n\
-         grey_work_packages_submitted_total {wp_submitted}\n"
-    )
+         grey_work_packages_submitted_total {wp_submitted}\n\
+         # HELP grey_rpc_requests_total Total RPC requests received.\n\
+         # TYPE grey_rpc_requests_total counter\n\
+         grey_rpc_requests_total {rpc_total}\n"
+    );
+
+    // Append per-method request counts
+    if let Ok(counts) = state.request_counts.lock()
+        && !counts.is_empty()
+    {
+        base.push_str("# HELP grey_rpc_requests_by_method RPC requests per method.\n");
+        base.push_str("# TYPE grey_rpc_requests_by_method counter\n");
+        let mut sorted: Vec<_> = counts.iter().collect();
+        sorted.sort_by_key(|(k, _)| (*k).clone());
+        for (method, count) in sorted {
+            base.push_str(&format!(
+                "grey_rpc_requests_by_method{{method=\"{method}\"}} {count}\n"
+            ));
+        }
+    }
+
+    base
 }
 
 /// Start a standalone metrics HTTP server on the given port.
@@ -1100,6 +1153,8 @@ pub fn create_rpc_channel(
         queue_depth_rpc: std::sync::atomic::AtomicU32::new(0),
         pending_blocks_depth: std::sync::atomic::AtomicU32::new(0),
         work_packages_submitted: std::sync::atomic::AtomicU64::new(0),
+        request_counts: std::sync::Mutex::new(std::collections::HashMap::new()),
+        rpc_requests_total: std::sync::atomic::AtomicU64::new(0),
     });
 
     (state, rx)
