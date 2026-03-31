@@ -13,7 +13,7 @@ use grey_types::config::Config;
 use grey_types::header::Block;
 use grey_types::state::State;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Current schema version. Bump this when table layouts change.
 /// The store refuses to open a database with a different version.
@@ -97,6 +97,8 @@ pub type PersistedVote = (u8, u16, Hash, u32, [u8; 64]);
 /// Persistent store backed by redb.
 pub struct Store {
     db: Database,
+    /// Path to the database file (for metrics/diagnostics).
+    db_path: PathBuf,
 }
 
 /// Run schema migrations from `from_version` to `to_version`.
@@ -184,10 +186,18 @@ impl Store {
         }
         txn.commit()?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            db_path: path.as_ref().to_path_buf(),
+        })
     }
 
     /// Return the schema version stored in the database.
+    /// Get the database file path.
+    pub fn path(&self) -> &Path {
+        &self.db_path
+    }
+
     pub fn schema_version(&self) -> Result<u32, StoreError> {
         let txn = self.db.begin_read()?;
         let table = txn.open_table(META)?;

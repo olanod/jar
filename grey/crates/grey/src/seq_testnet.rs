@@ -261,6 +261,22 @@ pub async fn run_seq_testnet(
                                 hex::encode(&header_hash.0[..8])
                             );
                         }
+
+                        // Storage growth report every 100 blocks
+                        if blocks_produced.is_multiple_of(100) {
+                            let blocks = store.block_count().unwrap_or(0);
+                            let states = store.state_count().unwrap_or(0);
+                            let chunks = store.chunk_count().unwrap_or(0);
+                            let votes = store.vote_count().unwrap_or(0);
+                            let db_size_mb = std::fs::metadata(store.path())
+                                .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                                .unwrap_or(0.0);
+                            tracing::info!(
+                                "Storage report @ block #{blocks_produced}: \
+                                 db={db_size_mb:.1}MB, blocks={blocks}, states={states}, \
+                                 chunks={chunks}, votes={votes}"
+                            );
+                        }
                     }
                     Err(e) => {
                         tracing::error!("Slot {slot}: block by v{author_idx} FAILED: {e}");
