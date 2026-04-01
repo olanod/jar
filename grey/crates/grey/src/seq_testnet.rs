@@ -282,6 +282,32 @@ pub async fn run_seq_testnet(
                                  avg={avg}µs, min={min}µs, max={max}µs, p50={p50}µs, p99={p99}µs \
                                  ({count} samples)"
                             );
+
+                            // Degradation detection: compare recent 100 blocks to first 100
+                            if count >= 200 {
+                                let early_avg: u64 =
+                                    transition_times[..100].iter().sum::<u64>() / 100;
+                                let recent_start = count.saturating_sub(100);
+                                let recent_avg: u64 =
+                                    transition_times[recent_start..].iter().sum::<u64>() / 100;
+                                let ratio = if early_avg > 0 {
+                                    recent_avg as f64 / early_avg as f64
+                                } else {
+                                    1.0
+                                };
+                                if ratio > 2.0 {
+                                    tracing::warn!(
+                                        "DEGRADATION DETECTED @ block #{blocks_produced}: \
+                                         recent avg={recent_avg}µs is {ratio:.1}x slower than \
+                                         early avg={early_avg}µs (threshold: 2.0x)"
+                                    );
+                                } else if ratio > 1.5 {
+                                    tracing::info!(
+                                        "Transition slowdown @ block #{blocks_produced}: \
+                                         recent avg={recent_avg}µs is {ratio:.1}x of early avg={early_avg}µs"
+                                    );
+                                }
+                            }
                         }
 
                         // Storage growth report every 100 blocks
