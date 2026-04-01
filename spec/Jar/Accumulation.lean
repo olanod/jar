@@ -26,7 +26,7 @@ References: `graypaper/text/accumulation.tex`, `graypaper/text/pvm_invocations.t
   historical_lookup(6), export(7), machine(8), peek(9), poke(10),
   pages(11), invoke(12), bless(14), assign(15), designate(16),
   checkpoint(17), new(18), upgrade(19), transfer(20), eject(21),
-  query(22), solicit(23), forget(24), yield(25), provide(26)
+  query(22), solicit(23), forget(24), yield(25), provide(26), set_quota(27)
 -/
 
 namespace Jar.Accumulation
@@ -730,12 +730,24 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
               (alwaysBytes.get! (offset + 11)).toNat * 72057594037927936
             d := d.insert (UInt32.ofNat sid) (UInt64.ofNat gasVal)
           return d
+        -- For jar080_tiny (coinless): read quotaService (4 bytes) after always-acc entries
+        let quotaService : ServiceId :=
+          if JamConfig.hostcallVersion == 1 then
+            match PVM.readByteArray mem (alwaysPtr + UInt64.ofNat (alwaysCount * 12)) 4 with
+            | .ok qsBytes =>
+              UInt32.ofNat ((qsBytes.get! 0).toNat +
+                (qsBytes.get! 1).toNat * 256 +
+                (qsBytes.get! 2).toNat * 65536 +
+                (qsBytes.get! 3).toNat * 16777216)
+            | _ => 0  -- Fallback; outer panic would catch this
+          else ctx.state.quotaService  -- Preserve existing value for gp072
         let state' := { ctx.state with
           manager := UInt32.ofNat newManager.toNat
           assigners := assigners
           designator := UInt32.ofNat newDesignator.toNat
           registrar := UInt32.ofNat newRegistrar.toNat
-          alwaysAccumulate := alwaysAcc }
+          alwaysAccumulate := alwaysAcc
+          quotaService := quotaService }
         let regs' := setR7 regs PVM.RESULT_OK
         (mkResult regs' mem gas', { ctx with state := state' })
       | _ => (mkPanic regs mem gas', ctx)
@@ -1334,6 +1346,41 @@ def handleHostCall (callId : PVM.Reg) (gas : Gas) (regs : PVM.Registers)
       -- Page fault on data read → panic (GP: ⚡)
       (mkPanic regs mem gas', ctx)
 
+  -- ===== set_quota (27): Set storage quota (jar080_tiny coinless, GP ΩQ) =====
+  -- φ[7] = target service ID, φ[8] = max_items, φ[9] = max_bytes
+  -- Only callable by the quota service (χ_Q). Only functional in jar080_tiny.
+  -- Raw call number in jar080_tiny: 28 (27 + 1 grow_heap shift).
+  | 27 =>
+    -- Only available in coinless variant
+    if JamConfig.hostcallVersion != 1 then
+      let regs' := setR7 regs PVM.RESULT_WHAT
+      (mkResult regs' mem gas', ctx)
+    else
+    let targetSid := UInt32.ofNat (getReg regs 7).toNat
+    let maxItems := getReg regs 8
+    let maxBytes := getReg regs 9
+    -- Privilege check: caller must be quota service (χ_Q)
+    if ctx.serviceId != ctx.state.quotaService then
+      let regs' := setR7 regs PVM.RESULT_HUH
+      (mkResult regs' mem gas', ctx)
+    else
+    match ctx.state.accounts.lookup targetSid with
+    | none =>
+      let regs' := setR7 regs PVM.RESULT_WHO
+      (mkResult regs' mem gas', ctx)
+    | some acct =>
+      match econSetQuota acct.econ maxItems maxBytes with
+      | none =>
+        -- EconModel doesn't support set_quota (e.g., BalanceEcon)
+        let regs' := setR7 regs PVM.RESULT_WHAT
+        (mkResult regs' mem gas', ctx)
+      | some econ' =>
+        let acct' := { acct with econ := econ' }
+        let accounts' := ctx.state.accounts.insert targetSid acct'
+        let state' := { ctx.state with accounts := accounts' }
+        let regs' := setR7 regs PVM.RESULT_OK
+        (mkResult regs' mem gas', { ctx with state := state' })
+
   -- ===== Unknown host call =====
   | _ =>
     let regs' := setR7 regs PVM.RESULT_WHAT
@@ -1596,11 +1643,13 @@ private structure PrivSnapshot where
   alwaysAccumulate : Dict ServiceId Gas
   stagingKeys : Array ValidatorKey
   authQueue : Array (Array Hash)
+  quotaService : ServiceId := 0
 
 private def privSnap (ps : PartialState) : PrivSnapshot :=
   { manager := ps.manager, assigners := ps.assigners, designator := ps.designator,
     registrar := ps.registrar, alwaysAccumulate := ps.alwaysAccumulate,
-    stagingKeys := ps.stagingKeys, authQueue := ps.authQueue }
+    stagingKeys := ps.stagingKeys, authQueue := ps.authQueue,
+    quotaService := ps.quotaService }
 
 /-- Accumulate all affected services in parallel. GP §12 eq:accpar.
     Services are accumulated sequentially, but host calls that read other services'
@@ -1698,6 +1747,9 @@ def accpar (ps : PartialState) (reports : Array WorkReport)
   let deltaR := deltaPriv r
   let r' := privR r eStar.registrar deltaR.registrar
 
+  -- q' = e*_q — quota service from manager's result (follows same pattern as z')
+  let q' := eStar.quotaService
+
   -- Apply privilege merge to the sequentially-accumulated account state.
   -- authQueue and stagingKeys are correctly handled by sequential accumulation
   -- (assign and designate host calls), so we don't override them here.
@@ -1707,6 +1759,7 @@ def accpar (ps : PartialState) (reports : Array WorkReport)
     designator := v'
     registrar := r'
     alwaysAccumulate := z'
+    quotaService := q'
   }
 
   (psFinal, allTransfers, allYields, gasMap, exitReasons, opaqueData')
@@ -1863,6 +1916,7 @@ def accumulate (state : State) (reports : Array WorkReport)
       designator := ps'.designator
       registrar := ps'.registrar
       alwaysAccumulate := ps'.alwaysAccumulate
+      quotaService := ps'.quotaService
     }
     authQueue := ps'.authQueue
     stagingKeys := ps'.stagingKeys
