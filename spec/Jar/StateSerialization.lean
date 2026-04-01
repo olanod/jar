@@ -312,6 +312,9 @@ private def serializePrivileged (priv : PrivilegedServices) : ByteArray := Id.ru
   for (sid, gas) in zEntries do
     buf := buf ++ encodeFixedNat 4 sid.toNat
     buf := buf ++ encodeFixedNat 8 gas.toNat
+  -- jar080_tiny (coinless): serialize quotaService after always-accumulate entries
+  if JamConfig.hostcallVersion == 1 then
+    buf := buf ++ encodeFixedNat 4 priv.quotaService.toNat
   return buf
 
 /-- Encode V validator records with E_4. -/
@@ -710,12 +713,19 @@ private def deserializePrivilegedD (coreCount : Nat) : Decoder PrivilegedService
   let (registrar, s) ← decodeFixedNatD 4 s
   let (zCount, s) ← decodeNatD s
   let (alwaysAccumulate, s) ← goZ zCount Dict.empty s
+  -- jar080_tiny (coinless): read quotaService after always-accumulate entries
+  let (quotaService, s) ←
+    if JamConfig.hostcallVersion == 1 then do
+      let (qs, s) ← decodeFixedNatD 4 s
+      pure (UInt32.ofNat qs, s)
+    else pure (0, s)
   return ({
     manager := UInt32.ofNat manager
     assigners
     designator := UInt32.ofNat designator
     registrar := UInt32.ofNat registrar
     alwaysAccumulate
+    quotaService
   }, s)
 where
   goAssigners : Nat → Array ServiceId → DecodeState → Option (Array ServiceId × DecodeState)

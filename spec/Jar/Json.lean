@@ -487,21 +487,30 @@ instance : FromJson DeferredTransfer where
       gas := ← fromJson? (← j.getObjVal? "gas") }
 
 instance : ToJson PrivilegedServices where
-  toJson ps := Json.mkObj [
-    ("manager", toJson ps.manager),
-    ("assigners", toJson ps.assigners),
-    ("designator", toJson ps.designator),
-    ("registrar", toJson ps.registrar),
-    ("always_accumulate", toJson ps.alwaysAccumulate)]
+  toJson ps :=
+    let base := [
+      ("manager", toJson ps.manager),
+      ("assigners", toJson ps.assigners),
+      ("designator", toJson ps.designator),
+      ("registrar", toJson ps.registrar),
+      ("always_accumulate", toJson ps.alwaysAccumulate)]
+    let extra := if JamConfig.hostcallVersion == 1
+      then [("quota_service", toJson ps.quotaService)]
+      else []
+    Json.mkObj (base ++ extra)
 
 instance : FromJson PrivilegedServices where
   fromJson? j := do
+    let quotaService : ServiceId := match j.getObjVal? "quota_service" with
+      | .ok v => match fromJson? v with | .ok s => s | .error _ => 0
+      | .error _ => 0
     return {
       manager := ← fromJson? (← j.getObjVal? "manager")
       assigners := ← fromJson? (← j.getObjVal? "assigners")
       designator := ← fromJson? (← j.getObjVal? "designator")
       registrar := ← fromJson? (← j.getObjVal? "registrar")
-      alwaysAccumulate := ← fromJson? (← j.getObjVal? "always_accumulate") }
+      alwaysAccumulate := ← fromJson? (← j.getObjVal? "always_accumulate")
+      quotaService }
 
 -- ============================================================================
 -- State types
