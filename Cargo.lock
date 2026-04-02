@@ -1719,6 +1719,7 @@ name = "grey-types"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "scale",
  "serde",
  "serde_json",
 ]
@@ -4330,6 +4331,23 @@ dependencies = [
 [[package]]
 name = "sample-service"
 version = "0.1.0"
+
+[[package]]
+name = "scale"
+version = "0.1.0"
+dependencies = [
+ "scale-derive",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "scale-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "schannel"
