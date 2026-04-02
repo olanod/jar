@@ -663,6 +663,10 @@ impl DecodeWithConfig for EpochMarker {
         // GP#514: variable-length validator count prefix
         let (count, c) = decode_natural(&data[off..])?;
         off += c;
+        let remaining = data.len().saturating_sub(off);
+        if count > remaining {
+            return Err(CodecError::SequenceTooLong(count, remaining));
+        }
         let mut validators = Vec::with_capacity(count);
         for _ in 0..count {
             let (bk, c) = grey_types::BandersnatchPublicKey::decode(&data[off..])?;
