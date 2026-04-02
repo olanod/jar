@@ -187,8 +187,8 @@ impl GrandpaState {
         slot: Timeslot,
         ticket_sealed: bool,
     ) {
-        // Detect same-slot equivocation: another block already registered at this slot
-        let equivocation = self.ancestry.values().any(|&(_, s, _)| s == slot);
+        // Detect same-slot equivocation: a *different* block already registered at this slot
+        let equivocation = self.ancestry.iter().any(|(h, &(_, s, _))| s == slot && *h != hash);
         if equivocation {
             self.chain_equivocations.insert(slot);
         }
