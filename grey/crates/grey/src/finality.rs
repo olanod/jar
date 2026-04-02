@@ -169,11 +169,20 @@ impl GrandpaState {
         (n * 2).div_ceil(3)
     }
 
-    /// Update best block (called on block import/authoring).
-    pub fn update_best_block(&mut self, hash: Hash, slot: Timeslot) {
-        if slot > self.best_block_slot {
+    /// Update best block using GP §19 chain selection.
+    ///
+    /// Accepts the block only if it passes `is_acceptable`.
+    /// Among acceptable blocks, prefers the one with the highest `chain_metric`
+    /// (ticket-sealed block count in unfinalized suffix).
+    pub fn update_best_block(&mut self, hash: Hash, completed_audits: &BTreeSet<Hash>) {
+        if !self.is_acceptable(hash, completed_audits) {
+            return;
+        }
+        let metric = self.chain_metric(hash);
+        let best_metric = self.chain_metric(self.best_block_hash);
+        if metric >= best_metric {
             self.best_block_hash = hash;
-            self.best_block_slot = slot;
+            self.best_block_slot = self.ancestry.get(&hash).map(|&(_, s, _)| s).unwrap_or(0);
         }
     }
 
@@ -711,7 +720,8 @@ mod tests {
 
         let mut grandpa = GrandpaState::new(config.validators_count);
         let block_hash = Hash([42u8; 32]);
-        grandpa.update_best_block(block_hash, 5);
+        grandpa.register_block(block_hash, Hash::ZERO, 5, false);
+        grandpa.update_best_block(block_hash, &BTreeSet::new());
 
         // Validator 0 prevotes
         let msg = grandpa.create_prevote(0, &secrets[0]);
@@ -752,7 +762,8 @@ mod tests {
 
         let mut grandpa = GrandpaState::new(config.validators_count);
         let block_hash = Hash([42u8; 32]);
-        grandpa.update_best_block(block_hash, 5);
+        grandpa.register_block(block_hash, Hash::ZERO, 5, false);
+        grandpa.update_best_block(block_hash, &BTreeSet::new());
 
         // All validators prevote
         for i in 0..config.validators_count {
@@ -892,7 +903,8 @@ mod tests {
 
         let mut grandpa = GrandpaState::new(config.validators_count);
         let block_hash = Hash([42u8; 32]);
-        grandpa.update_best_block(block_hash, 5);
+        grandpa.register_block(block_hash, Hash::ZERO, 5, false);
+        grandpa.update_best_block(block_hash, &BTreeSet::new());
 
         // All validators prevote for slot 5
         for i in 0..config.validators_count {
@@ -1187,7 +1199,7 @@ mod tests {
 
         // Drive finalization to slot 5 by adding 4 precommits (threshold for V=6 is 4)
         let block_hash = hashes[4]; // slot 5
-        grandpa.update_best_block(block_hash, 5);
+        grandpa.update_best_block(block_hash, &BTreeSet::new());
         for (i, secret) in secrets.iter().enumerate().take(4) {
             let vote = sign_vote(&block_hash, 5, 1, i as u16, secret, VoteType::Precommit);
             grandpa.add_precommit(vote);
@@ -1329,5 +1341,49 @@ mod tests {
         grandpa.register_block(hash_c, hash_a, 2, true); // metric = 1
 
         assert!(grandpa.chain_metric(hash_c) > grandpa.chain_metric(hash_b));
+    }
+
+    #[test]
+    fn test_update_best_block_rejects_unacceptable() {
+        let mut grandpa = GrandpaState::new(6);
+        let hash_a = Hash([1u8; 32]);
+        let orphan = Hash([99u8; 32]);
+
+        // hash_a is properly connected to finalized (Hash::ZERO)
+        grandpa.register_block(hash_a, Hash::ZERO, 5, false);
+        grandpa.update_best_block(hash_a, &BTreeSet::new());
+        assert_eq!(grandpa.best_block_hash, hash_a);
+
+        // orphan has no path to finalized_hash — must be rejected
+        grandpa.register_block(orphan, Hash([55u8; 32]), 10, false);
+        grandpa.update_best_block(orphan, &BTreeSet::new());
+        // best block must NOT change to orphan
+        assert_eq!(
+            grandpa.best_block_hash, hash_a,
+            "unacceptable block must not become best block"
+        );
+    }
+
+    #[test]
+    fn test_update_best_block_uses_chain_metric() {
+        let mut grandpa = GrandpaState::new(6);
+        let hash_a = Hash([1u8; 32]);
+        let hash_b = Hash([2u8; 32]); // slot 2, no ticket-sealed → metric 0
+        let hash_c = Hash([3u8; 32]); // slot 3, ticket-sealed    → metric 1
+
+        grandpa.register_block(hash_a, Hash::ZERO, 1, false);
+        grandpa.register_block(hash_b, hash_a, 2, false);
+        grandpa.register_block(hash_c, hash_a, 3, true);
+
+        // Register hash_b first — it becomes best (metric 0 >= initial 0)
+        grandpa.update_best_block(hash_b, &BTreeSet::new());
+        assert_eq!(grandpa.best_block_hash, hash_b);
+
+        // hash_c has higher metric (1 vs 0) — should win
+        grandpa.update_best_block(hash_c, &BTreeSet::new());
+        assert_eq!(
+            grandpa.best_block_hash, hash_c,
+            "higher chain metric must win"
+        );
     }
 }
