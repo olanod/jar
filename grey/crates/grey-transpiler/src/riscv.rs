@@ -152,7 +152,8 @@ impl TranslationContext {
         let funct7 = (inst >> 25) & 0x7F;
 
         // Flush pending auipc if this isn't a JALR or OP-IMM (ADDI) that consumes it.
-        if opcode != 0x67 && opcode != 0x13
+        if opcode != 0x67
+            && opcode != 0x13
             && let Some((auipc_rd, auipc_val)) = self.pending_auipc.take()
         {
             self.emit_load_imm(auipc_rd, auipc_val as i64)?;
@@ -1799,7 +1800,9 @@ impl TranslationContext {
     /// RISC-V addresses actually referenced as function pointers (e.g. from
     /// Check whether an address falls within any RISC-V code section.
     pub fn is_code_addr(&self, addr: u64) -> bool {
-        self.code_ranges.iter().any(|(lo, hi)| addr >= *lo && addr < *hi)
+        self.code_ranges
+            .iter()
+            .any(|(lo, hi)| addr >= *lo && addr < *hi)
     }
 
     /// absolute relocations in data sections like vtables). Returns a map of

@@ -348,7 +348,11 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
                 s.addr,
                 data[s.file_off..s.file_off + s.size].to_vec(),
             ));
-        } else if !is_exec && (name.starts_with(".rodata") || name == ".srodata" || name.starts_with(".data.rel.ro")) {
+        } else if !is_exec
+            && (name.starts_with(".rodata")
+                || name == ".srodata"
+                || name.starts_with(".data.rel.ro"))
+        {
             if s.file_off + s.size <= data.len() {
                 ro_sections.push((
                     s.addr,
