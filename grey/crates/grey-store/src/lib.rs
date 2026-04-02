@@ -1098,24 +1098,22 @@ mod tests {
         use grey_types::*;
 
         let header = header::Header {
-            parent_hash: Hash([1u8; 32]),
-            state_root: Hash([2u8; 32]),
-            extrinsic_hash: Hash([3u8; 32]),
-            timeslot: 42,
-            epoch_marker: None,
-            tickets_marker: None,
-            author_index: 5,
-            vrf_signature: BandersnatchSignature([7u8; 96]),
-            offenders_marker: vec![],
+            data: header::UnsignedHeader {
+                parent_hash: Hash([1u8; 32]),
+                state_root: Hash([2u8; 32]),
+                extrinsic_hash: Hash([3u8; 32]),
+                timeslot: 42,
+                epoch_marker: None,
+                tickets_marker: None,
+                author_index: 5,
+                vrf_signature: BandersnatchSignature([7u8; 96]),
+                offenders_marker: vec![],
+            },
             seal: BandersnatchSignature([8u8; 96]),
         };
 
         let encoded = scale::Encode::encode(&header);
-        let decoded = {
-            let (h, _) = <Header as scale::Decode>::decode(&encoded).unwrap();
-            h
-        }
-        .expect("decode should succeed");
+        let (decoded, _) = <header::Header as scale::Decode>::decode(&encoded).unwrap();
 
         assert_eq!(decoded.parent_hash.0, header.parent_hash.0);
         assert_eq!(decoded.state_root.0, header.state_root.0);
@@ -1137,15 +1135,17 @@ mod tests {
 
         let block = Block {
             header: header::Header {
-                parent_hash: Hash([10u8; 32]),
-                state_root: Hash([20u8; 32]),
-                extrinsic_hash: Hash([30u8; 32]),
-                timeslot: 100,
-                epoch_marker: None,
-                tickets_marker: None,
-                author_index: 3,
-                vrf_signature: BandersnatchSignature([50u8; 96]),
-                offenders_marker: vec![],
+                data: header::UnsignedHeader {
+                    parent_hash: Hash([10u8; 32]),
+                    state_root: Hash([20u8; 32]),
+                    extrinsic_hash: Hash([30u8; 32]),
+                    timeslot: 100,
+                    epoch_marker: None,
+                    tickets_marker: None,
+                    author_index: 3,
+                    vrf_signature: BandersnatchSignature([50u8; 96]),
+                    offenders_marker: vec![],
+                },
                 seal: BandersnatchSignature([60u8; 96]),
             },
             extrinsic: header::Extrinsic::default(),
@@ -1488,15 +1488,17 @@ mod tests {
         use grey_types::*;
         Block {
             header: header::Header {
-                parent_hash: Hash([10u8; 32]),
-                state_root: Hash([20u8; 32]),
-                extrinsic_hash: Hash([30u8; 32]),
-                timeslot: slot,
-                epoch_marker: None,
-                tickets_marker: None,
-                author_index: 0,
-                vrf_signature: BandersnatchSignature([50u8; 96]),
-                offenders_marker: vec![],
+                data: header::UnsignedHeader {
+                    parent_hash: Hash([10u8; 32]),
+                    state_root: Hash([20u8; 32]),
+                    extrinsic_hash: Hash([30u8; 32]),
+                    timeslot: slot,
+                    epoch_marker: None,
+                    tickets_marker: None,
+                    author_index: 0,
+                    vrf_signature: BandersnatchSignature([50u8; 96]),
+                    offenders_marker: vec![],
+                },
                 seal: BandersnatchSignature([60u8; 96]),
             },
             extrinsic: header::Extrinsic::default(),

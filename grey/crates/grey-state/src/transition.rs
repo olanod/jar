@@ -556,15 +556,17 @@ mod tests {
     fn make_empty_block(timeslot: Timeslot) -> Block {
         Block {
             header: Header {
-                parent_hash: Hash::ZERO,
-                state_root: Hash::ZERO,
-                extrinsic_hash: Hash::ZERO,
-                timeslot,
-                epoch_marker: None,
-                tickets_marker: None,
-                author_index: 0,
-                vrf_signature: BandersnatchSignature::default(),
-                offenders_marker: vec![],
+                data: UnsignedHeader {
+                    parent_hash: Hash::ZERO,
+                    state_root: Hash::ZERO,
+                    extrinsic_hash: Hash::ZERO,
+                    timeslot,
+                    epoch_marker: None,
+                    tickets_marker: None,
+                    author_index: 0,
+                    vrf_signature: BandersnatchSignature::default(),
+                    offenders_marker: vec![],
+                },
                 seal: BandersnatchSignature::default(),
             },
             extrinsic: Extrinsic {
