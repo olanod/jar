@@ -585,12 +585,6 @@ fn deserialize_entropy(data: &[u8]) -> Result<[Hash; 4], String> {
     Ok(entropy)
 }
 
-/// Deserialize a work report from state context.
-///
-/// Uses the standard block Decode for WorkReport since serialize_pending_reports
-/// uses the standard block Encode (compact for core_index, auth_gas_used, and
-/// RefineLoad fields).
-
 fn deserialize_service_account(data: &[u8]) -> Result<ServiceAccount, String> {
     let mut pos = 0;
 
