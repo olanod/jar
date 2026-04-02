@@ -123,7 +123,7 @@ pub async fn run_seq_testnet(
             match cmd {
                 RpcCommand::SubmitWorkPackage { data } => {
                     // Decode work package and create a guarantee
-                    match <WorkPackage as grey_codec::Decode>::decode(&data) {
+                    match <WorkPackage as scale::Decode>::decode(&data) {
                         Ok((wp, _len)) => {
                             let service_id = wp.items.first().map(|i| i.service_id).unwrap_or(0);
                             let code_hash =

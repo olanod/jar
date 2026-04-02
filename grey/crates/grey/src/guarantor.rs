@@ -303,7 +303,7 @@ pub fn handle_received_guarantee(
     }
     let report_data = &data[pos..pos + report_len];
 
-    use grey_codec::Decode;
+    use scale::Decode;
     let report = match WorkReport::decode(report_data) {
         Ok((r, _)) => r,
         Err(e) => {

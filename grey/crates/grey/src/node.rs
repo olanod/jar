@@ -1268,7 +1268,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                             );
 
                             // Decode work package from JAM codec and process it
-                            use grey_codec::decode::Decode;
+                            use scale::Decode;
                             match grey_types::work::WorkPackage::decode(&data) {
                                 Ok((wp, _consumed)) => {
                                     tracing::info!(
@@ -1372,8 +1372,8 @@ fn encode_block_message(block: &Block, header_hash: &Hash) -> Vec<u8> {
 
 /// Decode a block message received from the network.
 /// Returns (Block, header_hash) with full extrinsics.
-fn decode_block_message(data: &[u8], config: &Config) -> Option<(Block, Hash)> {
-    use grey_codec::decode::DecodeWithConfig;
+fn decode_block_message(data: &[u8], _config: &Config) -> Option<(Block, Hash)> {
+    use scale::Decode;
     if data.len() < 32 + 4 {
         return None;
     }
@@ -1384,7 +1384,7 @@ fn decode_block_message(data: &[u8], config: &Config) -> Option<(Block, Hash)> {
         return None;
     }
     let block_data = &data[36..36 + block_len];
-    let (block, _consumed) = Block::decode_with_config(block_data, config).ok()?;
+    let (block, _consumed) = Block::decode(block_data).ok()?;
     Some((block, Hash(header_hash)))
 }
 
