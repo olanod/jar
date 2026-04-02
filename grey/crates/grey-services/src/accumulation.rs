@@ -419,6 +419,7 @@ mod tests {
                 erasure_root: Hash::ZERO,
                 exports_root: Hash::ZERO,
                 exports_count: 0,
+                erasure_shards: 6,
             },
             context: RefinementContext {
                 anchor: Hash::ZERO,

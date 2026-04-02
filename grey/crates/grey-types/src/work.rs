@@ -48,6 +48,9 @@ pub struct AvailabilitySpec {
 
     /// n: Exports count.
     pub exports_count: u16,
+
+    /// v: Number of erasure-coding shards (GP#514). Equals len(κ').
+    pub erasure_shards: u16,
 }
 
 /// Refinement context C (eq 11.4).

@@ -337,6 +337,7 @@ pub fn process_work_package(
             erasure_root: Hash::ZERO, // Computed by guarantor after erasure coding
             exports_root,
             exports_count: results.iter().map(|r| r.exports_count).sum(),
+            erasure_shards: config.validators_count,
         },
         context: package.context.clone(),
         core_index,

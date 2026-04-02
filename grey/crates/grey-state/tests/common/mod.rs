@@ -1,6 +1,7 @@
 //! Shared test utilities for STF test vectors.
 #![allow(dead_code)]
 
+use grey_types::config::Config;
 use grey_types::validator::ValidatorKey;
 use grey_types::work::{AvailabilitySpec, RefinementContext, WorkDigest, WorkReport, WorkResult};
 use grey_types::{
@@ -107,6 +108,9 @@ pub fn parse_work_report(json: &serde_json::Value) -> WorkReport {
                 .map(hash_from_hex)
                 .unwrap_or_default(),
             exports_count: ps["exports_count"].as_u64().unwrap_or(0) as u16,
+            erasure_shards: ps["erasure_shards"]
+                .as_u64()
+                .unwrap_or(Config::full().validators_count as u64) as u16,
         },
         context: RefinementContext {
             anchor: ctx["anchor"]

@@ -338,6 +338,7 @@ mod tests {
                 erasure_root: Hash::ZERO,
                 exports_root: Hash::ZERO,
                 exports_count: 0,
+                erasure_shards: 0,
             },
             context: grey_types::work::RefinementContext {
                 anchor: Hash::ZERO,
@@ -371,6 +372,7 @@ mod tests {
                 erasure_root: Hash::ZERO,
                 exports_root: Hash::ZERO,
                 exports_count: 0,
+                erasure_shards: 0,
             },
             context: grey_types::work::RefinementContext {
                 anchor: Hash::ZERO,
@@ -500,6 +502,7 @@ mod tests {
                 erasure_root: Hash::ZERO,
                 exports_root: Hash::ZERO,
                 exports_count: 0,
+                erasure_shards: 0,
             },
             context: grey_types::work::RefinementContext {
                 anchor: Hash::ZERO,

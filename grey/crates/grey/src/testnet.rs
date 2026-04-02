@@ -615,7 +615,7 @@ pub fn build_test_guarantee(
 #[allow(clippy::too_many_arguments)]
 pub fn build_test_guarantee_with_payload(
     state: &grey_types::state::State,
-    _config: &Config,
+    config: &Config,
     secrets: &[grey_consensus::genesis::ValidatorSecrets],
     service_id: ServiceId,
     code_hash: Hash,
@@ -678,6 +678,7 @@ pub fn build_test_guarantee_with_payload(
             erasure_root: Hash::ZERO,
             exports_root: Hash::ZERO,
             exports_count: 0,
+            erasure_shards: config.validators_count,
         },
         context,
         core_index: core,
