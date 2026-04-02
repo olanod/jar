@@ -7,7 +7,7 @@ use crate::{
 /// Block header H (eq 5.1).
 ///
 /// H ≡ (HP, HR, HX, HT, HE, HW, HO, HI, HV, HS)
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Header {
     /// HP: Parent header hash.
     pub parent_hash: Hash,
@@ -42,7 +42,7 @@ pub struct Header {
 
 /// Epoch marker (eq 6.27).
 /// Contains next and current epoch randomness plus validator keys for the next epoch.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct EpochMarker {
     /// Next epoch randomness (η₀).
     pub entropy: Hash,
@@ -56,7 +56,7 @@ pub struct EpochMarker {
 
 /// A seal-key ticket body (TicketBody in ASN, eq 6.6).
 /// Combination of a verifiably random identifier and attempt number.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, scale::Encode, scale::Decode)]
 pub struct Ticket {
     /// y: Ticket identifier (VRF output hash).
     pub id: Hash,
@@ -66,7 +66,7 @@ pub struct Ticket {
 }
 
 /// Block B ≡ (H, E) (eq 4.2).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Block {
     pub header: Header,
     pub extrinsic: Extrinsic,
@@ -74,7 +74,7 @@ pub struct Block {
 
 /// Extrinsic data (Extrinsic in ASN, eq 4.3).
 /// Field ordering matches ASN: tickets, preimages, guarantees, assurances, disputes.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, scale::Encode, scale::Decode)]
 pub struct Extrinsic {
     /// ET: Tickets for seal-key contest.
     pub tickets: TicketsExtrinsic,
@@ -96,7 +96,7 @@ pub struct Extrinsic {
 pub type TicketsExtrinsic = Vec<TicketProof>;
 
 /// A ticket envelope (TicketEnvelope in ASN): attempt + Ring VRF signature.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct TicketProof {
     /// Attempt number (U8 in ASN).
     pub attempt: u8,
@@ -105,7 +105,7 @@ pub struct TicketProof {
 }
 
 /// Disputes extrinsic ED (Section 10).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, scale::Encode, scale::Decode)]
 pub struct DisputesExtrinsic {
     /// Verdicts: (report_hash, judgment_count) pairs.
     pub verdicts: Vec<Verdict>,
@@ -116,7 +116,7 @@ pub struct DisputesExtrinsic {
 }
 
 /// A verdict on a work-report.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Verdict {
     pub report_hash: Hash,
     pub age: u32,
@@ -124,7 +124,7 @@ pub struct Verdict {
 }
 
 /// A single judgment: (validator Ed25519 key, validator index, signature).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Judgment {
     pub is_valid: bool,
     pub validator_index: ValidatorIndex,
@@ -133,7 +133,7 @@ pub struct Judgment {
 
 /// A culprit: a validator who guaranteed an invalid report.
 /// ASN field order: target, key, signature.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Culprit {
     pub report_hash: Hash,
     pub validator_key: Ed25519PublicKey,
@@ -142,7 +142,7 @@ pub struct Culprit {
 
 /// A fault: a validator who made an incorrect judgment.
 /// ASN field order: target, vote, key, signature.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Fault {
     pub report_hash: Hash,
     pub is_valid: bool,
@@ -157,11 +157,11 @@ pub type PreimagesExtrinsic = Vec<(crate::ServiceId, Vec<u8>)>;
 pub type AssurancesExtrinsic = Vec<Assurance>;
 
 /// A single availability assurance (AvailAssurance in ASN).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Assurance {
     /// Anchor (parent hash).
     pub anchor: Hash,
-    /// Bitfield: raw bytes, one bit per core (fixed-size OCTET STRING in ASN).
+    /// Bitfield: raw bytes, one bit per core.
     pub bitfield: Vec<u8>,
     /// Validator index.
     pub validator_index: ValidatorIndex,
@@ -173,7 +173,7 @@ pub struct Assurance {
 pub type GuaranteesExtrinsic = Vec<Guarantee>;
 
 /// A single guarantee.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, scale::Encode, scale::Decode)]
 pub struct Guarantee {
     /// The work report.
     pub report: crate::work::WorkReport,
