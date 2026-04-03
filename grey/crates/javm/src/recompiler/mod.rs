@@ -632,7 +632,8 @@ impl RecompiledPvm {
             &jump_table,
             helpers,
             code.len(),
-            true, // use mmap-backed assembler
+            true,                                // use mmap-backed assembler
+            crate::gas_cost::DEFAULT_MEM_CYCLES, // TODO: get from header once mem tier is wired through
         );
         let compile_result = compiler.compile(code, &bitmask);
         let _t_compile = _t2.elapsed();

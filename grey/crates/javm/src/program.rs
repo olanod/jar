@@ -13,6 +13,19 @@ use scale::Decode as _;
 /// JAR PVM program blob magic + version: 'J','A','R', 0x01.
 pub const JAR_MAGIC: u32 = u32::from_le_bytes([b'J', b'A', b'R', 0x01]);
 
+/// Gas cost per page for initial memory allocation and grow_heap.
+pub const GAS_PER_PAGE: u64 = 1500;
+
+/// Compute memory tier load/store cycles based on total accessible pages.
+pub fn compute_mem_cycles(total_pages: u32) -> u8 {
+    match total_pages {
+        0..=2048 => 25,     // ≤ 8MB: L2 baseline
+        2049..=8192 => 50,  // ≤ 32MB: L3
+        8193..=65536 => 75, // ≤ 256MB: DRAM
+        _ => 100,           // > 256MB: DRAM saturated
+    }
+}
+
 /// Unified JAR program blob header.
 ///
 /// Layout:
@@ -203,6 +216,18 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
 
     let layout = compute_layout(&header, arguments.len() as u32)?;
 
+    // Compute memory tier from max_heap_pages + other sections
+    let total_pages = layout.mem_size / PVM_PAGE_SIZE;
+    let mem_cycles = compute_mem_cycles(total_pages);
+
+    // Charge per-page allocation gas before execution
+    let init_pages = layout.mem_size / PVM_PAGE_SIZE;
+    let init_cost = init_pages as u64 * GAS_PER_PAGE;
+    if gas < init_cost {
+        return None; // OOG before execution starts
+    }
+    let gas = gas - init_cost;
+
     // Build flat memory buffer
     let mut flat_mem = vec![0u8; layout.mem_size as usize];
     if !ro_data.is_empty() {
@@ -239,9 +264,18 @@ pub fn initialize_program(program_blob: &[u8], arguments: &[u8], gas: Gas) -> Op
         layout.heap_end,
     );
 
-    let mut pvm = Pvm::new(code.to_vec(), bitmask, jump_table, registers, flat_mem, gas);
+    let mut pvm = Pvm::new(
+        code.to_vec(),
+        bitmask,
+        jump_table,
+        registers,
+        flat_mem,
+        gas,
+        mem_cycles,
+    );
     pvm.heap_base = layout.heap_start;
     pvm.heap_top = layout.heap_end;
+    pvm.max_heap_pages = header.max_heap_pages;
 
     Some(pvm)
 }
@@ -465,7 +499,7 @@ mod tests {
     #[test]
     fn test_round_trip() {
         let blob = make_blob(&[], &[], 0, 1, &[0, 1, 0], &[1, 1, 1], &[]);
-        let pvm = initialize_program(&blob, &[], 1000);
+        let pvm = initialize_program(&blob, &[], 10000);
         assert!(pvm.is_some(), "JAR blob should be loadable");
     }
 }
