@@ -316,6 +316,8 @@ pub struct ParsedProgram<'a> {
     pub registers: [u64; crate::PVM_REGISTER_COUNT],
     pub heap_base: u32,
     pub heap_top: u32,
+    pub max_heap_pages: u32,
+    pub mem_cycles: u8,
     pub layout: Option<DataLayout>,
 }
 
@@ -357,6 +359,9 @@ pub fn parse_program_blob<'a>(
     registers[7] = mem.arg_start as u64;
     registers[8] = arguments.len() as u64;
 
+    let total_pages = mem.mem_size / PVM_PAGE_SIZE;
+    let mem_cycles = compute_mem_cycles(total_pages);
+
     Some(ParsedProgram {
         code,
         bitmask,
@@ -364,6 +369,8 @@ pub fn parse_program_blob<'a>(
         registers,
         heap_base: mem.heap_start,
         heap_top: mem.heap_end,
+        max_heap_pages: header.max_heap_pages,
+        mem_cycles,
         layout: Some(layout),
     })
 }

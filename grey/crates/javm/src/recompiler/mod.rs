@@ -543,6 +543,7 @@ impl RecompiledPvm {
         registers: [u64; PVM_REGISTER_COUNT],
         gas: Gas,
         data_layout: Option<crate::program::DataLayout>,
+        mem_cycles: u8,
     ) -> Result<Self, String> {
         let debug = {
             use std::sync::atomic::{AtomicU8, Ordering};
@@ -632,8 +633,8 @@ impl RecompiledPvm {
             &jump_table,
             helpers,
             code.len(),
-            true,                                // use mmap-backed assembler
-            crate::gas_cost::DEFAULT_MEM_CYCLES, // TODO: get from header once mem tier is wired through
+            true, // use mmap-backed assembler
+            mem_cycles,
         );
         let compile_result = compiler.compile(code, &bitmask);
         let _t_compile = _t2.elapsed();
@@ -997,6 +998,7 @@ pub fn initialize_program_recompiled(
         parsed.registers,
         gas,
         parsed.layout,
+        parsed.mem_cycles,
     )
     .ok()?;
 
@@ -1089,9 +1091,16 @@ mod tests {
         let bitmask = vec![1u8];
         let registers = [0u64; 13];
 
-        let mut pvm =
-            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-                .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            1000,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::Panic);
     }
@@ -1102,9 +1111,16 @@ mod tests {
         let bitmask = vec![1, 0];
         let registers = [0u64; 13];
 
-        let mut pvm =
-            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-                .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            1000,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::HostCall(42));
     }
@@ -1115,9 +1131,16 @@ mod tests {
         let bitmask = vec![1, 0, 0, 1];
         let registers = [0u64; 13];
 
-        let mut pvm =
-            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-                .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            1000,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(pvm.registers()[0], 123);
         assert_eq!(exit, ExitReason::Panic);
@@ -1134,9 +1157,16 @@ mod tests {
         let bitmask = vec![1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
         let registers = [0u64; 13];
 
-        let mut pvm =
-            RecompiledPvm::new(&code, bitmask, vec![], registers, 1000, Some(test_layout()))
-                .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            1000,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(pvm.registers()[2], 30);
         assert_eq!(exit, ExitReason::HostCall(0));
@@ -1148,8 +1178,16 @@ mod tests {
         let bitmask = vec![1, 0, 0];
         let registers = [0u64; 13];
 
-        let mut pvm = RecompiledPvm::new(&code, bitmask, vec![], registers, 0, Some(test_layout()))
-            .expect("compilation should succeed");
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            0,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
         let exit = pvm.run();
         assert_eq!(exit, ExitReason::OutOfGas);
     }
@@ -1177,6 +1215,7 @@ mod tests {
             registers,
             10000,
             Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
         )
         .expect("compilation should succeed");
         let exit = pvm.run();
@@ -1195,6 +1234,7 @@ mod tests {
             registers2,
             10000,
             Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
         )
         .expect("compilation should succeed");
         let exit2 = pvm2.run();
