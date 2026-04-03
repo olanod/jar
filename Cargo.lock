@@ -1550,6 +1550,7 @@ dependencies = [
  "grey-transpiler",
  "javm",
  "k256",
+ "libc",
  "polkavm",
  "polkavm-common",
 ]
