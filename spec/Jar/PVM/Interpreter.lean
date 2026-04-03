@@ -350,6 +350,85 @@ def initLinear (blob' : ByteArray) (args : ByteArray) (compact : Bool := true)
 
   some (prog, regs, mem)
 
+/-- JAR v1 initialization: parse unified header, linear memory layout.
+    Returns (ProgramBlob, Registers, Memory, memCycles, maxHeapPages, initGasCost). -/
+def initJar1 (blob : ByteArray) (args : ByteArray)
+    : Option (ProgramBlob × Registers × Memory × Nat × Nat × Nat) := do
+  let (hdr, off0) ← parseJarHeader blob
+
+  -- Read ro_data
+  if off0 + hdr.roSize > blob.size then none
+  let roData := blob.extract off0 (off0 + hdr.roSize)
+  let off1 := off0 + hdr.roSize
+
+  -- Read rw_data
+  if off1 + hdr.rwSize > blob.size then none
+  let rwData := blob.extract off1 (off1 + hdr.rwSize)
+  let off2 := off1 + hdr.rwSize
+
+  -- Read jump table
+  if hdr.entrySize == 0 || hdr.entrySize > 4 then none
+  let jumpDataLen := hdr.jumpLen * hdr.entrySize
+  if off2 + jumpDataLen > blob.size then none
+  let jumpTable := Array.ofFn (n := hdr.jumpLen) fun ⟨i, _⟩ =>
+    UInt32.ofNat (decodeLEn blob (off2 + i * hdr.entrySize) hdr.entrySize)
+  let off3 := off2 + jumpDataLen
+
+  -- Read code
+  if off3 + hdr.codeLen > blob.size then none
+  let code := blob.extract off3 (off3 + hdr.codeLen)
+  let off4 := off3 + hdr.codeLen
+
+  -- Read packed bitmask
+  let bitmaskLen := (hdr.codeLen + 7) / 8
+  if off4 + bitmaskLen > blob.size then none
+  let packedBitmask := blob.extract off4 (off4 + bitmaskLen)
+  let bitmask := ByteArray.mk (Array.ofFn (n := hdr.codeLen) fun ⟨i, _⟩ =>
+    let byteIdx := i / 8
+    let bitIdx := i % 8
+    if byteIdx < packedBitmask.size then
+      UInt8.ofNat ((packedBitmask.get! byteIdx).toNat / (2 ^ bitIdx) % 2)
+    else 0)
+
+  let prog : ProgramBlob := { code, bitmask, jumpTable }
+  if !validateBasicBlocks prog then none
+
+  -- Linear memory layout: stack | ro | rw | args | heap
+  let stackSize := hdr.stackPages * Z_P
+  let roStart := stackSize
+  let rwStart := roStart + pageRound hdr.roSize
+  let argStart := rwStart + pageRound hdr.rwSize
+  let heapStart := argStart + pageRound args.size
+  let heapEnd := heapStart + hdr.heapPages * Z_P
+  let total := heapEnd
+  if total > 2^32 then none
+
+  -- Compute tier
+  let totalPages := total / Z_P
+  let memCycles := computeMemCycles totalPages
+
+  -- Init gas cost = totalPages × gasPerPage
+  let initGasCost := totalPages * gasPerPage
+
+  -- All pages writable up to heapEnd, rest inaccessible
+  let totalPagesAll := 2^32 / Z_P
+  let access := Array.replicate totalPagesAll PageAccess.inaccessible
+  let access := mapRegionAccess access 0 total .writable
+
+  let mem : Memory := { pages := Dict.empty, access, heapTop := heapEnd, guardZone := 0 }
+  let mem := copyToMem mem roStart roData
+  let mem := copyToMem mem rwStart rwData
+  let mem := copyToMem mem argStart args
+
+  -- Registers
+  let regs := Array.replicate PVM_REGISTERS (0 : RegisterValue)
+  let regs := regs.set! 0 (UInt64.ofNat (2^32 - 2^16))  -- RA (halt addr)
+  let regs := regs.set! 1 (UInt64.ofNat stackSize)       -- SP
+  let regs := regs.set! 7 (UInt64.ofNat argStart)        -- arg base
+  let regs := regs.set! 8 (UInt64.ofNat args.size)       -- arg len
+
+  some (prog, regs, mem, memCycles, hdr.maxHeapPages, initGasCost)
+
 /-- Y(p, a) : Program initialization dispatched by memory model.
     Uses segmented (GP v0.7.2) or linear layout based on JamConfig. -/
 def initProgram [JamConfig] (blob : ByteArray) (args : ByteArray)
