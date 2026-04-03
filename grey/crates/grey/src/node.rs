@@ -681,6 +681,11 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         ) {
                             Ok((new_state, _)) => {
                                 let header_hash = grey_crypto::blake2b_256(&scale::Encode::encode(&block.header));
+                                // Capture pre-transition seal mode: the block was sealed under
+                                // the current epoch's key series, not the post-transition one.
+                                let ticket_sealed = grey_consensus::safrole::is_ticket_sealed(
+                                    &state.safrole.seal_key_series,
+                                );
                                 state = new_state;
                                 blocks_authored += 1;
                                 last_authored_slot = current_slot;
@@ -749,7 +754,13 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                     data: block_data,
                                 });
 
-                                // Update GRANDPA best block and vote
+                                // Register block in ancestry map and update best block
+                                grandpa.register_block(
+                                    header_hash,
+                                    block.header.parent_hash,
+                                    block.header.timeslot,
+                                    ticket_sealed,
+                                );
                                 grandpa.update_best_block(header_hash, current_slot);
 
                                 // Send prevote for the new block
@@ -905,6 +916,11 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                 &[],
                             ) {
                                 Ok((new_state, _)) => {
+                                    // Capture pre-transition seal mode: the block was sealed under
+                                    // the current epoch's key series, not the post-transition one.
+                                    let ticket_sealed = grey_consensus::safrole::is_ticket_sealed(
+                                        &state.safrole.seal_key_series,
+                                    );
                                     state = new_state;
                                     blocks_imported += 1;
 
@@ -1000,7 +1016,13 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                         blocks_imported
                                     );
 
-                                    // Update GRANDPA and vote on imported block
+                                    // Register block in ancestry map and update best block
+                                    grandpa.register_block(
+                                        import_hash,
+                                        block.header.parent_hash,
+                                        block.header.timeslot,
+                                        ticket_sealed,
+                                    );
                                     grandpa.update_best_block(import_hash, slot);
                                     if let Some(prevote_msg) = grandpa.create_prevote(
                                         config.validator_index,
