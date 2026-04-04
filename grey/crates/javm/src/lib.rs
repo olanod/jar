@@ -10,6 +10,8 @@
 extern crate alloc;
 
 pub mod args;
+#[cfg(feature = "std")]
+pub mod backing;
 pub mod cap;
 pub mod gas_cost;
 pub mod gas_sim;
