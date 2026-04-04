@@ -38,6 +38,16 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     linker::link_elf_service(elf_data)
 }
 
+/// Link a RISC-V rv64em ELF binary into a JAR v2 capability manifest PVM blob.
+pub fn link_elf_v2(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    linker::link_elf_v2(elf_data)
+}
+
+/// Link a RISC-V rv64em ELF binary into a JAR v2 service PVM blob.
+pub fn link_elf_service_v2(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    linker::link_elf_service_v2(elf_data)
+}
+
 /// Peephole pass: fuse `load_imm(51) + ThreeReg ALU` into `TwoRegOneImm` immediate form.
 ///
 /// Scans the PVM code for consecutive pairs where:

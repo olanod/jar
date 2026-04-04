@@ -240,6 +240,127 @@ pub fn link_elf_service(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     ))
 }
 
+/// Transpile an rv64em ELF into a JAR v2 capability manifest PVM blob.
+pub fn link_elf_v2(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    let elf = parse_linked_elf(elf_data)?;
+    let mut ctx = TranslationContext::new(elf.is_64bit);
+
+    for (_file_off, vaddr, data) in &elf.code_sections {
+        translate_section_linked(&mut ctx, data, *vaddr, &elf)?;
+    }
+    ctx.apply_fixups();
+
+    let mut ro_data = elf.ro_data.clone();
+    let mut rw_data = elf.rw_data.clone();
+    rewrite_data_code_ptrs(&elf, &mut ctx, &mut ro_data, &mut rw_data);
+
+    crate::peephole_fuse_load_imm_alu(&mut ctx.code, &mut ctx.bitmask, &ctx.jump_table);
+    crate::ensure_branch_targets_are_block_starts(
+        &mut ctx.code,
+        &mut ctx.bitmask,
+        &mut ctx.jump_table,
+    );
+
+    Ok(emitter::build_v2_service_program(
+        &ctx.code,
+        &ctx.bitmask,
+        &ctx.jump_table,
+        &ro_data,
+        &rw_data,
+        elf.stack_size / 4096,
+        elf.heap_pages,
+        elf.heap_pages, // memory_pages = heap_pages as default budget
+    ))
+}
+
+/// Transpile an rv64em ELF into a JAR v2 service PVM blob (refine + accumulate).
+pub fn link_elf_service_v2(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    let elf = parse_linked_elf(elf_data)?;
+
+    let _refine_addr = elf
+        .symbol_address("refine")
+        .or_else(|| elf.symbol_address("_start"))
+        .ok_or_else(|| {
+            TranspileError::InvalidSection("no 'refine' or '_start' symbol found".into())
+        })?;
+
+    let _accumulate_addr = elf
+        .symbol_address("accumulate")
+        .ok_or_else(|| TranspileError::InvalidSection("no 'accumulate' symbol found".into()))?;
+
+    let mut ctx = TranslationContext::new(elf.is_64bit);
+    ctx.code_ranges = elf.code_ranges.clone();
+
+    // Reserve 10 bytes for dispatch header (same as v1 service format)
+    let header_size = 10u32;
+    for _ in 0..header_size {
+        ctx.code.push(0);
+        ctx.bitmask.push(0);
+    }
+    ctx.bitmask[0] = 1;
+    ctx.bitmask[5] = 1;
+
+    for (_file_off, vaddr, data) in &elf.code_sections {
+        translate_section_linked(&mut ctx, data, *vaddr, &elf)?;
+    }
+    ctx.apply_fixups();
+
+    let mut ro_data = elf.ro_data.clone();
+    let mut rw_data = elf.rw_data.clone();
+    rewrite_data_code_ptrs(&elf, &mut ctx, &mut ro_data, &mut rw_data);
+
+    let refine_pvm = ctx.address_map.get(&_refine_addr).copied().ok_or_else(|| {
+        TranspileError::InvalidSection(format!(
+            "refine symbol at {:#x} not in translated code",
+            _refine_addr
+        ))
+    })?;
+
+    let accumulate_pvm = ctx
+        .address_map
+        .get(&_accumulate_addr)
+        .copied()
+        .ok_or_else(|| {
+            TranspileError::InvalidSection(format!(
+                "accumulate symbol at {:#x} not in translated code",
+                _accumulate_addr
+            ))
+        })?;
+
+    ctx.code[0] = 40; // jump opcode
+    let refine_rel = refine_pvm as i32;
+    ctx.code[1..5].copy_from_slice(&refine_rel.to_le_bytes());
+
+    ctx.code[5] = 40; // jump opcode
+    let acc_rel = (accumulate_pvm as i32) - 5;
+    ctx.code[6..10].copy_from_slice(&acc_rel.to_le_bytes());
+
+    if (refine_pvm as usize) < ctx.bitmask.len() {
+        ctx.bitmask[refine_pvm as usize] = 1;
+    }
+    if (accumulate_pvm as usize) < ctx.bitmask.len() {
+        ctx.bitmask[accumulate_pvm as usize] = 1;
+    }
+
+    crate::peephole_fuse_load_imm_alu(&mut ctx.code, &mut ctx.bitmask, &ctx.jump_table);
+    crate::ensure_branch_targets_are_block_starts(
+        &mut ctx.code,
+        &mut ctx.bitmask,
+        &mut ctx.jump_table,
+    );
+
+    Ok(emitter::build_v2_service_program(
+        &ctx.code,
+        &ctx.bitmask,
+        &ctx.jump_table,
+        &ro_data,
+        &rw_data,
+        elf.stack_size / 4096,
+        elf.heap_pages,
+        elf.heap_pages,
+    ))
+}
+
 impl LinkedElf {
     fn symbol_address(&self, name: &str) -> Option<u64> {
         self.symbols
