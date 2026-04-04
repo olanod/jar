@@ -165,48 +165,89 @@ impl Drop for BackingStore {
     }
 }
 
+/// Size of the JitContext page placed before the guest memory base.
+const CTX_PAGE: usize = 4096;
+
 /// A 4GB virtual address space window for a CODE cap.
 ///
-/// Allocated with `MAP_NORESERVE` — purely virtual, no physical memory.
-/// DATA caps are mapped into this window via `BackingStore::map_pages`.
+/// Layout:
+/// ```text
+/// [CTX page (4KB, RW)] [guest memory (4GB, PROT_NONE initially)]
+/// ^                     ^
+/// region                base (R15 in JIT code)
+/// ```
+///
+/// DATA caps are mapped into the guest memory region via `BackingStore::map_pages`.
+/// JitContext is placed at `base - CTX_PAGE` (same layout as FlatMemory).
 pub struct CodeWindow {
-    /// Base pointer of the 4GB region.
+    /// Base of the entire mmap'd region (CTX page).
+    region: *mut u8,
+    /// Total region size (CTX_PAGE + CODE_WINDOW_SIZE).
+    region_size: usize,
+    /// Guest memory base (region + CTX_PAGE). This is R15 in JIT code.
     base: *mut u8,
 }
 
 impl CodeWindow {
-    /// Allocate a new 4GB window.
+    /// Allocate a new 4GB window with CTX page.
     pub fn new() -> Option<Self> {
+        let region_size = CTX_PAGE + CODE_WINDOW_SIZE;
         // SAFETY: MAP_ANONYMOUS | MAP_NORESERVE allocates virtual address space only.
-        let base = unsafe {
+        let region = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
-                CODE_WINDOW_SIZE,
+                region_size,
                 libc::PROT_NONE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_NORESERVE,
                 -1,
                 0,
             )
         };
-        if base == libc::MAP_FAILED {
+        if region == libc::MAP_FAILED {
             return None;
         }
+        let region = region as *mut u8;
+
+        // Make CTX page writable (for JitContext)
+        // SAFETY: region points to the start of the mmap, CTX_PAGE is within bounds.
+        unsafe {
+            if libc::mprotect(
+                region as *mut libc::c_void,
+                CTX_PAGE,
+                libc::PROT_READ | libc::PROT_WRITE,
+            ) != 0
+            {
+                libc::munmap(region as *mut libc::c_void, region_size);
+                return None;
+            }
+        }
+
+        // SAFETY: CTX_PAGE < region_size, so add is in-bounds.
+        let base = unsafe { region.add(CTX_PAGE) };
+
         Some(Self {
-            base: base as *mut u8,
+            region,
+            region_size,
+            base,
         })
     }
 
-    /// Base pointer of the window (R15 in JIT code).
+    /// Guest memory base pointer (R15 in JIT code).
     pub fn base(&self) -> *mut u8 {
         self.base
+    }
+
+    /// Pointer to the JitContext page (base - CTX_PAGE).
+    pub fn ctx_ptr(&self) -> *mut u8 {
+        self.region
     }
 }
 
 impl Drop for CodeWindow {
     fn drop(&mut self) {
-        // SAFETY: base is from mmap in new(), CODE_WINDOW_SIZE matches.
+        // SAFETY: region/region_size from mmap in new().
         unsafe {
-            libc::munmap(self.base as *mut libc::c_void, CODE_WINDOW_SIZE);
+            libc::munmap(self.region as *mut libc::c_void, self.region_size);
         }
     }
 }

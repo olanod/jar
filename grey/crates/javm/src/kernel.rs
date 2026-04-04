@@ -849,6 +849,203 @@ impl InvocationKernel {
         self.set_active_reg(8, result1);
     }
 
+    /// Run the kernel until it needs host interaction or terminates.
+    ///
+    /// This is the main execution loop. It:
+    /// 1. Sets up JitContext in the active CODE cap's window
+    /// 2. Executes native code
+    /// 3. On ecalli exit, dispatches via dispatch_ecalli
+    /// 4. Continues or returns to host
+    pub fn run(&mut self) -> KernelResult {
+        use crate::recompiler::{signal, JitContext};
+
+        loop {
+            let vm = &self.vms[self.active_vm as usize];
+            let code_cap = &self.code_caps[vm.code_cap_id as usize];
+
+            // Place JitContext at window.ctx_ptr()
+            let ctx_raw = code_cap.window.ctx_ptr() as *mut JitContext;
+            // SAFETY: ctx_ptr() returns a writable page allocated by CodeWindow::new().
+            unsafe {
+                ctx_raw.write(JitContext {
+                    regs: vm.registers,
+                    gas: vm.gas as i64,
+                    exit_reason: 0,
+                    exit_arg: 0,
+                    heap_base: 0,
+                    heap_top: 0,
+                    jt_ptr: code_cap.jump_table.as_ptr(),
+                    jt_len: code_cap.jump_table.len() as u32,
+                    _pad0: 0,
+                    bb_starts: code_cap.bitmask.as_ptr(),
+                    bb_len: code_cap.bitmask.len() as u32,
+                    _pad1: 0,
+                    entry_pc: vm.pc,
+                    pc: vm.pc,
+                    dispatch_table: code_cap.compiled.dispatch_table.as_ptr(),
+                    code_base: code_cap.compiled.native_code.ptr as u64,
+                    flat_buf: code_cap.window.base(),
+                    flat_perms: std::ptr::null(), // not used with signals
+                    fast_reentry: 0,
+                    _pad2: 0,
+                    max_heap_pages: 0,
+                    _pad3: 0,
+                });
+            }
+
+            // Set up signal state for SIGSEGV handler
+            signal::ensure_installed();
+            let mut signal_state = signal::SignalState {
+                code_start: code_cap.compiled.native_code.ptr as usize,
+                code_end: code_cap.compiled.native_code.ptr as usize
+                    + code_cap.compiled.native_code.len,
+                exit_label_addr: code_cap.compiled.native_code.ptr as usize
+                    + code_cap.compiled.exit_label_offset as usize,
+                ctx_ptr: ctx_raw,
+                trap_table: code_cap.compiled.trap_table.clone(),
+            };
+            signal::SIGNAL_STATE.with(|cell| cell.set(&mut signal_state as *mut _));
+
+            // Execute native code
+            let entry = code_cap.compiled.native_code.entry();
+            // SAFETY: entry points to valid JIT code; ctx_raw is a valid JitContext.
+            unsafe {
+                entry(ctx_raw);
+            }
+
+            // Clear signal state
+            signal::SIGNAL_STATE.with(|cell| cell.set(std::ptr::null_mut()));
+
+            // Read back results
+            let ctx = unsafe { &*ctx_raw };
+            let exit_reason = ctx.exit_reason;
+            let exit_arg = ctx.exit_arg;
+
+            // Sync registers and gas back to VM
+            let vm = &mut self.vms[self.active_vm as usize];
+            vm.registers = ctx.regs;
+            vm.gas = ctx.gas.max(0) as u64;
+            vm.pc = ctx.pc;
+
+            match exit_reason {
+                4 => {
+                    // HostCall(imm) — ecalli
+                    vm.pc = ctx.pc; // entry_pc for re-entry
+                    match self.dispatch_ecalli(exit_arg) {
+                        DispatchResult::Continue => continue,
+                        DispatchResult::ProtocolCall { slot, regs, gas } => {
+                            return KernelResult::ProtocolCall { slot, regs, gas };
+                        }
+                        DispatchResult::RootHalt(v) => return KernelResult::Halt(v),
+                        DispatchResult::RootPanic => return KernelResult::Panic,
+                        DispatchResult::RootOutOfGas => return KernelResult::OutOfGas,
+                        DispatchResult::RootPageFault(a) => return KernelResult::PageFault(a),
+                        DispatchResult::Fault(_) => continue, // non-root fault handled
+                    }
+                }
+                0 => {
+                    // Halt
+                    let value = vm.registers[7];
+                    match self.handle_vm_halt(value) {
+                        DispatchResult::RootHalt(v) => return KernelResult::Halt(v),
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::Panic,
+                    }
+                }
+                1 => {
+                    // Panic
+                    match self.handle_vm_fault(FaultType::Panic) {
+                        DispatchResult::RootPanic => return KernelResult::Panic,
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::Panic,
+                    }
+                }
+                2 => {
+                    // OOG
+                    match self.handle_vm_fault(FaultType::OutOfGas) {
+                        DispatchResult::RootOutOfGas => return KernelResult::OutOfGas,
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::OutOfGas,
+                    }
+                }
+                3 => {
+                    // Page fault
+                    match self.handle_vm_fault(FaultType::PageFault(exit_arg)) {
+                        DispatchResult::RootPageFault(a) => return KernelResult::PageFault(a),
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::Panic,
+                    }
+                }
+                5 => {
+                    // Dynamic jump — resolve and re-enter
+                    let idx = exit_arg;
+                    if (idx as usize) < code_cap.jump_table.len() {
+                        let target = code_cap.jump_table[idx as usize];
+                        if (target as usize) < code_cap.bitmask.len()
+                            && code_cap.bitmask[target as usize] == 1
+                        {
+                            self.vms[self.active_vm as usize].pc = target;
+                            continue;
+                        }
+                    }
+                    // Invalid jump → panic
+                    match self.handle_vm_fault(FaultType::Panic) {
+                        DispatchResult::RootPanic => return KernelResult::Panic,
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::Panic,
+                    }
+                }
+                _ => return KernelResult::Panic,
+            }
+        }
+    }
+
+    /// Read bytes from a DATA cap's mapped region in the active VM's CODE window.
+    pub fn read_data_cap(&self, cap_idx: u8, offset: u32, len: u32) -> Option<Vec<u8>> {
+        let vm = &self.vms[self.active_vm as usize];
+        let d = match vm.cap_table.get(cap_idx)? {
+            Cap::Data(d) => d,
+            _ => return None,
+        };
+        let (base_page, _) = d.mapped?;
+        let code_cap = &self.code_caps[vm.code_cap_id as usize];
+        let addr = base_page as usize * crate::PVM_PAGE_SIZE as usize + offset as usize;
+        let mut buf = vec![0u8; len as usize];
+        // SAFETY: base_page was mmap'd into the CODE window by map_pages.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                code_cap.window.base().add(addr),
+                buf.as_mut_ptr(),
+                len as usize,
+            );
+        }
+        Some(buf)
+    }
+
+    /// Write bytes into a DATA cap's mapped region in the active VM's CODE window.
+    pub fn write_data_cap(&self, cap_idx: u8, offset: u32, data: &[u8]) -> bool {
+        let vm = &self.vms[self.active_vm as usize];
+        let d = match vm.cap_table.get(cap_idx) {
+            Some(Cap::Data(d)) => d,
+            _ => return false,
+        };
+        let (base_page, _) = match d.mapped {
+            Some(m) => m,
+            None => return false,
+        };
+        let code_cap = &self.code_caps[vm.code_cap_id as usize];
+        let addr = base_page as usize * crate::PVM_PAGE_SIZE as usize + offset as usize;
+        // SAFETY: base_page was mmap'd into the CODE window by map_pages.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                code_cap.window.base().add(addr),
+                data.len(),
+            );
+        }
+        true
+    }
+
     /// Handle a callee halt (exit from VM execution).
     pub fn handle_vm_halt(&mut self, exit_value: u64) -> DispatchResult {
         let callee_id = self.active_vm;
@@ -1259,5 +1456,20 @@ mod tests {
             kernel.vms[0].cap_table.get(callable_idx),
             Some(Cap::Callable(_))
         ));
+    }
+
+    #[test]
+    fn test_kernel_run_trap() {
+        // Build a blob with a `trap` instruction (opcode 0) — causes Panic.
+        // This validates the full execution path: blob parse → JIT compile →
+        // mmap DATA → execute native code → exit handling.
+        let blob = make_simple_blob(10);
+        let mut kernel = InvocationKernel::new(&blob, &[], 100_000).unwrap();
+        let _ = kernel.vms[0].transition(VmState::Running);
+        let result = kernel.run();
+        assert!(
+            matches!(result, KernelResult::Panic),
+            "trap instruction should cause Panic, got: {result:?}"
+        );
     }
 }

@@ -39,12 +39,12 @@ pub struct JitContext {
     pub jt_ptr: *const u32,
     /// Jump table length (offset 136).
     pub jt_len: u32,
-    _pad0: u32,
+    pub _pad0: u32,
     /// Basic block starts pointer (offset 144).
     pub bb_starts: *const u8,
     /// Basic block starts length (offset 152).
     pub bb_len: u32,
-    _pad1: u32,
+    pub _pad1: u32,
     /// Entry PC for re-entry after host calls (offset 160).
     pub entry_pc: u32,
     /// Current PC when execution stopped (offset 164).
@@ -59,10 +59,10 @@ pub struct JitContext {
     pub flat_perms: *const u8,
     /// Fast re-entry flag (offset 200).
     pub fast_reentry: u32,
-    _pad2: u32,
+    pub _pad2: u32,
     /// Maximum heap pages — grow_heap refuses beyond this (offset 208).
     pub max_heap_pages: u32,
-    _pad3: u32,
+    pub _pad3: u32,
 }
 
 /// Compiled native code buffer (mmap'd as executable).
