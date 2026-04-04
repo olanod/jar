@@ -12,7 +12,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use crate::backing::BackingStore;
+use crate::backing::{BackingStore, CodeWindow};
 use crate::cap::{
     Access, CallableCap, Cap, CapTable, CodeCap, DataCap, HandleCap, IPC_SLOT, UntypedCap,
 };
@@ -107,11 +107,16 @@ impl InvocationKernel {
         // Build VM 0's cap table from the manifest
         let mut cap_table = CapTable::new();
         let mut init_pages: u32 = 0;
+        let mut data_caps_to_map: Vec<(u32, u32, u32, Access)> = Vec::new(); // (base_page, backing_offset, page_count, access)
 
         for entry in &parsed.caps {
             let cap = kernel.create_cap_from_manifest(entry, &parsed)?;
             if let Cap::Data(ref d) = cap {
                 init_pages += d.page_count;
+                // Record DATA caps that need mapping into the CODE window
+                if let Some((base_page, access)) = d.mapped {
+                    data_caps_to_map.push((base_page, d.backing_offset, d.page_count, access));
+                }
             }
             cap_table.set(entry.cap_index, cap);
         }
@@ -123,8 +128,29 @@ impl InvocationKernel {
         }
         let remaining_gas = gas - init_gas_cost;
 
+        // Resolve the invoke CODE cap to find its code_caps index
+        let invoke_code_id = match cap_table.get(parsed.header.invoke_cap) {
+            Some(Cap::Code(c)) => c.id,
+            _ => return Err(KernelError::InvalidBlob),
+        };
+
+        // Map DATA caps into the invoke CODE cap's window
+        let invoke_code_cap = &kernel.code_caps[invoke_code_id as usize];
+        for (base_page, backing_offset, page_count, access) in &data_caps_to_map {
+            unsafe {
+                if !kernel.backing.map_pages(
+                    invoke_code_cap.window.base(),
+                    *base_page,
+                    *backing_offset,
+                    *page_count,
+                    *access,
+                ) {
+                    return Err(KernelError::MemoryError);
+                }
+            }
+        }
+
         // Give VM 0 the UNTYPED cap at a free slot
-        // Find first free slot in [64..254]
         let untyped_slot = (64..255u8)
             .find(|i| cap_table.is_empty(*i))
             .ok_or(KernelError::CapTableFull)?;
@@ -132,8 +158,8 @@ impl InvocationKernel {
 
         // Create VM 0
         let vm0 = VmInstance::new(
-            parsed.header.invoke_cap as u16, // code_cap_id used as reference to invoke_cap
-            0,                                // entry_index (set by caller via CALL)
+            invoke_code_id,
+            0, // entry_index (set by caller via CALL)
             cap_table,
             remaining_gas,
         );
@@ -156,10 +182,34 @@ impl InvocationKernel {
                 if self.code_caps.len() >= MAX_CODE_CAPS {
                     return Err(KernelError::TooManyCodeCaps);
                 }
-                let code_cap = Arc::new(CodeCap { id });
+
+                // Parse the code sub-blob (jump_table + code + bitmask)
+                let code_blob = program_v2::parse_code_blob(code_data)
+                    .ok_or(KernelError::InvalidBlob)?;
+
+                // JIT compile to native x86-64
+                let compiled = crate::recompiler::compile_code(
+                    &code_blob.code,
+                    &code_blob.bitmask,
+                    &code_blob.jump_table,
+                    self.mem_cycles,
+                )
+                .map_err(|e| {
+                    tracing::warn!("JIT compile failed: {e}");
+                    KernelError::CompileError
+                })?;
+
+                // Allocate 4GB virtual window
+                let window = CodeWindow::new().ok_or(KernelError::MemoryError)?;
+
+                let code_cap = Arc::new(CodeCap {
+                    id,
+                    window,
+                    compiled,
+                    jump_table: code_blob.jump_table,
+                    bitmask: code_blob.bitmask,
+                });
                 self.code_caps.push(Arc::clone(&code_cap));
-                // TODO: Phase 5+ will compile the code blob here.
-                let _ = code_data; // Will be used for JIT compilation
                 Ok(Cap::Code(code_cap))
             }
             CapEntryType::Data => {
@@ -177,12 +227,9 @@ impl InvocationKernel {
                     }
                 }
 
-                // Create DATA cap, mapped at init
+                // Create DATA cap, marked as mapped (actual mmap happens after all caps are created)
                 let mut data_cap = DataCap::new(backing_offset, entry.page_count);
                 data_cap.map(entry.base_page, entry.init_access);
-
-                // Actually map into the backing store
-                // TODO: map into the CODE cap's window once we have CodeWindow integration
                 Ok(Cap::Data(data_cap))
             }
         }
@@ -511,11 +558,29 @@ impl InvocationKernel {
             }
         };
 
+        let vm = &self.vms[self.active_vm as usize];
+        let code_cap_id = vm.code_cap_id;
         let vm = &mut self.vms[self.active_vm as usize];
         match vm.cap_table.get_mut(cap_idx) {
             Some(Cap::Data(d)) => {
-                d.map(base_page, access);
-                // TODO: actually mmap into the CODE window
+                // Unmap previous mapping if remapping
+                if let Some((old_base, _)) = d.map(base_page, access) {
+                    let code_cap = &self.code_caps[code_cap_id as usize];
+                    unsafe {
+                        BackingStore::unmap_pages(code_cap.window.base(), old_base, d.page_count);
+                    }
+                }
+                // Map new location
+                let code_cap = &self.code_caps[code_cap_id as usize];
+                unsafe {
+                    self.backing.map_pages(
+                        code_cap.window.base(),
+                        base_page,
+                        d.backing_offset,
+                        d.page_count,
+                        access,
+                    );
+                }
             }
             _ => {
                 self.set_active_reg(7, RESULT_WHAT);
@@ -525,11 +590,20 @@ impl InvocationKernel {
     }
 
     fn mgmt_unmap(&mut self, cap_idx: u8) -> DispatchResult {
+        let code_cap_id = self.vms[self.active_vm as usize].code_cap_id;
         let vm = &mut self.vms[self.active_vm as usize];
         match vm.cap_table.get_mut(cap_idx) {
             Some(Cap::Data(d)) => {
-                d.unmap();
-                // TODO: actually unmap from the CODE window
+                if let Some((base_page, _)) = d.unmap() {
+                    let code_cap = &self.code_caps[code_cap_id as usize];
+                    unsafe {
+                        BackingStore::unmap_pages(
+                            code_cap.window.base(),
+                            base_page,
+                            d.page_count,
+                        );
+                    }
+                }
             }
             _ => {
                 self.set_active_reg(7, RESULT_WHAT);
@@ -578,8 +652,18 @@ impl InvocationKernel {
     }
 
     fn mgmt_drop(&mut self, cap_idx: u8) -> DispatchResult {
+        let code_cap_id = self.vms[self.active_vm as usize].code_cap_id;
         let vm = &mut self.vms[self.active_vm as usize];
-        // TODO: if DATA and mapped, unmap from window. If HANDLE, destroy child VM.
+        // Unmap DATA caps before dropping
+        if let Some(Cap::Data(d)) = vm.cap_table.get(cap_idx)
+            && let Some((base_page, _)) = d.mapped
+        {
+            let page_count = d.page_count;
+            let code_cap = &self.code_caps[code_cap_id as usize];
+            unsafe {
+                BackingStore::unmap_pages(code_cap.window.base(), base_page, page_count);
+            }
+        }
         vm.cap_table.drop_cap(cap_idx);
         DispatchResult::Continue
     }
@@ -874,6 +958,7 @@ pub enum KernelError {
     OutOfMemory,
     TooManyCodeCaps,
     CapTableFull,
+    CompileError,
 }
 
 impl core::fmt::Display for KernelError {
@@ -885,6 +970,7 @@ impl core::fmt::Display for KernelError {
             Self::OutOfMemory => write!(f, "untyped pool exhausted"),
             Self::TooManyCodeCaps => write!(f, "exceeded max CODE caps ({MAX_CODE_CAPS})"),
             Self::CapTableFull => write!(f, "cap table full"),
+            Self::CompileError => write!(f, "JIT compilation failed"),
         }
     }
 }
@@ -895,8 +981,29 @@ mod tests {
     use crate::cap::ProtocolCap;
     use crate::program_v2::{build_v2_blob, CapManifestEntry, CapEntryType};
 
+    /// Build a minimal code sub-blob (code_header + jump_table + code + bitmask).
+    /// Contains a single `trap` instruction (opcode 0).
+    fn make_code_sub_blob() -> Vec<u8> {
+        let code = [0u8]; // trap instruction
+        let bitmask = [1u8]; // instruction start
+        let jump_table: &[u32] = &[];
+        let entry_size: u8 = 1;
+
+        let mut blob = Vec::new();
+        // Sub-blob header: jump_len(4) + entry_size(1) + code_len(4)
+        blob.extend_from_slice(&(jump_table.len() as u32).to_le_bytes());
+        blob.push(entry_size);
+        blob.extend_from_slice(&(code.len() as u32).to_le_bytes());
+        // Code bytes
+        blob.extend_from_slice(&code);
+        // Packed bitmask
+        blob.push(bitmask[0]); // 1 bit packed
+        blob
+    }
+
     fn make_simple_blob(memory_pages: u32) -> Vec<u8> {
-        // Minimal blob: 1 CODE cap (empty) + 1 DATA cap (stack, 1 page)
+        let code_data = make_code_sub_blob();
+
         let caps = vec![
             CapManifestEntry {
                 cap_index: 64,
@@ -905,7 +1012,7 @@ mod tests {
                 page_count: 0,
                 init_access: Access::RO,
                 data_offset: 0,
-                data_len: 0,
+                data_len: code_data.len() as u32,
             },
             CapManifestEntry {
                 cap_index: 65,
@@ -913,11 +1020,11 @@ mod tests {
                 base_page: 0,
                 page_count: 1,
                 init_access: Access::RW,
-                data_offset: 0,
+                data_offset: 0, // doesn't reference data section
                 data_len: 0,
             },
         ];
-        build_v2_blob(memory_pages, 64, 65, &caps, &[])
+        build_v2_blob(memory_pages, 64, 65, &caps, &code_data)
     }
 
     #[test]

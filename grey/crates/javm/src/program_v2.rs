@@ -195,6 +195,74 @@ pub fn parse_v2_blob(blob: &[u8]) -> Option<ParsedBlobV2<'_>> {
     })
 }
 
+/// Parsed code sub-blob (within a CODE cap's data section).
+#[derive(Debug)]
+pub struct ParsedCodeBlob {
+    pub jump_table: Vec<u32>,
+    pub code: Vec<u8>,
+    pub bitmask: Vec<u8>,
+}
+
+/// Parse a CODE cap's data section into jump table, code, and bitmask.
+/// Format: jump_len(4) + entry_size(1) + code_len(4) + jump_entries + code + packed_bitmask
+pub fn parse_code_blob(data: &[u8]) -> Option<ParsedCodeBlob> {
+    if data.len() < 9 {
+        return None;
+    }
+    let mut offset = 0;
+    let jump_len = read_u32_le(data, &mut offset)? as usize;
+    let entry_size = read_u8(data, &mut offset)? as usize;
+    let code_len = read_u32_le(data, &mut offset)? as usize;
+
+    if entry_size == 0 || entry_size > 4 {
+        return None;
+    }
+
+    // Read jump table
+    let jt_bytes = jump_len * entry_size;
+    if offset + jt_bytes > data.len() {
+        return None;
+    }
+    let mut jump_table = Vec::with_capacity(jump_len);
+    for _ in 0..jump_len {
+        let mut val: u32 = 0;
+        for i in 0..entry_size {
+            val |= (data[offset + i] as u32) << (i * 8);
+        }
+        jump_table.push(val);
+        offset += entry_size;
+    }
+
+    // Read code
+    if offset + code_len > data.len() {
+        return None;
+    }
+    let code = data[offset..offset + code_len].to_vec();
+    offset += code_len;
+
+    // Read packed bitmask
+    let bitmask_bytes = code_len.div_ceil(8);
+    if offset + bitmask_bytes > data.len() {
+        return None;
+    }
+    let bitmask = unpack_bitmask(&data[offset..offset + bitmask_bytes], code_len);
+
+    Some(ParsedCodeBlob {
+        jump_table,
+        code,
+        bitmask,
+    })
+}
+
+/// Unpack a packed bitmask (1 bit per byte) into one byte per code position.
+fn unpack_bitmask(packed: &[u8], code_len: usize) -> Vec<u8> {
+    let mut bitmask = vec![0u8; code_len];
+    for i in 0..code_len {
+        bitmask[i] = (packed[i / 8] >> (i % 8)) & 1;
+    }
+    bitmask
+}
+
 /// Build a JAR v2 blob from components.
 pub fn build_v2_blob(
     memory_pages: u32,

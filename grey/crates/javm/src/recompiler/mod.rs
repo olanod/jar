@@ -66,11 +66,11 @@ pub struct JitContext {
 }
 
 /// Compiled native code buffer (mmap'd as executable).
-struct NativeCode {
-    ptr: *mut u8,
-    len: usize,
+pub struct NativeCode {
+    pub ptr: *mut u8,
+    pub len: usize,
     /// The mmap region capacity (may be > len due to pre-allocation).
-    mmap_cap: usize,
+    pub mmap_cap: usize,
 }
 
 impl NativeCode {
@@ -119,7 +119,7 @@ impl NativeCode {
     }
 
     /// Get the function pointer for the compiled code entry.
-    fn entry(&self) -> unsafe extern "sysv64" fn(*mut JitContext) {
+    pub fn entry(&self) -> unsafe extern "sysv64" fn(*mut JitContext) {
         // SAFETY: ptr contains valid x86-64 machine code from the assembler, and was
         // mprotected to PROT_READ|PROT_EXEC. Transmute to fn pointer is valid.
         unsafe { std::mem::transmute(self.ptr) }
@@ -134,6 +134,61 @@ impl Drop for NativeCode {
         }
     }
 }
+
+/// Result of standalone code compilation (no execution context).
+pub struct CompiledCode {
+    pub native_code: NativeCode,
+    pub dispatch_table: Vec<i32>,
+    pub trap_table: Vec<(u32, u32)>,
+    pub exit_label_offset: u32,
+}
+
+/// Compile PVM code to native x86-64 without creating an execution context.
+/// Returns the compiled artifacts that can be stored in a CodeCap.
+pub fn compile_code(
+    code: &[u8],
+    bitmask: &[u8],
+    jump_table: &[u32],
+    mem_cycles: u8,
+) -> Result<CompiledCode, String> {
+    let helpers = HelperFns {
+        mem_read_u8: mem_read_u8 as *const () as u64,
+        mem_read_u16: mem_read_u16 as *const () as u64,
+        mem_read_u32: mem_read_u32 as *const () as u64,
+        mem_read_u64: mem_read_u64_fn as *const () as u64,
+        mem_write_u8: mem_write_u8 as *const () as u64,
+        mem_write_u16: mem_write_u16 as *const () as u64,
+        mem_write_u32: mem_write_u32 as *const () as u64,
+        mem_write_u64: mem_write_u64_fn as *const () as u64,
+        sbrk_helper: sbrk_helper as *const () as u64,
+    };
+
+    let compiler = Compiler::new(bitmask, jump_table, helpers, code.len(), true, mem_cycles);
+    let result = compiler.compile(code, bitmask);
+    let dispatch_table = result.dispatch_table;
+
+    let native_code = if let Some(mmap_ptr) = result.mmap_ptr {
+        NativeCode {
+            ptr: mmap_ptr,
+            len: result.mmap_len,
+            mmap_cap: result.mmap_cap,
+        }
+    } else {
+        NativeCode::new(&result.native_code)?
+    };
+
+    Ok(CompiledCode {
+        native_code,
+        dispatch_table,
+        trap_table: result.trap_table,
+        exit_label_offset: result.exit_label_offset,
+    })
+}
+
+// SAFETY: NativeCode holds a raw pointer to mmap'd memory. It's only accessed from
+// the thread that owns the kernel (cooperative scheduling).
+unsafe impl Send for NativeCode {}
+unsafe impl Sync for NativeCode {}
 
 /// Flat memory backing buffer for inline JIT memory access.
 ///

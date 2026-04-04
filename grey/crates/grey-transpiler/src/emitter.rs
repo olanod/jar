@@ -117,6 +117,10 @@ pub fn build_v2_service_program(
     };
 
     let mut code_blob = Vec::new();
+    // Code sub-blob header: jump_len(4) + entry_size(1) + code_len(4) = 9 bytes
+    code_blob.extend_from_slice(&(jump_table.len() as u32).to_le_bytes());
+    code_blob.push(entry_size);
+    code_blob.extend_from_slice(&(code.len() as u32).to_le_bytes());
     // Jump table entries
     for &entry in jump_table {
         code_blob.extend_from_slice(&entry.to_le_bytes()[..entry_size as usize]);
