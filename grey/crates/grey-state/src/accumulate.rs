@@ -654,15 +654,7 @@ fn run_accumulate_pvm_v2(
         match result {
             KernelResult::Halt(exit_value) => {
                 let gas_used = initial_gas - pvm.gas();
-
-                // Check if output hash is valid (32 bytes accessible)
-                // In v2, the output is set via the OUTPUT protocol cap,
-                // but we also support the v1 convention of φ[7]/φ[8] pointing to output.
-                if exit_value != 0 {
-                    // v2 programs set output via OUTPUT protocol cap
-                    // (already stored in regular.output by host_output_v2)
-                }
-
+                tracing::info!(exit_value, gas_used, service_id, "accumulate PVM halted");
                 return (regular, gas_used);
             }
             KernelResult::Panic => {
@@ -716,7 +708,7 @@ fn handle_v2_host_call(
 ) -> bool {
     const RESULT_NONE: u64 = u64::MAX;
 
-    tracing::debug!(slot, service_id, "handle_v2_host_call");
+    tracing::info!(slot, service_id, "handle_v2_host_call");
     match slot {
         0 => {
             // GAS: return remaining gas
