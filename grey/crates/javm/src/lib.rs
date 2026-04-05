@@ -18,6 +18,7 @@ pub mod gas_sim;
 pub mod instruction;
 #[cfg(feature = "std")]
 pub mod kernel;
+pub mod backend;
 pub mod interpreter;
 pub mod program;
 pub mod program_v2;
@@ -32,8 +33,9 @@ pub mod vm;
 
 #[cfg(feature = "std")]
 pub use recompiler::RecompiledPvm;
-pub use vm::Pvm;
+pub use backend::PvmBackend;
 pub use interpreter::Interpreter;
+pub use vm::Pvm;
 
 // --- PVM types ---
 

@@ -128,6 +128,38 @@ impl Interpreter {
         }
     }
 
+    /// Pre-decode code into an `InterpreterProgram` for storage in a CODE cap.
+    /// This performs the expensive one-time work (gas block computation, instruction
+    /// pre-decoding) without allocating runtime state (registers, memory, gas).
+    pub fn predecode(
+        code: &[u8],
+        bitmask: &[u8],
+        jump_table: &[u32],
+        mem_cycles: u8,
+    ) -> crate::backend::InterpreterProgram {
+        let basic_block_starts = compute_basic_block_starts(code, bitmask);
+        let gas_block_starts = compute_gas_block_starts(code, bitmask);
+        let block_gas_costs =
+            compute_block_gas_costs(code, bitmask, &gas_block_starts, mem_cycles);
+        let (decoded_insts, pc_to_idx) = predecode_instructions(
+            code,
+            bitmask,
+            &basic_block_starts,
+            &gas_block_starts,
+            &block_gas_costs,
+        );
+        crate::backend::InterpreterProgram {
+            decoded_insts,
+            pc_to_idx,
+            basic_block_starts,
+            block_gas_costs,
+            code: code.to_vec(),
+            bitmask: bitmask.to_vec(),
+            jump_table: jump_table.to_vec(),
+            mem_cycles,
+        }
+    }
+
     /// Set the program counter to a specific offset.
     /// Used by service blobs to select refine (PC=0) or accumulate (PC=5) entry points.
     pub fn set_pc(&mut self, pc: u32) {
