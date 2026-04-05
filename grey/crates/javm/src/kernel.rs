@@ -272,6 +272,14 @@ impl InvocationKernel {
     ///
     /// Returns a `DispatchResult` indicating what the kernel should do next.
     pub fn dispatch_ecalli(&mut self, imm: u32) -> DispatchResult {
+        // Charge ecalli gas cost (10) — matches GP host call gas charge
+        let ecalli_gas: u64 = 10;
+        let vm = &mut self.vms[self.active_vm as usize];
+        if vm.gas < ecalli_gas {
+            return DispatchResult::Fault(FaultType::OutOfGas);
+        }
+        vm.gas -= ecalli_gas;
+
         if imm < CALL_RANGE_END {
             // CALL cap[N]
             let cap_idx = imm as u8;

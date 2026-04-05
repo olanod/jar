@@ -678,15 +678,7 @@ fn run_accumulate_pvm_v2(
                 return (exceptional, gas_used);
             }
             KernelResult::ProtocolCall { slot, regs, gas: _ } => {
-                // Charge host call gas (10)
-                let host_gas_cost: u64 = 10;
-                if pvm.gas() < host_gas_cost {
-                    pvm.set_gas(0);
-                    let gas_used = initial_gas;
-                    return (exceptional, gas_used);
-                }
-                pvm.set_gas(pvm.gas() - host_gas_cost);
-
+                // Gas already charged by kernel (10 per ecalli in dispatch_ecalli)
                 // Dispatch by protocol cap slot number (matches GP host call IDs directly)
                 let ok = handle_v2_host_call(
                     config, slot, &mut pvm, &regs, &mut regular, &mut exceptional, timeslot,
