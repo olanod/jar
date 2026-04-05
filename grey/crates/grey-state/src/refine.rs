@@ -118,9 +118,44 @@ pub fn invoke_is_authorized(
     let mut pvm =
         PvmInstance::initialize(code_blob, &args, gas_limit).ok_or(RefineError::PvmInitFailed)?;
 
-    // Entry point for is-authorized: PC=0 (default after initialize)
     let initial_gas = pvm.gas();
 
+    if pvm.is_kernel() {
+        // v2 kernel path
+        use javm::kernel::KernelResult;
+        loop {
+            match pvm.kernel_run() {
+                KernelResult::Halt(_) => {
+                    let gas_used = initial_gas - pvm.gas();
+                    let packed = pvm.reg(7);
+                    let ptr = (packed >> 32) as u32;
+                    let len = (packed & 0xFFFFFFFF) as u32;
+                    let output = pvm
+                        .kernel()
+                        .map(|k| k.read_data_cap_window(ptr, len).unwrap_or_default())
+                        .unwrap_or_default();
+                    return Ok((output, gas_used));
+                }
+                KernelResult::Panic => {
+                    return Err(RefineError::AuthorizationFailed("PVM panic".into()));
+                }
+                KernelResult::OutOfGas => {
+                    return Err(RefineError::AuthorizationFailed("out of gas".into()));
+                }
+                KernelResult::PageFault(addr) => {
+                    return Err(RefineError::AuthorizationFailed(format!(
+                        "page fault at 0x{addr:08x}"
+                    )));
+                }
+                KernelResult::ProtocolCall { .. } => {
+                    // Stub: return WHAT for all protocol calls
+                    pvm.kernel_resume(u64::MAX - 1, 0);
+                }
+            }
+        }
+    }
+
+    // v1 path
     loop {
         let exit = pvm.run();
         match exit {
@@ -185,11 +220,66 @@ pub fn invoke_refine(
         None => return error_refine_result(item, WorkResult::BadCode, 0),
     };
 
-    // Entry point for refine: PC=0 (default)
     let initial_gas = pvm.gas();
     let mut exported_segments: Vec<Vec<u8>> = Vec::new();
     let mut expunge_requests: Vec<Hash> = Vec::new();
 
+    if pvm.is_kernel() {
+        // v2 kernel path
+        use javm::kernel::KernelResult;
+        loop {
+            match pvm.kernel_run() {
+                KernelResult::Halt(_) => {
+                    let gas_used = initial_gas - pvm.gas();
+                    let packed = pvm.reg(7);
+                    let ptr = (packed >> 32) as u32;
+                    let len = (packed & 0xFFFFFFFF) as u32;
+                    let output = pvm
+                        .kernel()
+                        .map(|k| k.read_data_cap_window(ptr, len).unwrap_or_default())
+                        .unwrap_or_default();
+                    let exports_count = exported_segments.len() as u16;
+                    let result = if item.exports_count != exports_count && item.exports_count > 0 {
+                        WorkResult::BadExports
+                    } else {
+                        WorkResult::Ok(output)
+                    };
+                    return RefineResult {
+                        digest: WorkDigest {
+                            service_id: item.service_id,
+                            code_hash: item.code_hash,
+                            payload_hash: grey_crypto::blake2b_256(&item.payload),
+                            accumulate_gas: item.gas_limit.saturating_sub(gas_used),
+                            result,
+                            gas_used,
+                            imports_count: 0,
+                            extrinsics_count: 0,
+                            extrinsics_size: 0,
+                            exports_count,
+                        },
+                        exported_segments,
+                        expunge_requests,
+                    };
+                }
+                KernelResult::Panic => {
+                    let gas_used = initial_gas - pvm.gas();
+                    return error_refine_result(item, WorkResult::Panic, gas_used);
+                }
+                KernelResult::OutOfGas => {
+                    return error_refine_result(item, WorkResult::OutOfGas, initial_gas);
+                }
+                KernelResult::PageFault(_) => {
+                    let gas_used = initial_gas - pvm.gas();
+                    return error_refine_result(item, WorkResult::Panic, gas_used);
+                }
+                KernelResult::ProtocolCall { .. } => {
+                    pvm.kernel_resume(u64::MAX - 1, 0);
+                }
+            }
+        }
+    }
+
+    // v1 path
     loop {
         let exit = pvm.run();
         match exit {

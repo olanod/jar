@@ -52,7 +52,17 @@ impl PvmInstance {
     }
 
     /// Create a PVM from a code blob, arguments, and gas budget.
+    /// Auto-detects blob version: v2 (JAR\x02) uses kernel, v1 uses interpreter/recompiler.
     pub fn initialize(code_blob: &[u8], args: &[u8], gas: Gas) -> Option<Self> {
+        // Auto-detect v2 blobs
+        let is_v2 = code_blob.len() >= 4
+            && u32::from_le_bytes([code_blob[0], code_blob[1], code_blob[2], code_blob[3]])
+                == javm::program_v2::JAR_V2_MAGIC;
+
+        if is_v2 {
+            return Self::initialize_v2(code_blob, args, gas);
+        }
+
         match pvm_mode() {
             "recompiler" => javm::recompiler::initialize_program_recompiled(code_blob, args, gas)
                 .map(|pvm| PvmInstance {
