@@ -5,6 +5,25 @@ use build_crate::{BuildKind, GuestBuild};
 const TARGET_JSON: &str = include_str!("riscv64em-javm.json");
 const TARGET_NAME: &str = "riscv64em-javm";
 
+/// Emit `cargo:rerun-if-changed` for transpiler + javm sources so the blob
+/// is rebuilt when the transpiler or PVM format changes.
+fn watch_transpiler_sources() {
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let crates_dir = PathBuf::from(&manifest_dir)
+        .parent()
+        .expect("build-javm must be inside crates/")
+        .to_path_buf();
+
+    // Watch transpiler source (affects blob encoding)
+    build_crate::emit_rerun_for_dir(&crates_dir.join("grey-transpiler/src"));
+    // Watch javm program_v2 (affects blob format)
+    let javm_src = crates_dir.join("javm/src");
+    println!(
+        "cargo:rerun-if-changed={}",
+        javm_src.join("program_v2.rs").display()
+    );
+}
+
 /// Build a Grey PVM blob from a service crate (standard program, single entry point).
 ///
 /// - `manifest_dir`: path to the service crate, relative to `CARGO_MANIFEST_DIR`
@@ -14,6 +33,7 @@ const TARGET_NAME: &str = "riscv64em-javm";
 ///
 /// The blob is ready to use with `javm::kernel::InvocationKernel::new()`.
 pub fn build(manifest_dir: &str, bin_name: &str) -> PathBuf {
+    watch_transpiler_sources();
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let blob_path = PathBuf::from(&out_dir).join(format!("{bin_name}.pvm"));
 
@@ -64,6 +84,7 @@ pub fn build(manifest_dir: &str, bin_name: &str) -> PathBuf {
 ///
 /// Same as [`build`] but produces a JAR v2 capability manifest blob.
 pub fn build_v2(manifest_dir: &str, bin_name: &str) -> PathBuf {
+    watch_transpiler_sources();
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let blob_path = PathBuf::from(&out_dir).join(format!("{bin_name}.pvm"));
 
@@ -111,6 +132,7 @@ pub fn build_v2(manifest_dir: &str, bin_name: &str) -> PathBuf {
 /// Build a JAR v2 PVM blob from a service crate.
 /// Single entrypoint (PC=0) — same as [`build_v2`] but with size-optimized profile.
 pub fn build_service_v2(manifest_dir: &str, bin_name: &str) -> PathBuf {
+    watch_transpiler_sources();
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let blob_path = PathBuf::from(&out_dir).join(format!("{bin_name}.pvm"));
 
@@ -156,6 +178,7 @@ pub fn build_service_v2(manifest_dir: &str, bin_name: &str) -> PathBuf {
 /// Same as [`build`] but uses `link_elf_service` which produces a blob with
 /// dual entry points (refine at PC=0, accumulate at PC=5).
 pub fn build_service(manifest_dir: &str, bin_name: &str) -> PathBuf {
+    watch_transpiler_sources();
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let blob_path = PathBuf::from(&out_dir).join(format!("{bin_name}.pvm"));
 
