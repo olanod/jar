@@ -69,4 +69,26 @@ proptest! {
         let partial_root = merkle_root(&refs[..refs.len() - 1]);
         prop_assert_ne!(full_root, partial_root, "adding a KV should change the root");
     }
+
+    /// Merkle root must be independent of the input order.
+    /// Shuffling the key-value pairs should produce the same root hash.
+    #[test]
+    fn order_independent_root(kvs in arb_kvs(8), seed: u64) {
+        prop_assume!(kvs.len() >= 2);
+        let refs: Vec<(&[u8], &[u8])> = kvs.iter().map(|(k, v)| (k.as_slice(), v.as_slice())).collect();
+        let root_original = merkle_root(&refs);
+
+        // Shuffle using a deterministic permutation derived from the seed
+        let mut shuffled = refs.clone();
+        // Simple Fisher-Yates with deterministic seed
+        let mut rng = seed;
+        for i in (1..shuffled.len()).rev() {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let j = (rng as usize) % (i + 1);
+            shuffled.swap(i, j);
+        }
+
+        let root_shuffled = merkle_root(&shuffled);
+        prop_assert_eq!(root_original, root_shuffled, "root should be order-independent");
+    }
 }
