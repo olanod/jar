@@ -102,4 +102,32 @@ proptest! {
             "recovery with fewer than k={} shards should fail", k
         );
     }
+
+    /// Corrupting any single chunk still allows recovery from the remaining
+    /// k uncorrupted chunks. For TINY (k=2, n=6), for each corrupted shard
+    /// index, pick 2 uncorrupted shards and verify recovery.
+    #[test]
+    fn recover_after_corruption(data in arb_data()) {
+        let chunks = encode(&TINY, &data).expect("encode should succeed");
+        let k = TINY.data_shards;
+        let n = TINY.total_shards;
+
+        for corrupt_idx in 0..n {
+            // Pick the first k shards that aren't the corrupted one
+            let indexed: Vec<(Vec<u8>, usize)> = (0..n)
+                .filter(|&i| i != corrupt_idx)
+                .take(k)
+                .map(|i| (chunks[i].clone(), i))
+                .collect();
+
+            let recovered = recover(&TINY, &indexed, data.len())
+                .unwrap_or_else(|e| panic!(
+                    "recover failed after corrupting shard {}: {:?}", corrupt_idx, e
+                ));
+            prop_assert_eq!(
+                &recovered, &data,
+                "recovery mismatch after corrupting shard {}", corrupt_idx
+            );
+        }
+    }
 }
