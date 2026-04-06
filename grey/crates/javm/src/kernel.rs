@@ -289,7 +289,7 @@ impl InvocationKernel {
     pub fn dispatch_ecalli(&mut self, imm: u32) -> DispatchResult {
         // Charge ecalli gas cost (10) — matches GP host call gas charge
         let ecalli_gas: u64 = 10;
-        let current_gas = self.gas();
+        let current_gas = self.active_gas();
         if current_gas < ecalli_gas {
             return DispatchResult::Fault(FaultType::OutOfGas);
         }
@@ -945,7 +945,7 @@ impl InvocationKernel {
     }
 
     /// Get the active VM's remaining gas.
-    pub fn gas(&self) -> u64 {
+    pub fn active_gas(&self) -> u64 {
         #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
         if let Some(ctx) = self.live_ctx {
             return unsafe { (*ctx).gas.max(0) as u64 };

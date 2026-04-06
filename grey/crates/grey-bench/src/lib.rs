@@ -30,7 +30,7 @@ pub fn run_kernel_with_backend(blob: &[u8], gas: u64, backend: javm::PvmBackend)
         .expect("kernel init failed");
     loop {
         match kernel.run() {
-            javm::kernel::KernelResult::Halt(v) => return (v, gas - kernel.gas()),
+            javm::kernel::KernelResult::Halt(v) => return (v, gas - kernel.active_gas()),
             javm::kernel::KernelResult::Panic => {
                 let vm = &kernel.vms[kernel.active_vm as usize];
                 panic!("kernel panicked at PC={} gas={}", vm.pc, vm.gas());

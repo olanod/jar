@@ -25,7 +25,7 @@ fn run_kernel(backend: javm::PvmBackend, input: &[u8], test_id: u32) -> KernelRu
     let packed = kernel.vms[kernel.active_vm as usize].reg(7);
     let ptr = (packed >> 32) as u32;
     let len = (packed & 0xFFFFFFFF) as u32;
-    let gas_used = gas - kernel.gas();
+    let gas_used = gas - kernel.active_gas();
 
     let label = match backend {
         javm::PvmBackend::ForceInterpreter => "interpreter",

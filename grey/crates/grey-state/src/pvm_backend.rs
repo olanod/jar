@@ -61,7 +61,7 @@ impl PvmInstance {
     }
 
     pub fn gas(&self) -> Gas {
-        self.kernel.gas()
+        self.kernel.active_gas()
     }
 
     pub fn set_gas(&mut self, gas: Gas) {
