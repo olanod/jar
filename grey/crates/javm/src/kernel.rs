@@ -927,7 +927,7 @@ impl InvocationKernel {
 
     // --- Register helpers ---
 
-    fn active_reg(&self, idx: usize) -> u64 {
+    pub fn active_reg(&self, idx: usize) -> u64 {
         #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
         if let Some(ctx) = self.live_ctx {
             return unsafe { (*ctx).regs[idx] };
@@ -935,7 +935,7 @@ impl InvocationKernel {
         self.vms[self.active_vm as usize].reg(idx)
     }
 
-    fn set_active_reg(&mut self, idx: usize, val: u64) {
+    pub fn set_active_reg(&mut self, idx: usize, val: u64) {
         #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
         if let Some(ctx) = self.live_ctx {
             unsafe { (*ctx).regs[idx] = val };
