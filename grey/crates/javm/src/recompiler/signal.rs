@@ -1,6 +1,6 @@
 //! SIGSEGV-based memory bounds checking for the recompiler.
 //!
-//! When the `signals` feature is enabled, memory accesses in JIT code skip
+//! Memory accesses in JIT code skip
 //! software bounds checks. Instead, guard pages (PROT_NONE) beyond heap_top
 //! trigger SIGSEGV, which this handler intercepts and redirects to the
 //! existing exit sequence via ucontext modification (no longjmp).
@@ -24,7 +24,7 @@ pub struct SignalState {
     /// Pointer to JitContext (for writing exit_reason/exit_arg/pc).
     pub ctx_ptr: *mut JitContext,
     /// Trap table: sorted by native_offset. (native_offset, pvm_pc).
-    /// Points into the CompiledCode's trap_table (lives as long as the Arc<CodeCap>).
+    /// Points into the CompiledCode's trap_table (lives as long as the `Arc<CodeCap>`).
     pub trap_table_ptr: *const (u32, u32),
     pub trap_table_len: usize,
 }

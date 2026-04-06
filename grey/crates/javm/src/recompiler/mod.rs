@@ -253,7 +253,7 @@ impl FlatMemory {
         let buf = unsafe { region.add(HEADER_SIZE) };
 
         // Set all pages in [0, mem_size) as read-write in the permission table.
-        // This is needed for software bounds checking (without signals feature)
+        // Reserved for future software bounds checking path
         // AND for write_bytes/read_bytes which always check the permission table.
         {
             let num_pages = layout.mem_size.div_ceil(4096) as usize;
