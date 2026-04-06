@@ -152,14 +152,21 @@ unsafe extern "C" fn sigsegv_handler(
         }
 
         // Binary search the trap table for this native offset.
+        // If the faulting PC is in JIT code, always handle it as a guest fault —
+        // never delegate to the previous handler (which would crash the host process).
         let native_offset = (pc - state.code_start) as u32;
         let trap_table = std::slice::from_raw_parts(state.trap_table_ptr, state.trap_table_len);
         let pvm_pc = match trap_table.binary_search_by_key(&native_offset, |&(off, _)| off) {
             Ok(idx) => trap_table[idx].1,
-            Err(_) => {
-                // PC is in our code but not at a registered trap site — real bug.
-                delegate_to_previous(signum, _siginfo, ucontext);
-                return;
+            Err(idx) => {
+                // PC is in JIT code but not at a registered trap site.
+                // Use the nearest preceding trap entry's PVM PC as a best-effort
+                // location, or 0 if no preceding entry exists.
+                if idx > 0 {
+                    trap_table[idx - 1].1
+                } else {
+                    0
+                }
             }
         };
 
