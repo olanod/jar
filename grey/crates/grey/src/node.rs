@@ -118,9 +118,19 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
             band_seed[0] = config.validator_index as u8;
             band_seed[1] = (config.validator_index >> 8) as u8;
             band_seed[31] = 0xBA;
+            let mut bls_seed = [0u8; 32];
+            bls_seed[0] = config.validator_index as u8;
+            bls_seed[1] = (config.validator_index >> 8) as u8;
+            bls_seed[31] = 0xBB;
             let ed_public = my_secrets.ed25519.public_key().0;
-            ks.save_seeds(config.validator_index, &ed_seed, &band_seed, &ed_public)
-                .map_err(|e| format!("keystore save error: {e}"))?;
+            ks.save_seeds(
+                config.validator_index,
+                &ed_seed,
+                &band_seed,
+                &bls_seed,
+                &ed_public,
+            )
+            .map_err(|e| format!("keystore save error: {e}"))?;
         } else {
             tracing::info!(
                 "Loaded keys for validator {} from keystore at {}",

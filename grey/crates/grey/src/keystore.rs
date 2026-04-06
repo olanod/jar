@@ -12,6 +12,7 @@ use bip39::{Language, Mnemonic};
 
 const ED25519_MNEMONIC_DOMAIN: &[u8] = b"grey-keystore-ed25519-v1";
 const BANDERSNATCH_MNEMONIC_DOMAIN: &[u8] = b"grey-keystore-bandersnatch-v1";
+const BLS_MNEMONIC_DOMAIN: &[u8] = b"grey-keystore-bls-v1";
 
 /// A file-based keystore that persists validator key seeds to disk.
 pub struct Keystore {
@@ -30,6 +31,9 @@ struct KeyFile {
     ed25519_seed: String,
     /// Bandersnatch seed (hex-encoded 32 bytes).
     bandersnatch_seed: String,
+    /// BLS seed (hex-encoded 32 bytes). Added in version 1; absent in legacy files.
+    #[serde(default)]
+    bls_seed: String,
     /// Ed25519 public key (hex-encoded 32 bytes, for verification).
     ed25519_public: String,
 }
@@ -46,11 +50,12 @@ fn derive_domain_separated_seed(
     grey_crypto::blake2b_256(&input).0
 }
 
+#[allow(clippy::type_complexity)]
 fn derive_validator_seeds_from_mnemonic(
     validator_index: u16,
     mnemonic: &str,
     passphrase: Option<&str>,
-) -> Result<([u8; 32], [u8; 32]), KeystoreError> {
+) -> Result<([u8; 32], [u8; 32], [u8; 32]), KeystoreError> {
     let mnemonic = Mnemonic::parse_in(Language::English, mnemonic.trim())
         .map_err(|e| KeystoreError::Mnemonic(e.to_string()))?;
     let master_seed = mnemonic.to_seed(passphrase.unwrap_or(""));
@@ -58,7 +63,8 @@ fn derive_validator_seeds_from_mnemonic(
         derive_domain_separated_seed(&master_seed, validator_index, ED25519_MNEMONIC_DOMAIN);
     let bandersnatch_seed =
         derive_domain_separated_seed(&master_seed, validator_index, BANDERSNATCH_MNEMONIC_DOMAIN);
-    Ok((ed25519_seed, bandersnatch_seed))
+    let bls_seed = derive_domain_separated_seed(&master_seed, validator_index, BLS_MNEMONIC_DOMAIN);
+    Ok((ed25519_seed, bandersnatch_seed, bls_seed))
 }
 
 impl Keystore {
@@ -75,6 +81,7 @@ impl Keystore {
         validator_index: u16,
         ed25519_seed: &[u8; 32],
         bandersnatch_seed: &[u8; 32],
+        bls_seed: &[u8; 32],
         ed25519_public: &[u8; 32],
     ) -> Result<PathBuf, KeystoreError> {
         let key_file = KeyFile {
@@ -82,6 +89,7 @@ impl Keystore {
             validator_index,
             ed25519_seed: hex::encode(ed25519_seed),
             bandersnatch_seed: hex::encode(bandersnatch_seed),
+            bls_seed: hex::encode(bls_seed),
             ed25519_public: hex::encode(ed25519_public),
         };
 
@@ -100,7 +108,13 @@ impl Keystore {
     }
 
     /// Load key seeds for a validator.
-    pub fn load_seeds(&self, validator_index: u16) -> Result<([u8; 32], [u8; 32]), KeystoreError> {
+    /// Returns (ed25519_seed, bandersnatch_seed, bls_seed).
+    /// Legacy key files without a BLS seed return a zero seed.
+    #[allow(clippy::type_complexity)]
+    pub fn load_seeds(
+        &self,
+        validator_index: u16,
+    ) -> Result<([u8; 32], [u8; 32], [u8; 32]), KeystoreError> {
         let filename = format!("validator-{}.json", validator_index);
         let filepath = self.path.join(filename);
         let json = std::fs::read_to_string(&filepath)
@@ -118,7 +132,16 @@ impl Keystore {
             .try_into()
             .map_err(|_| KeystoreError::Io("invalid bandersnatch seed length".into()))?;
 
-        Ok((ed25519_seed, bandersnatch_seed))
+        let bls_seed: [u8; 32] = if key_file.bls_seed.is_empty() {
+            [0u8; 32] // Legacy files without BLS seed
+        } else {
+            hex::decode(&key_file.bls_seed)
+                .map_err(|e| KeystoreError::Io(e.to_string()))?
+                .try_into()
+                .map_err(|_| KeystoreError::Io("invalid bls seed length".into()))?
+        };
+
+        Ok((ed25519_seed, bandersnatch_seed, bls_seed))
     }
 
     /// Check if keys exist for a validator index.
@@ -162,6 +185,7 @@ impl Keystore {
         validator_index: u16,
         ed25519_hex: &str,
         bandersnatch_hex: &str,
+        bls_hex: &str,
     ) -> Result<PathBuf, KeystoreError> {
         let ed25519_seed: [u8; 32] = hex::decode(ed25519_hex.trim_start_matches("0x"))
             .map_err(|e| KeystoreError::Io(format!("invalid ed25519 hex: {e}")))?
@@ -173,6 +197,11 @@ impl Keystore {
             .try_into()
             .map_err(|_| KeystoreError::Io("bandersnatch seed must be 32 bytes".into()))?;
 
+        let bls_seed: [u8; 32] = hex::decode(bls_hex.trim_start_matches("0x"))
+            .map_err(|e| KeystoreError::Io(format!("invalid bls hex: {e}")))?
+            .try_into()
+            .map_err(|_| KeystoreError::Io("bls seed must be 32 bytes".into()))?;
+
         // Derive Ed25519 public key from seed
         let ed25519_keypair = grey_crypto::ed25519::Ed25519Keypair::from_seed(&ed25519_seed);
         let ed25519_public = ed25519_keypair.public_key().0;
@@ -181,6 +210,7 @@ impl Keystore {
             validator_index,
             &ed25519_seed,
             &bandersnatch_seed,
+            &bls_seed,
             &ed25519_public,
         )
     }
@@ -192,7 +222,7 @@ impl Keystore {
         mnemonic: &str,
         passphrase: Option<&str>,
     ) -> Result<PathBuf, KeystoreError> {
-        let (ed25519_seed, bandersnatch_seed) =
+        let (ed25519_seed, bandersnatch_seed, bls_seed) =
             derive_validator_seeds_from_mnemonic(validator_index, mnemonic, passphrase)?;
 
         let ed25519_keypair = grey_crypto::ed25519::Ed25519Keypair::from_seed(&ed25519_seed);
@@ -202,6 +232,7 @@ impl Keystore {
             validator_index,
             &ed25519_seed,
             &bandersnatch_seed,
+            &bls_seed,
             &ed25519_public,
         )
     }
@@ -222,15 +253,18 @@ pub enum KeystoreError {
 mod tests {
     use super::*;
 
-    fn test_seeds(index: u16) -> ([u8; 32], [u8; 32], [u8; 32]) {
+    fn test_seeds(index: u16) -> ([u8; 32], [u8; 32], [u8; 32], [u8; 32]) {
         let mut ed_seed = [0u8; 32];
         ed_seed[0] = index as u8;
         ed_seed[31] = 0xED;
         let mut band_seed = [0u8; 32];
         band_seed[0] = index as u8;
         band_seed[31] = 0xBA;
+        let mut bls_seed = [0u8; 32];
+        bls_seed[0] = index as u8;
+        bls_seed[31] = 0xBB;
         let ed_public = [index as u8; 32]; // fake public key for test
-        (ed_seed, band_seed, ed_public)
+        (ed_seed, band_seed, bls_seed, ed_public)
     }
 
     #[test]
@@ -238,13 +272,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ks = Keystore::open(dir.path().join("keys")).unwrap();
 
-        let (ed_seed, band_seed, ed_pub) = test_seeds(0);
-        ks.save_seeds(0, &ed_seed, &band_seed, &ed_pub).unwrap();
+        let (ed_seed, band_seed, bls_seed, ed_pub) = test_seeds(0);
+        ks.save_seeds(0, &ed_seed, &band_seed, &bls_seed, &ed_pub)
+            .unwrap();
 
         assert!(ks.has_keys(0));
         assert!(!ks.has_keys(1));
 
-        let (loaded_ed, loaded_band) = ks.load_seeds(0).unwrap();
+        let (loaded_ed, loaded_band, _loaded_bls) = ks.load_seeds(0).unwrap();
         assert_eq!(loaded_ed, ed_seed);
         assert_eq!(loaded_band, band_seed);
     }
@@ -254,12 +289,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ks = Keystore::open(dir.path().join("keys")).unwrap();
 
-        let (ed, band, pub_k) = test_seeds(0);
-        ks.save_seeds(0, &ed, &band, &pub_k).unwrap();
-        let (ed, band, pub_k) = test_seeds(5);
-        ks.save_seeds(5, &ed, &band, &pub_k).unwrap();
-        let (ed, band, pub_k) = test_seeds(2);
-        ks.save_seeds(2, &ed, &band, &pub_k).unwrap();
+        let (ed, band, bls, pub_k) = test_seeds(0);
+        ks.save_seeds(0, &ed, &band, &bls, &pub_k).unwrap();
+        let (ed, band, bls, pub_k) = test_seeds(5);
+        ks.save_seeds(5, &ed, &band, &bls, &pub_k).unwrap();
+        let (ed, band, bls, pub_k) = test_seeds(2);
+        ks.save_seeds(2, &ed, &band, &bls, &pub_k).unwrap();
 
         let validators = ks.list_validators().unwrap();
         assert_eq!(validators, vec![0, 2, 5]);
@@ -277,8 +312,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ks = Keystore::open(dir.path().join("keys")).unwrap();
 
-        let (ed_seed, band_seed, ed_pub) = test_seeds(3);
-        let path = ks.save_seeds(3, &ed_seed, &band_seed, &ed_pub).unwrap();
+        let (ed_seed, band_seed, bls_seed, ed_pub) = test_seeds(3);
+        let path = ks
+            .save_seeds(3, &ed_seed, &band_seed, &bls_seed, &ed_pub)
+            .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         let key_file: KeyFile = serde_json::from_str(&content).unwrap();
@@ -296,12 +333,13 @@ mod tests {
 
         let ed_hex = "aa".repeat(32); // 64 hex chars = 32 bytes
         let band_hex = "bb".repeat(32);
+        let bls_hex = "cc".repeat(32);
 
-        let path = ks.import_raw_hex(7, &ed_hex, &band_hex).unwrap();
+        let path = ks.import_raw_hex(7, &ed_hex, &band_hex, &bls_hex).unwrap();
         assert!(path.exists());
 
         // Load and verify seeds match
-        let (loaded_ed, loaded_band) = ks.load_seeds(7).unwrap();
+        let (loaded_ed, loaded_band, _loaded_bls) = ks.load_seeds(7).unwrap();
         assert_eq!(loaded_ed, [0xAA; 32]);
         assert_eq!(loaded_band, [0xBB; 32]);
 
@@ -318,9 +356,10 @@ mod tests {
 
         let ed_hex = format!("0x{}", "cc".repeat(32));
         let band_hex = format!("0x{}", "dd".repeat(32));
+        let bls_hex = format!("0x{}", "ee".repeat(32));
 
-        ks.import_raw_hex(8, &ed_hex, &band_hex).unwrap();
-        let (loaded_ed, loaded_band) = ks.load_seeds(8).unwrap();
+        ks.import_raw_hex(8, &ed_hex, &band_hex, &bls_hex).unwrap();
+        let (loaded_ed, loaded_band, _loaded_bls) = ks.load_seeds(8).unwrap();
         assert_eq!(loaded_ed, [0xCC; 32]);
         assert_eq!(loaded_band, [0xDD; 32]);
     }
@@ -331,10 +370,11 @@ mod tests {
         let ks = Keystore::open(dir.path().join("keys")).unwrap();
 
         // Too short
-        assert!(ks.import_raw_hex(0, "aabb", "ccdd").is_err());
+        let valid = "aa".repeat(32);
+        assert!(ks.import_raw_hex(0, "aabb", "ccdd", &valid).is_err());
         // Invalid hex
         assert!(
-            ks.import_raw_hex(0, "zz".repeat(32).as_str(), "aa".repeat(32).as_str())
+            ks.import_raw_hex(0, "zz".repeat(32).as_str(), &valid, &valid)
                 .is_err()
         );
     }
@@ -348,11 +388,12 @@ mod tests {
         let path = ks.import_mnemonic(4, mnemonic, None).unwrap();
         assert!(path.exists());
 
-        let (expected_ed, expected_band) =
+        let (expected_ed, expected_band, expected_bls) =
             derive_validator_seeds_from_mnemonic(4, mnemonic, None).unwrap();
-        let (loaded_ed, loaded_band) = ks.load_seeds(4).unwrap();
+        let (loaded_ed, loaded_band, loaded_bls) = ks.load_seeds(4).unwrap();
         assert_eq!(loaded_ed, expected_ed);
         assert_eq!(loaded_band, expected_band);
+        assert_eq!(loaded_bls, expected_bls);
 
         let json = std::fs::read_to_string(path).unwrap();
         let key_file: KeyFile = serde_json::from_str(&json).unwrap();
