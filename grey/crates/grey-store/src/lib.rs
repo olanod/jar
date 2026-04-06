@@ -439,7 +439,7 @@ impl Store {
         service_id: u32,
     ) -> Result<Option<Hash>, StoreError> {
         let kvs = self.load_state_kvs(block_hash)?;
-        let expected_key = grey_merkle::state_serial::key_for_service_pub(255, service_id);
+        let expected_key = grey_merkle::state_key_for_service(255, service_id);
         Ok(Self::find_in_kvs(&kvs, &expected_key).and_then(|value| {
             // Service account: version(1) + code_hash(32) + ...
             if value.len() >= 33 {
@@ -464,7 +464,7 @@ impl Store {
         service_id: u32,
     ) -> Result<Option<ServiceMetadata>, StoreError> {
         let kvs = self.load_state_kvs(block_hash)?;
-        let expected_key = grey_merkle::state_serial::key_for_service_pub(255, service_id);
+        let expected_key = grey_merkle::state_key_for_service(255, service_id);
         let Some(value) = Self::find_in_kvs(&kvs, &expected_key) else {
             return Ok(None);
         };
@@ -529,7 +529,7 @@ impl Store {
         block_hash: &Hash,
         anchor_hash: &Hash,
     ) -> Result<Option<Hash>, StoreError> {
-        let key = grey_merkle::state_serial::key_for_component(3);
+        let key = grey_merkle::state_key_from_index(3);
         let blob = match self.get_state_kv(block_hash, &key)? {
             Some(blob) => blob,
             None => return Ok(None),

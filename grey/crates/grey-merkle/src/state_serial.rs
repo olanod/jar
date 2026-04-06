@@ -27,22 +27,7 @@ use grey_types::state::{
 use grey_types::{Hash, ServiceId};
 use std::collections::BTreeMap;
 
-/// Construct state key C(i) for a state component index.
-fn key_from_index(index: u8) -> [u8; 31] {
-    let mut key = [0u8; 31];
-    key[0] = index;
-    key
-}
-
-/// Construct state key C(i) for a state component index (public alias).
-pub fn key_for_component(index: u8) -> [u8; 31] {
-    key_from_index(index)
-}
-
-/// Construct state key C(i, s) for a service-indexed state component (public alias).
-pub fn key_for_service_pub(index: u8, service_id: ServiceId) -> [u8; 31] {
-    key_for_service(index, service_id)
-}
+use crate::{state_key_for_service, state_key_from_index};
 
 /// Extract the accumulation root (beefy_root) for a given anchor block from the
 /// raw C(3) (recent_blocks) state KV blob. Scans the serialized header entries to
@@ -84,20 +69,6 @@ pub fn extract_accumulation_root(
     Ok(None)
 }
 
-/// Construct state key C(i, s) for a service-indexed state component.
-fn key_for_service(index: u8, service_id: ServiceId) -> [u8; 31] {
-    let mut key = [0u8; 31];
-    let s = service_id.to_le_bytes();
-    key[0] = index;
-    key[1] = s[0];
-    key[2] = 0;
-    key[3] = s[1];
-    key[4] = 0;
-    key[5] = s[2];
-    key[6] = 0;
-    key[7] = s[3];
-    key
-}
 
 /// Construct state key C(s, h) where h is an arbitrary byte sequence.
 /// The key interleaves E_4(s) and H(h).
@@ -172,26 +143,26 @@ pub fn serialize_state(state: &State, config: &Config) -> Vec<([u8; 31], Vec<u8>
     let _ = config; // Config no longer needed — all sizes encoded in Vecs
 
     let mut kvs = vec![
-        (key_from_index(1), state.auth_pool.encode()), // C(1) α
-        (key_from_index(2), state.auth_queue.encode()), // C(2) ϕ
-        (key_from_index(3), state.recent_blocks.encode()), // C(3) β
-        (key_from_index(4), state.safrole.encode()),   // C(4) γ
-        (key_from_index(5), state.judgments.encode()), // C(5) ψ
-        (key_from_index(6), serialize_entropy(&state.entropy)), // C(6) η (raw 128B)
-        (key_from_index(7), state.pending_validators.encode()), // C(7) ι
-        (key_from_index(8), state.current_validators.encode()), // C(8) κ
-        (key_from_index(9), state.previous_validators.encode()), // C(9) λ
-        (key_from_index(10), state.pending_reports.encode()), // C(10) ρ
-        (key_from_index(11), state.timeslot.to_le_bytes().to_vec()), // C(11) τ
-        (key_from_index(12), state.privileged_services.encode()), // C(12) χ
-        (key_from_index(13), state.statistics.encode()), // C(13) π
-        (key_from_index(14), state.accumulation_queue.encode()), // C(14) ω
-        (key_from_index(15), state.accumulation_history.encode()), // C(15) ξ
+        (state_key_from_index(1), state.auth_pool.encode()), // C(1) α
+        (state_key_from_index(2), state.auth_queue.encode()), // C(2) ϕ
+        (state_key_from_index(3), state.recent_blocks.encode()), // C(3) β
+        (state_key_from_index(4), state.safrole.encode()),   // C(4) γ
+        (state_key_from_index(5), state.judgments.encode()), // C(5) ψ
+        (state_key_from_index(6), serialize_entropy(&state.entropy)), // C(6) η (raw 128B)
+        (state_key_from_index(7), state.pending_validators.encode()), // C(7) ι
+        (state_key_from_index(8), state.current_validators.encode()), // C(8) κ
+        (state_key_from_index(9), state.previous_validators.encode()), // C(9) λ
+        (state_key_from_index(10), state.pending_reports.encode()), // C(10) ρ
+        (state_key_from_index(11), state.timeslot.to_le_bytes().to_vec()), // C(11) τ
+        (state_key_from_index(12), state.privileged_services.encode()), // C(12) χ
+        (state_key_from_index(13), state.statistics.encode()), // C(13) π
+        (state_key_from_index(14), state.accumulation_queue.encode()), // C(14) ω
+        (state_key_from_index(15), state.accumulation_history.encode()), // C(15) ξ
     ];
 
     // C(16) → θ accumulation_outputs
     kvs.push((
-        key_from_index(16),
+        state_key_from_index(16),
         serialize_accumulation_outputs(&state.accumulation_outputs),
     ));
 
@@ -199,7 +170,7 @@ pub fn serialize_state(state: &State, config: &Config) -> Vec<([u8; 31], Vec<u8>
     for (&service_id, account) in &state.services {
         // C(255, s) → service account metadata
         kvs.push((
-            key_for_service(255, service_id),
+            state_key_for_service(255, service_id),
             serialize_service_account_with_id(account, service_id),
         ));
 

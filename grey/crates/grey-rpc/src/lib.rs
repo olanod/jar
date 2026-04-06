@@ -490,12 +490,10 @@ impl JamRpcServer for RpcImpl {
             .map_err(|e| internal_error(e.to_string()))?;
 
         // Read entropy: C(6) = 4 × 32 raw bytes
-        let mut entropy_key = [0u8; 31];
-        entropy_key[0] = 6;
         let entropy_raw = self
             .state
             .store
-            .get_state_kv(&block_hash, &entropy_key)
+            .get_state_kv(&block_hash, &grey_merkle::state_key_from_index(6))
             .map_err(|e| internal_error(e.to_string()))?
             .unwrap_or_default();
         let entropy: Vec<String> = (0..4)
@@ -509,12 +507,10 @@ impl JamRpcServer for RpcImpl {
             .collect();
 
         // Read current validators: C(8) = V × 336 bytes
-        let mut validators_key = [0u8; 31];
-        validators_key[0] = 8;
         let validators_raw = self
             .state
             .store
-            .get_state_kv(&block_hash, &validators_key)
+            .get_state_kv(&block_hash, &grey_merkle::state_key_from_index(8))
             .map_err(|e| internal_error(e.to_string()))?
             .unwrap_or_default();
         let validator_count = validators_raw.len() / 336;
@@ -556,13 +552,10 @@ impl JamRpcServer for RpcImpl {
             .get_head()
             .map_err(|e| internal_error(e.to_string()))?;
 
-        // State key C(index): index byte at position 0, rest zeroes.
-        let mut state_key = [0u8; 31];
-        state_key[0] = component_index;
         let raw = self
             .state
             .store
-            .get_state_kv(&head_hash, &state_key)
+            .get_state_kv(&head_hash, &grey_merkle::state_key_from_index(component_index))
             .map_err(|e| internal_error(e.to_string()))?
             .unwrap_or_default();
 
