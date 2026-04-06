@@ -674,7 +674,7 @@ impl InvocationKernel {
     }
 
     /// Dispatch an ecall (management ops + dynamic CALL).
-    /// φ[11] = op code, φ[12] = subject (low u32) | object (high u32).
+    /// φ\[11\] = op code, φ\[12\] = subject (low u32) | object (high u32).
     pub fn dispatch_ecall(&mut self, op: u32) -> DispatchResult {
         // Charge ecall gas (same as ecalli)
         let ecall_gas: u64 = 10;

@@ -12,7 +12,7 @@ pub enum Opcode {
     Trap = 0,
     Fallthrough = 1,
     Unlikely = 2,
-    /// Management ops + dynamic CALL. φ[11]=op, φ[12]=subject|object.
+    /// Management ops + dynamic CALL. φ\[11\]=op, φ\[12\]=subject|object.
     Ecall = 3,
 
     // A.5.2: One immediate
