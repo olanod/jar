@@ -1482,6 +1482,48 @@ impl Assembler {
         self.flush_instbuf(ib);
     }
 
+    /// popcnt r32, r32 (result zero-extended to 64 bits)
+    pub fn popcnt32(&mut self, dst: Reg, src: Reg) {
+        let mut ib = InstBuf::new();
+        ib.push(0xF3);
+        let rex = (dst.hi() << 2) | src.hi();
+        if rex != 0 {
+            ib.push(0x40 | rex);
+        }
+        ib.push(0x0F);
+        ib.push(0xB8);
+        ib.push(0xC0 | (dst.lo() << 3) | src.lo());
+        self.flush_instbuf(ib);
+    }
+
+    /// lzcnt r32, r32 (result zero-extended to 64 bits)
+    pub fn lzcnt32(&mut self, dst: Reg, src: Reg) {
+        let mut ib = InstBuf::new();
+        ib.push(0xF3);
+        let rex = (dst.hi() << 2) | src.hi();
+        if rex != 0 {
+            ib.push(0x40 | rex);
+        }
+        ib.push(0x0F);
+        ib.push(0xBD);
+        ib.push(0xC0 | (dst.lo() << 3) | src.lo());
+        self.flush_instbuf(ib);
+    }
+
+    /// tzcnt r32, r32 (result zero-extended to 64 bits)
+    pub fn tzcnt32(&mut self, dst: Reg, src: Reg) {
+        let mut ib = InstBuf::new();
+        ib.push(0xF3);
+        let rex = (dst.hi() << 2) | src.hi();
+        if rex != 0 {
+            ib.push(0x40 | rex);
+        }
+        ib.push(0x0F);
+        ib.push(0xBC);
+        ib.push(0xC0 | (dst.lo() << 3) | src.lo());
+        self.flush_instbuf(ib);
+    }
+
     /// bswap r64
     pub fn bswap64(&mut self, dst: Reg) {
         self.emit3(0x48 | dst.hi(), 0x0F, 0xC8 + dst.lo());
