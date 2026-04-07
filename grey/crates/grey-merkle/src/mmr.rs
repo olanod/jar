@@ -126,6 +126,68 @@ mod tests {
         assert!(mmr.peaks[1].is_some());
     }
 
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_hashes(max_len: usize) -> impl Strategy<Value = Vec<[u8; 32]>> {
+            prop::collection::vec(any::<[u8; 32]>(), 0..=max_len)
+        }
+
+        proptest! {
+            /// Same sequence of appends always produces the same root.
+            #[test]
+            fn mmr_deterministic(hashes in arb_hashes(20)) {
+                let mut mmr1 = MerkleMountainRange::new();
+                let mut mmr2 = MerkleMountainRange::new();
+                for h in &hashes {
+                    mmr1.append(Hash(*h), test_hash);
+                    mmr2.append(Hash(*h), test_hash);
+                }
+                prop_assert_eq!(mmr1.root(test_hash), mmr2.root(test_hash));
+            }
+
+            /// Appending an element changes the root (for non-empty MMR).
+            #[test]
+            fn mmr_append_changes_root(
+                hashes in arb_hashes(10),
+                extra in any::<[u8; 32]>(),
+            ) {
+                let mut mmr = MerkleMountainRange::new();
+                for h in &hashes {
+                    mmr.append(Hash(*h), test_hash);
+                }
+                let root_before = mmr.root(test_hash);
+                mmr.append(Hash(extra), test_hash);
+                let root_after = mmr.root(test_hash);
+                prop_assert_ne!(root_before, root_after);
+            }
+
+            /// For power-of-2 counts, only one peak should remain.
+            #[test]
+            fn mmr_power_of_two_single_peak(exp in 0u32..6) {
+                let count = 1usize << exp; // 1, 2, 4, 8, 16, 32
+                let mut mmr = MerkleMountainRange::new();
+                for i in 0..count {
+                    let mut h = [0u8; 32];
+                    h[..8].copy_from_slice(&(i as u64).to_le_bytes());
+                    mmr.append(Hash(h), test_hash);
+                }
+                let non_empty: usize = mmr.peaks.iter().filter(|p| p.is_some()).count();
+                prop_assert_eq!(non_empty, 1);
+            }
+
+            /// Root is never zero for non-empty MMR (except trivially if all leaves are zero).
+            #[test]
+            fn mmr_root_nonzero_for_nonzero_leaves(leaf in any::<[u8; 32]>()) {
+                prop_assume!(leaf != [0u8; 32]);
+                let mut mmr = MerkleMountainRange::new();
+                mmr.append(Hash(leaf), test_hash);
+                prop_assert_ne!(mmr.root(test_hash), Hash::ZERO);
+            }
+        }
+    }
+
     #[test]
     fn test_mmr_root_uses_peak_prefix() {
         // Verify the super-peak computation uses "peak" (not "$peak")
