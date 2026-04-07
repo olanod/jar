@@ -321,20 +321,20 @@ mod tests {
     fn test_ticket_and_preimage_counts() {
         let config = Config::tiny();
         let mut stats = make_stats(config.validators_count as usize);
-        let mut extrinsic = Extrinsic::default();
-
-        // Add dummy tickets and preimages
-        extrinsic.tickets = vec![
-            grey_types::header::TicketProof {
-                attempt: 0,
-                proof: vec![],
-            },
-            grey_types::header::TicketProof {
-                attempt: 1,
-                proof: vec![],
-            },
-        ];
-        extrinsic.preimages = vec![(42, vec![0xAA, 0xBB, 0xCC])];
+        let extrinsic = Extrinsic {
+            tickets: vec![
+                grey_types::header::TicketProof {
+                    attempt: 0,
+                    proof: vec![],
+                },
+                grey_types::header::TicketProof {
+                    attempt: 1,
+                    proof: vec![],
+                },
+            ],
+            preimages: vec![(42, vec![0xAA, 0xBB, 0xCC])],
+            ..Extrinsic::default()
+        };
 
         update_statistics(
             &config,
