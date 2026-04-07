@@ -22,7 +22,9 @@ inductive StepResult where
   | continue (pc : Nat) (regs : Registers) (mem : Memory) : StepResult
   /-- Halt normally. -/
   | halt : StepResult
-  /-- Panic (trap or invalid). -/
+  /-- Deliberate trap (opcode 0). -/
+  | trap : StepResult
+  /-- Runtime panic (bad djump, invalid opcode, etc.). -/
   | panic : StepResult
   /-- Page fault at address. -/
   | fault (addr : UInt64) : StepResult
@@ -241,7 +243,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
   else
   match opcode with
   -- ========== No-arg (0-2) ==========
-  | 0 => .panic  -- trap
+  | 0 => .trap  -- deliberate trap instruction
   | 1 => .continue npc regs mem  -- fallthrough
   | 2 => .continue npc regs mem  -- unlikely (v0.8.0: gas hint, no semantic effect)
   | 3 => .ecall regs mem npc     -- ecall: management ops + dynamic CALL

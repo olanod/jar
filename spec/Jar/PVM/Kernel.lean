@@ -773,6 +773,13 @@ def runKernel (state : KernelState) (fuel : Nat) : KernelState × KernelResult :
           | .rootHalt v => (state', .halt v)
           | .continue_ => runKernel state' fuel'
           | _ => (state', .panic)
+        | .trap =>
+          -- Deliberate trap: same as panic but distinguished for status code
+          let (state', dr) := handleVmFault state
+          match dr with
+          | .rootPanic => (state', .panic) -- root trap → kernel panic
+          | .continue_ => runKernel state' fuel'
+          | _ => (state', .panic)
         | .panic =>
           let (state', dr) := handleVmFault state
           match dr with

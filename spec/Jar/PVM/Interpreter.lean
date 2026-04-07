@@ -51,6 +51,13 @@ def run (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory)
             registers := regs
             memory := mem
             lastPC := pc }
+        | .trap =>
+          { exitReason := .trap
+            exitValue := if 7 < regs.size then regs[7]! else 0
+            gas := gas'
+            registers := regs
+            memory := mem
+            lastPC := pc }
         | .panic =>
           { exitReason := .panic
             exitValue := if 7 < regs.size then regs[7]! else 0
@@ -123,6 +130,9 @@ def runBlockGasWith (costFn : ByteArray → ByteArray → Nat → Nat)
         match executeStep prog pc regs mem with
         | .halt =>
           { exitReason := .halt, exitValue := if 7 < regs.size then regs[7]! else 0
+            gas := gas', registers := regs, memory := mem, lastPC := pc }
+        | .trap =>
+          { exitReason := .trap, exitValue := if 7 < regs.size then regs[7]! else 0
             gas := gas', registers := regs, memory := mem, lastPC := pc }
         | .panic =>
           { exitReason := .panic, exitValue := if 7 < regs.size then regs[7]! else 0
@@ -447,6 +457,7 @@ def runTracePCs (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
         let gas' := gas - 1
         match executeStep prog pc regs mem with
         | .halt => (pcs', .halt)
+        | .trap => (pcs', .trap)
         | .panic => (pcs', .panic)
         | .fault addr => (pcs', .pageFault addr)
         | .hostCall id _ _ _ => (pcs', .hostCall id)
@@ -507,6 +518,10 @@ def runWithInstrTrace (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : 
         match executeStep prog pc regs mem with
         | .halt =>
           ({ exitReason := .halt
+             exitValue := if 7 < regs.size then regs[7]! else 0
+             gas := gas', registers := regs, memory := mem, lastPC := pc }, trace')
+        | .trap =>
+          ({ exitReason := .trap
              exitValue := if 7 < regs.size then regs[7]! else 0
              gas := gas', registers := regs, memory := mem, lastPC := pc }, trace')
         | .panic =>

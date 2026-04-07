@@ -1610,6 +1610,7 @@ impl InvocationKernel {
 
         match exit {
             crate::ExitReason::Halt => (0, 0),
+            crate::ExitReason::Trap => (7, 0), // deliberate trap
             crate::ExitReason::Panic => (1, 0),
             crate::ExitReason::OutOfGas => (2, 0),
             crate::ExitReason::PageFault(addr) => (3, addr),
@@ -1711,8 +1712,16 @@ impl InvocationKernel {
                         _ => return KernelResult::Panic,
                     }
                 }
+                7 => {
+                    // Trap (deliberate, opcode 0)
+                    match self.handle_vm_fault(FaultType::Trap) {
+                        DispatchResult::RootPanic => return KernelResult::Panic,
+                        DispatchResult::Continue => continue,
+                        _ => return KernelResult::Panic,
+                    }
+                }
                 1 => {
-                    // Panic
+                    // Panic (runtime error)
                     match self.handle_vm_fault(FaultType::Panic) {
                         DispatchResult::RootPanic => return KernelResult::Panic,
                         DispatchResult::Continue => continue,
@@ -1908,7 +1917,7 @@ impl InvocationKernel {
             None => {
                 // Root VM faulted
                 match fault {
-                    FaultType::Panic => DispatchResult::RootPanic,
+                    FaultType::Trap | FaultType::Panic => DispatchResult::RootPanic,
                     FaultType::OutOfGas => DispatchResult::RootOutOfGas,
                     FaultType::PageFault(addr) => DispatchResult::RootPageFault(addr),
                 }
@@ -1939,6 +1948,7 @@ pub enum DispatchResult {
 /// Fault types.
 #[derive(Debug, Clone, Copy)]
 pub enum FaultType {
+    Trap,
     Panic,
     OutOfGas,
     PageFault(u32),

@@ -1626,6 +1626,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
         let gasUsed := totalGas - (if result.gas.toUInt64 > totalGas then 0 else result.gas.toUInt64)
         let exitStr := match result.exitReason with
           | .halt => s!"halt(gas={gasUsed})"
+          | .trap => s!"trap(gas={gasUsed})"
           | .panic => s!"panic(gas={gasUsed})"
           | .outOfGas => "oog"
           | .hostCall n => s!"hostcall({n})"

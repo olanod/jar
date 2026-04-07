@@ -99,7 +99,9 @@ end Memory
 inductive ExitReason where
   /-- Regular termination (halt instruction). -/
   | halt : ExitReason
-  /-- Irregular termination (exceptional circumstance). -/
+  /-- Deliberate termination (trap instruction, opcode 0). -/
+  | trap : ExitReason
+  /-- Runtime error (bad djump, invalid opcode, etc.). -/
   | panic : ExitReason
   /-- Gas exhaustion. -/
   | outOfGas : ExitReason
