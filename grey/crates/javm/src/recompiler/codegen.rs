@@ -1470,9 +1470,8 @@ impl Compiler {
             Opcode::CountSetBits32 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
-                    // Zero-extend to 32 bits first, then popcnt
-                    self.asm.movzx_32_64(SCRATCH, ra_reg);
-                    self.asm.popcnt64(REG_MAP[*rd], SCRATCH);
+                    // popcnt32 counts set bits of 32-bit value, zero-extends result
+                    self.asm.popcnt32(REG_MAP[*rd], ra_reg);
                 }
             }
             Opcode::LeadingZeroBits64 => {
@@ -1484,10 +1483,8 @@ impl Compiler {
             Opcode::LeadingZeroBits32 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
-                    self.asm.movzx_32_64(SCRATCH, ra_reg);
-                    // lzcnt on 64-bit value then subtract 32
-                    self.asm.lzcnt64(REG_MAP[*rd], SCRATCH);
-                    self.asm.sub_ri(REG_MAP[*rd], 32);
+                    // lzcnt32 counts leading zeros of 32-bit value, zero-extends result
+                    self.asm.lzcnt32(REG_MAP[*rd], ra_reg);
                 }
             }
             Opcode::TrailingZeroBits64 => {
@@ -1499,16 +1496,8 @@ impl Compiler {
             Opcode::TrailingZeroBits32 => {
                 if let Args::TwoReg { rd, ra } = args {
                     let ra_reg = REG_MAP[*ra];
-                    // Set bit 32 to ensure tzcnt doesn't return 64 for zero input
-                    self.asm.mov_rr(SCRATCH, ra_reg);
-                    self.asm.movzx_32_64(SCRATCH, SCRATCH);
-                    // OR with (1 << 32) to cap at 32
-                    self.asm.push(SCRATCH);
-                    self.asm.mov_ri64(SCRATCH, 1u64 << 32);
-                    let tmp = SCRATCH;
-                    self.asm.pop(REG_MAP[*rd]);
-                    self.asm.or_rr(REG_MAP[*rd], tmp);
-                    self.asm.tzcnt64(REG_MAP[*rd], REG_MAP[*rd]);
+                    // tzcnt32 returns 32 for zero input and zero-extends result to 64 bits
+                    self.asm.tzcnt32(REG_MAP[*rd], ra_reg);
                 }
             }
             Opcode::SignExtend8 => {
