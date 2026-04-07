@@ -785,12 +785,7 @@ impl Compiler {
                 let fn_addr = self.read_fn_for(op4);
                 let ra_reg = REG_MAP[ra];
                 self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc4 as u32);
-                match op4 {
-                    Opcode::LoadIndI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
-                    Opcode::LoadIndI16 => self.asm.movsx_16_64(ra_reg, ra_reg),
-                    Opcode::LoadIndI32 => self.asm.movsxd(ra_reg, ra_reg),
-                    _ => {}
-                }
+                self.emit_sign_extend(op4, ra_reg);
                 self.invalidate_all_regs();
                 Some(pc4 + 1 + skip4 - pc)
             }
@@ -935,6 +930,17 @@ impl Compiler {
             4 => self.asm.mov_load32_sib(dst, CTX, SCRATCH),
             8 => self.asm.mov_load64_sib(dst, CTX, SCRATCH),
             _ => unreachable!(),
+        }
+    }
+
+    /// Emit sign extension after a memory load, if the opcode is a signed variant.
+    /// Handles both direct loads (LoadI8/I16/I32) and indirect loads (LoadIndI8/I16/I32).
+    fn emit_sign_extend(&mut self, opcode: Opcode, reg: Reg) {
+        match opcode {
+            Opcode::LoadI8 | Opcode::LoadIndI8 => self.asm.movsx_8_64(reg, reg),
+            Opcode::LoadI16 | Opcode::LoadIndI16 => self.asm.movsx_16_64(reg, reg),
+            Opcode::LoadI32 | Opcode::LoadIndI32 => self.asm.movsxd(reg, reg),
+            _ => {}
         }
     }
 
@@ -1352,13 +1358,7 @@ impl Compiler {
                     self.asm.mov_ri32(SCRATCH, addr);
                     let ra_reg = REG_MAP[*ra];
                     self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc);
-                    // Sign-extend for signed load variants
-                    match opcode {
-                        Opcode::LoadI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
-                        Opcode::LoadI16 => self.asm.movsx_16_64(ra_reg, ra_reg),
-                        Opcode::LoadI32 => self.asm.movsxd(ra_reg, ra_reg),
-                        _ => {}
-                    }
+                    self.emit_sign_extend(opcode, ra_reg);
                 }
             }
             Opcode::StoreU8 | Opcode::StoreU16 | Opcode::StoreU32 | Opcode::StoreU64 => {
@@ -1563,13 +1563,7 @@ impl Compiler {
                     self.emit_addr_to_scratch(*rb, *imm as i32);
                     let fn_addr = self.read_fn_for(opcode);
                     self.emit_mem_read(ra_reg, SCRATCH, fn_addr, pc);
-                    // Sign-extend for signed load variants
-                    match opcode {
-                        Opcode::LoadIndI8 => self.asm.movsx_8_64(ra_reg, ra_reg),
-                        Opcode::LoadIndI16 => self.asm.movsx_16_64(ra_reg, ra_reg),
-                        Opcode::LoadIndI32 => self.asm.movsxd(ra_reg, ra_reg),
-                        _ => {}
-                    }
+                    self.emit_sign_extend(opcode, ra_reg);
                 }
             }
             Opcode::AddImm32 => {
