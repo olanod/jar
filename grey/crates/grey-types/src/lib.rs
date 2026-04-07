@@ -287,3 +287,67 @@ pub type RegisterValue = u64;
 
 /// An opaque blob of bytes.
 pub type Blob = Vec<u8>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use scale::{Decode, Encode};
+
+    /// Verify encode→decode roundtrip for a Default-able type.
+    /// Checks that default value encodes, decodes without error, consumes all bytes,
+    /// and re-encodes to the same bytes (idempotent encoding).
+    fn roundtrip<T: Default + Encode + Decode>() {
+        let val = T::default();
+        let encoded = val.encode();
+        let (decoded, consumed) = T::decode(&encoded).expect("decode should succeed");
+        assert_eq!(consumed, encoded.len(), "should consume all bytes");
+        // Re-encode and compare bytes (works even without PartialEq)
+        let re_encoded = decoded.encode();
+        assert_eq!(encoded, re_encoded, "re-encoded bytes should match");
+    }
+
+    #[test]
+    fn test_hash_roundtrip() {
+        roundtrip::<Hash>();
+        // Also test non-default
+        let h = Hash([42u8; 32]);
+        let encoded = h.encode();
+        let (decoded, _) = Hash::decode(&encoded).unwrap();
+        assert_eq!(decoded, h);
+    }
+
+    #[test]
+    fn test_ed25519_signature_roundtrip() {
+        roundtrip::<Ed25519Signature>();
+    }
+
+    #[test]
+    fn test_bandersnatch_signature_roundtrip() {
+        roundtrip::<BandersnatchSignature>();
+    }
+
+    #[test]
+    fn test_extrinsic_roundtrip() {
+        roundtrip::<header::Extrinsic>();
+    }
+
+    #[test]
+    fn test_disputes_extrinsic_roundtrip() {
+        roundtrip::<header::DisputesExtrinsic>();
+    }
+
+    #[test]
+    fn test_privileged_services_roundtrip() {
+        roundtrip::<state::PrivilegedServices>();
+    }
+
+    #[test]
+    fn test_judgments_roundtrip() {
+        roundtrip::<state::Judgments>();
+    }
+
+    #[test]
+    fn test_validator_statistics_roundtrip() {
+        roundtrip::<state::ValidatorStatistics>();
+    }
+}
