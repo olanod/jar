@@ -148,3 +148,130 @@ pub fn process_assurances(
         reported: available,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grey_types::config::Config;
+    use grey_types::{Ed25519Signature, Hash};
+
+    fn tiny_config_and_validators() -> (Config, Vec<ValidatorKey>) {
+        let config = Config::tiny();
+        // Create dummy validators (only ed25519 key matters for assurance checks)
+        let validators: Vec<ValidatorKey> = (0..config.validators_count)
+            .map(|_| ValidatorKey::default())
+            .collect();
+        (config, validators)
+    }
+
+    #[test]
+    fn test_empty_assurances() {
+        let (config, validators) = tiny_config_and_validators();
+        let mut pending = vec![None; config.core_count as usize];
+        let output = process_assurances(&config, &mut pending, &[], 1, Hash::ZERO, &validators)
+            .expect("empty assurances should succeed");
+        assert!(output.reported.is_empty());
+    }
+
+    #[test]
+    fn test_bad_validator_index() {
+        let (config, validators) = tiny_config_and_validators();
+        let mut pending = vec![None; config.core_count as usize];
+        let bad = Assurance {
+            anchor: Hash::ZERO,
+            bitfield: vec![0],
+            validator_index: 999, // out of range
+            signature: Ed25519Signature([0u8; 64]),
+        };
+        let result = process_assurances(&config, &mut pending, &[bad], 1, Hash::ZERO, &validators);
+        assert!(matches!(result, Err(AssuranceError::BadValidatorIndex)));
+    }
+
+    #[test]
+    fn test_not_sorted_assurers() {
+        let (config, validators) = tiny_config_and_validators();
+        let mut pending = vec![None; config.core_count as usize];
+        // Two assurances with validator indices in wrong order
+        let a1 = Assurance {
+            anchor: Hash::ZERO,
+            bitfield: vec![0],
+            validator_index: 2,
+            signature: Ed25519Signature([0u8; 64]),
+        };
+        let a2 = Assurance {
+            anchor: Hash::ZERO,
+            bitfield: vec![0],
+            validator_index: 1, // out of order
+            signature: Ed25519Signature([0u8; 64]),
+        };
+        let result =
+            process_assurances(&config, &mut pending, &[a1, a2], 1, Hash::ZERO, &validators);
+        assert!(matches!(
+            result,
+            Err(AssuranceError::NotSortedOrUniqueAssurers)
+        ));
+    }
+
+    #[test]
+    fn test_duplicate_assurers() {
+        let (config, validators) = tiny_config_and_validators();
+        let mut pending = vec![None; config.core_count as usize];
+        let a = Assurance {
+            anchor: Hash::ZERO,
+            bitfield: vec![0],
+            validator_index: 1,
+            signature: Ed25519Signature([0u8; 64]),
+        };
+        let result = process_assurances(
+            &config,
+            &mut pending,
+            &[a.clone(), a],
+            1,
+            Hash::ZERO,
+            &validators,
+        );
+        assert!(matches!(
+            result,
+            Err(AssuranceError::NotSortedOrUniqueAssurers)
+        ));
+    }
+
+    #[test]
+    fn test_bad_attestation_parent() {
+        let (config, validators) = tiny_config_and_validators();
+        let mut pending = vec![None; config.core_count as usize];
+        let a = Assurance {
+            anchor: Hash([0xFF; 32]), // wrong parent
+            bitfield: vec![0],
+            validator_index: 0,
+            signature: Ed25519Signature([0u8; 64]),
+        };
+        let result = process_assurances(
+            &config,
+            &mut pending,
+            &[a],
+            1,
+            Hash::ZERO, // expected parent
+            &validators,
+        );
+        assert!(matches!(result, Err(AssuranceError::BadAttestationParent)));
+    }
+
+    #[test]
+    fn test_error_as_str() {
+        assert_eq!(
+            AssuranceError::NotSortedOrUniqueAssurers.as_str(),
+            "not_sorted_or_unique_assurers"
+        );
+        assert_eq!(AssuranceError::BadSignature.as_str(), "bad_signature");
+        assert_eq!(
+            AssuranceError::BadValidatorIndex.as_str(),
+            "bad_validator_index"
+        );
+        assert_eq!(AssuranceError::CoreNotEngaged.as_str(), "core_not_engaged");
+        assert_eq!(
+            AssuranceError::BadAttestationParent.as_str(),
+            "bad_attestation_parent"
+        );
+    }
+}
