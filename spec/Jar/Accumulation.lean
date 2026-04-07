@@ -1546,7 +1546,7 @@ def accone (ps : PartialState) (serviceId : ServiceId)
         let (result, ctx') :=
           if JamConfig.capabilityModel == .v2 then
             -- jar1: use capability kernel
-            let kernelState := PVM.Kernel.initKernel prog regs mem totalGas.toNat 4
+            let kernelState := PVM.Kernel.initKernel prog regs mem totalGas.toNat 4 runFn
             let rec kernelLoop (ks : PVM.Kernel.KernelState) (ctx : AccContext) (fuel : Nat)
                 : PVM.InvocationResult × AccContext :=
               match fuel with

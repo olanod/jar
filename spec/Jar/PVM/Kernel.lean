@@ -35,6 +35,9 @@ structure BackingStore where
   data : ByteArray
   totalPages : Nat
 
+/-- PVM run function type (selects gas model). -/
+def PvmRunFn := PVM.ProgramBlob → Nat → PVM.Registers → PVM.Memory → Int64 → PVM.InvocationResult
+
 /-- Kernel state: VM pool + call stack + backing store + memory. -/
 structure KernelState where
   vms : Array VmInstance
@@ -45,6 +48,8 @@ structure KernelState where
   backing : BackingStore
   /-- Flat PVM memory shared by all VMs (simplified model). -/
   memory : PVM.Memory
+  /-- PVM execution function (gas model dependent). -/
+  pvmRun : PvmRunFn
   memCycles : Nat
 
 /-- Result of running the kernel. -/
@@ -749,8 +754,8 @@ def runKernel (state : KernelState) (fuel : Nat) : KernelState × KernelResult :
       if codeCapId >= state.codeCaps.size then (state, .panic)
       else
         let codeCap := state.codeCaps[codeCapId]!
-        -- Run one PVM segment using shared memory
-        let result := PVM.run codeCap.program vm.pc vm.registers state.memory
+        -- Run one PVM segment using shared memory (gas model from pvmRun)
+        let result := state.pvmRun codeCap.program vm.pc vm.registers state.memory
           (Int64.ofUInt64 (UInt64.ofNat vm.gas))
         -- Sync VM state + memory back
         let state := state.updateVm state.activeVm fun v =>
@@ -832,7 +837,7 @@ def resumeProtocolCall (state : KernelState) (result0 result1 : UInt64) : Kernel
     For jar1: creates VM 0 with protocol caps 1-28, manifest caps, UNTYPED at 254.
     Sets φ[7]=op, φ[8]=args_base, φ[9]=args_len. PC=0. -/
 def initKernel (prog : PVM.ProgramBlob) (regs : PVM.Registers) (mem : PVM.Memory)
-    (gas : Nat) (memoryPages : Nat) : KernelState :=
+    (gas : Nat) (memoryPages : Nat) (pvmRun : PvmRunFn := PVM.run) : KernelState :=
   -- Create code cap from program
   let codeCap : CodeCapData := { id := 0, program := prog, jumpTable := #[] }
   -- Build VM 0 cap table: protocol caps 1-28
@@ -866,6 +871,7 @@ def initKernel (prog : PVM.ProgramBlob) (regs : PVM.Registers) (mem : PVM.Memory
     untyped := { offset := 0, total := memoryPages }
     backing := backing
     memory := mem
+    pvmRun := pvmRun
     memCycles := 25 }
 
 /-- Get remaining gas from the active VM. -/
