@@ -1752,4 +1752,82 @@ mod tests {
             "states: genesis + recent"
         );
     }
+
+    #[test]
+    fn test_has_block() {
+        let (store, _dir) = temp_store();
+        let block = make_block(1);
+        let hash = store.put_block(&block).unwrap();
+        assert!(store.has_block(&hash).unwrap());
+        assert!(!store.has_block(&Hash([0xFF; 32])).unwrap());
+    }
+
+    #[test]
+    fn test_block_and_state_counts() {
+        let (store, _dir) = temp_store();
+        let config = grey_types::config::Config::tiny();
+        let (genesis_state, _) = grey_consensus::genesis::create_genesis(&config);
+
+        assert_eq!(store.block_count().unwrap(), 0);
+        assert_eq!(store.state_count().unwrap(), 0);
+
+        let block = make_block(1);
+        let hash = store.put_block(&block).unwrap();
+        assert_eq!(store.block_count().unwrap(), 1);
+
+        store.put_state(&hash, &genesis_state, &config).unwrap();
+        assert_eq!(store.state_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_set_get_finalized() {
+        let (store, _dir) = temp_store();
+        // Initially not found
+        assert!(store.get_finalized().is_err());
+
+        let hash = Hash([42u8; 32]);
+        store.set_finalized(&hash, 10).unwrap();
+
+        let (fin_hash, fin_slot) = store.get_finalized().unwrap();
+        assert_eq!(fin_hash, hash);
+        assert_eq!(fin_slot, 10);
+
+        // Update to a newer finalized block
+        let hash2 = Hash([99u8; 32]);
+        store.set_finalized(&hash2, 20).unwrap();
+        let (fin_hash, fin_slot) = store.get_finalized().unwrap();
+        assert_eq!(fin_hash, hash2);
+        assert_eq!(fin_slot, 20);
+    }
+
+    #[test]
+    fn test_prune_grandpa_votes() {
+        let (store, _dir) = temp_store();
+        let sig = [0xAAu8; 64];
+
+        // Insert votes across rounds 1-5
+        for round in 1..=5u64 {
+            for vi in 0..3u16 {
+                store
+                    .put_grandpa_vote(round, 0, vi, &Hash([round as u8; 32]), round as u32, &sig)
+                    .unwrap();
+            }
+        }
+        assert_eq!(store.vote_count().unwrap(), 15);
+
+        // Prune rounds <= 3
+        let pruned = store.prune_grandpa_votes(3).unwrap();
+        assert_eq!(pruned, 9, "should prune 3 rounds * 3 validators = 9 votes");
+        assert_eq!(store.vote_count().unwrap(), 6, "rounds 4-5 remain");
+
+        // Verify rounds 4-5 still accessible
+        let votes_r4 = store.get_grandpa_votes_for_round(4).unwrap();
+        assert_eq!(votes_r4.len(), 3);
+        let votes_r5 = store.get_grandpa_votes_for_round(5).unwrap();
+        assert_eq!(votes_r5.len(), 3);
+
+        // Verify rounds 1-3 are gone
+        let votes_r1 = store.get_grandpa_votes_for_round(1).unwrap();
+        assert!(votes_r1.is_empty());
+    }
 }
