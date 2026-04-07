@@ -289,6 +289,11 @@ impl InvocationKernel {
     /// Returns a `DispatchResult` indicating what the kernel should do next.
     #[inline(always)]
     pub fn dispatch_ecalli(&mut self, imm: u32) -> DispatchResult {
+        // Range check: ecalli only valid for 0-127. ≥128 faults the VM.
+        if imm > 127 {
+            self.set_active_reg(7, imm as u64);
+            return DispatchResult::Fault(FaultType::Panic); // status 5 when implemented
+        }
         // Charge ecalli gas cost (10) — matches GP host call gas charge
         let ecalli_gas: u64 = 10;
         let current_gas = self.active_gas();
@@ -686,8 +691,8 @@ impl InvocationKernel {
         self.vms[self.active_vm as usize].set_gas(g - ecall_gas);
 
         let phi12 = self.active_reg(12);
-        let subject_ref = (phi12 & 0xFFFFFFFF) as u32;
-        let object_ref = (phi12 >> 32) as u32;
+        let object_ref = (phi12 & 0xFFFFFFFF) as u32;  // low u32
+        let subject_ref = (phi12 >> 32) as u32;         // high u32
 
         match op {
             0x00 => {
@@ -2056,12 +2061,14 @@ mod tests {
             Some(Cap::Untyped(_))
         ));
 
-        // Set φ[7]=4 pages, φ[12]=dst_slot (66, because 65=stack DATA from blob)
+        // Use ecall (UNTYPED slot 254 > 127, can't use ecalli)
+        // φ[7]=4 pages, φ[11]=0 (CALL), φ[12]=dst_slot(low) | untyped_slot(high)
         kernel.set_active_reg(7, 4);
-        kernel.set_active_reg(12, 66);
-
-        // Dispatch CALL on UNTYPED slot
-        let result = kernel.dispatch_ecalli(untyped_slot as u32);
+        kernel.set_active_reg(11, 0); // op = CALL
+        kernel.set_active_reg(12, 66 | ((untyped_slot as u64) << 32));
+        #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+        kernel.flush_live_ctx();
+        let result = kernel.dispatch_ecall(0);
         assert!(matches!(result, DispatchResult::Continue));
 
         // φ[7] should be the dst_slot
@@ -2191,9 +2198,13 @@ mod tests {
         kernel.dispatch_ecalli(64);
         let handle_idx = kernel.active_reg(7) as u8;
 
-        // SET_MAX_GAS on handle: limit to 5000 gas
+        // SET_MAX_GAS on handle via ecall: φ[7]=5000, φ[11]=0x0B, φ[12]=handle(high)
         kernel.set_active_reg(7, 5000);
-        kernel.dispatch_ecalli((MGMT_SET_MAX_GAS << 8) | handle_idx as u32);
+        kernel.set_active_reg(11, 0x0B); // SET_MAX_GAS
+        kernel.set_active_reg(12, (handle_idx as u64) << 32); // subject=handle, object=0
+        #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+        kernel.flush_live_ctx();
+        kernel.dispatch_ecall(0x0B);
 
         // CALL child — gas should be capped at 5000
         let parent_gas_before = kernel.vms[0].gas();
@@ -2256,9 +2267,15 @@ mod tests {
         kernel.dispatch_ecalli(64);
         let handle_idx = kernel.active_reg(7) as u8;
 
-        // DOWNGRADE handle → callable
-        kernel.dispatch_ecalli((MGMT_DOWNGRADE << 8) | handle_idx as u32);
-        let callable_idx = kernel.active_reg(7) as u8;
+        // DOWNGRADE handle → callable via ecall
+        // φ[11]=0x0A, φ[12]=dst_slot(low) | handle(high)
+        kernel.set_active_reg(11, 0x0A); // DOWNGRADE
+        // dst slot: pick slot 67 for the callable
+        kernel.set_active_reg(12, 67 | ((handle_idx as u64) << 32));
+        #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+        kernel.flush_live_ctx();
+        kernel.dispatch_ecall(0x0A);
+        let callable_idx = 67u8;
 
         // Handle still exists
         assert!(matches!(

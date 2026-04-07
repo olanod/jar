@@ -644,8 +644,8 @@ def dispatchEcall (state : KernelState) : KernelState × DispatchResult :=
   | some state =>
     let op := (state.getActiveReg 11).toNat
     let phi12 := (state.getActiveReg 12).toNat
-    let subjectRef := UInt32.ofNat (phi12 &&& 0xFFFFFFFF)
-    let objectRef := UInt32.ofNat (phi12 >>> 32)
+    let objectRef := UInt32.ofNat (phi12 &&& 0xFFFFFFFF)   -- low u32
+    let subjectRef := UInt32.ofNat (phi12 >>> 32)          -- high u32
     match op with
     | 0x00 => -- Dynamic CALL
       match resolveCapRef state subjectRef with
@@ -699,6 +699,12 @@ def dispatchEcall (state : KernelState) : KernelState × DispatchResult :=
 -- ============================================================================
 
 def dispatchEcalli (state : KernelState) (imm : UInt32) : KernelState × DispatchResult :=
+  -- Range check: ecalli only valid for 0-127. ≥128 faults the VM.
+  if imm.toNat > 127 then
+    -- Fault with status 5 (invalid ecalli), φ[7] = imm value
+    let state := state.setActiveReg 7 (UInt64.ofNat imm.toNat)
+    (state, .rootPanic) -- will be status 5 when status codes are implemented
+  else
   -- Charge gas
   match state.chargeGas ecalliGasCost with
   | none => (state, .rootOutOfGas)
