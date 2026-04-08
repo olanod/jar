@@ -472,7 +472,7 @@ fn rotate_auth_pool(
         let o = config.auth_pool_size;
         if state.auth_pool[core].len() > o {
             let start = state.auth_pool[core].len() - o;
-            state.auth_pool[core] = state.auth_pool[core][start..].to_vec();
+            state.auth_pool[core].drain(..start);
         }
     }
 }
