@@ -422,6 +422,132 @@ mod tests {
         assert!(u64::decode(&[]).is_err());
         assert!(bool::decode(&[]).is_err());
     }
+
+    #[test]
+    fn test_bool_invalid_discriminator() {
+        assert!(matches!(
+            bool::decode(&[2]),
+            Err(DecodeError::InvalidDiscriminator(2))
+        ));
+        assert!(matches!(
+            bool::decode(&[0xFF]),
+            Err(DecodeError::InvalidDiscriminator(0xFF))
+        ));
+    }
+
+    #[test]
+    fn test_option_invalid_discriminator() {
+        assert!(matches!(
+            Option::<u32>::decode(&[2]),
+            Err(DecodeError::InvalidDiscriminator(2))
+        ));
+        assert!(matches!(
+            Option::<u8>::decode(&[0xFF]),
+            Err(DecodeError::InvalidDiscriminator(0xFF))
+        ));
+    }
+
+    #[test]
+    fn test_option_some_truncated_payload() {
+        // discriminator = 1 (Some) but no payload bytes for u32
+        assert!(Option::<u32>::decode(&[1]).is_err());
+        assert!(Option::<u32>::decode(&[1, 0, 0]).is_err());
+    }
+
+    #[test]
+    fn test_vec_count_exceeds_data() {
+        // count = 1000 but only 4 bytes for count prefix, no element data
+        let mut data = Vec::new();
+        1000u32.encode_to(&mut data);
+        assert!(matches!(
+            Vec::<u32>::decode(&data),
+            Err(DecodeError::SequenceTooLong { count: 1000, .. })
+        ));
+    }
+
+    #[test]
+    fn test_vec_count_ok_but_elements_truncated() {
+        // count = 2 but only 1 u32 element follows
+        let mut data = Vec::new();
+        2u32.encode_to(&mut data);
+        42u32.encode_to(&mut data);
+        // Only 1 element of 2 present — should fail during decode of second element
+        assert!(Vec::<u32>::decode(&data).is_err());
+    }
+
+    #[test]
+    fn test_btreemap_duplicate_keys_rejected() {
+        // Manually encode with duplicate keys — decoder enforces strict ordering
+        let mut data = Vec::new();
+        2u32.encode_to(&mut data); // count = 2
+        1u16.encode_to(&mut data); // key = 1
+        10u32.encode_to(&mut data); // value = 10
+        1u16.encode_to(&mut data); // key = 1 (duplicate)
+        20u32.encode_to(&mut data); // value = 20
+        assert!(matches!(
+            alloc::collections::BTreeMap::<u16, u32>::decode(&data),
+            Err(DecodeError::NotSorted)
+        ));
+    }
+
+    #[test]
+    fn test_btreemap_out_of_order_rejected() {
+        // Keys not in ascending order
+        let mut data = Vec::new();
+        2u32.encode_to(&mut data); // count = 2
+        5u16.encode_to(&mut data); // key = 5
+        10u32.encode_to(&mut data);
+        3u16.encode_to(&mut data); // key = 3 (less than 5)
+        20u32.encode_to(&mut data);
+        assert!(matches!(
+            alloc::collections::BTreeMap::<u16, u32>::decode(&data),
+            Err(DecodeError::NotSorted)
+        ));
+    }
+
+    #[test]
+    fn test_fixed_array_too_short() {
+        assert!(<[u8; 32]>::decode(&[0; 31]).is_err());
+        assert!(<[u8; 4]>::decode(&[1, 2, 3]).is_err());
+        assert!(<[u8; 1]>::decode(&[]).is_err());
+    }
+
+    #[test]
+    fn test_decode_consumes_exact_bytes() {
+        // Verify decode stops at the right position with trailing data
+        let mut data = Vec::new();
+        42u32.encode_to(&mut data);
+        data.push(0xFF); // trailing garbage
+        let (val, consumed) = u32::decode(&data).unwrap();
+        assert_eq!(val, 42);
+        assert_eq!(consumed, 4);
+    }
+
+    #[test]
+    fn test_nested_vec_option_truncated() {
+        // Vec<Option<u32>> with count=1, discriminator=1 (Some), but truncated u32
+        let data = [1, 0, 0, 0, 1, 0, 0]; // count=1, Some, then only 2 bytes of u32
+        assert!(Vec::<Option<u32>>::decode(&data).is_err());
+    }
+
+    #[test]
+    fn test_u16_exact_boundary() {
+        let (val, consumed) = u16::decode(&[0xFF, 0xFF]).unwrap();
+        assert_eq!(val, u16::MAX);
+        assert_eq!(consumed, 2);
+
+        let (val, _) = u16::decode(&[0, 0]).unwrap();
+        assert_eq!(val, 0);
+    }
+
+    #[test]
+    fn test_u64_max_roundtrip() {
+        let val = u64::MAX;
+        let encoded = val.encode();
+        assert_eq!(encoded, [0xFF; 8]);
+        let (decoded, _) = u64::decode(&encoded).unwrap();
+        assert_eq!(decoded, val);
+    }
 }
 
 #[cfg(test)]
