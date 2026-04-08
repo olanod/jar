@@ -86,25 +86,25 @@ from a `DecodeState` and returns `Option (α × DecodeState)`.
 
 # Primitive Decoders
 
-{docstring Jar.Codec.Decoder.decodeArray}
+{docstring Jar.Codec.decodeArrayD}
 
-{docstring Jar.Codec.Decoder.decodeFixedNat}
+{docstring Jar.Codec.decodeFixedNatD}
 
-{docstring Jar.Codec.Decoder.decodeNat}
+{docstring Jar.Codec.decodeNatD}
 
-{docstring Jar.Codec.Decoder.decodeOption}
+{docstring Jar.Codec.decodeOptionD}
 
-{docstring Jar.Codec.Decoder.decodeLengthPrefixed}
+{docstring Jar.Codec.decodeLengthPrefixedD}
 
-{docstring Jar.Codec.Decoder.decodeBits}
+{docstring Jar.Codec.decodeBitsD}
 
 # Block Decoding
 
-{docstring Jar.Codec.Decoder.decodeHeader}
+{docstring Jar.Codec.decodeBlock}
 
-{docstring Jar.Codec.Decoder.decodeExtrinsic}
+{docstring Jar.Codec.decodeHeader}
 
-{docstring Jar.Codec.Decoder.decodeBlock}
+{docstring Jar.Codec.decodeExtrinsic}
 
 # jar1 Codec
 
