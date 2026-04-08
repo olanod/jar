@@ -20,8 +20,9 @@ The PVM is a RISC-V rv64em-based virtual machine for executing service code
 
 In jar1, the PVM is configured differently from the base Gray Paper specification:
 
-- *Linear memory*: contiguous 4GB address space. No guard zone segmentation — the
-  entire 32-bit address range is available (guard zone = 0).
+- *Capability-based memory*: the flat 4GB address space is managed through DATA
+  capabilities. Each DATA cap owns a set of physical pages with exclusive mapping
+  and per-page access control. See the *JAVM Capability System* chapter for details.
 - *Single-pass gas metering*: basic block gas costs are computed by a single-pass
   O(n) pipeline simulation rather than full pipeline tracking. This models decode
   throughput as the bottleneck, omitting EU contention (which is subsumed by decode

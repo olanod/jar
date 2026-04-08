@@ -33,9 +33,9 @@ functions and codec implementations.
 
 The jar1 variant uses these configuration choices:
 
-- *Memory model*: linear (contiguous 4GB address space, no guard zone segmentation)
+- *Memory model*: capability-based (DATA caps manage physical pages with exclusive mapping)
 - *Gas model*: basicBlockSinglePass (O(n) pipeline simulation per basic block)
-- *Capability model*: v2 (Harvard architecture, multi-VM kernel, capability-based)
+- *Capability model*: v2 (multi-VM kernel, capability-based)
 - *Blob encoding*: u32 LE count prefixes (not JAM compact natural encoding)
 - *Variable validators*: enabled (GP\#514 — active core count scales with validator count)
 - *Economic model*: QuotaEcon (coinless, quota-based storage limits)

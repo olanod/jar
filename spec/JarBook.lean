@@ -29,7 +29,7 @@ set_option pp.rawOnError true
 authors := ["JAR Contributors"]
 %%%
 
-JAR is a blockchain protocol based on JAM (Join-Accumulate Machine). This document describes the `jar1` variant — the latest protocol version. The `jar1` variant extends the Gray Paper's PVM with a capability-based execution model (JAVM): Harvard architecture, multi-VM kernel with synchronous CALL/REPLY, and seL4-style capabilities for memory, code, and VM ownership. It also replaces the token-based economy with a coinless quota system. Earlier variants (`gp072\_full`, `gp072\_tiny`) are preserved for conformance testing but not documented here.
+JAR is a blockchain protocol based on JAM (Join-Accumulate Machine). This document describes the `jar1` variant — the latest protocol version. The `jar1` variant extends the Gray Paper's PVM with a capability-based execution model (JAVM): multi-VM kernel with synchronous CALL/REPLY and seL4-style capabilities for memory, code, and VM ownership. It also replaces the token-based economy with a coinless quota system. Earlier variants (`gp072\_full`, `gp072\_tiny`) are preserved for conformance testing but not documented here.
 
 {include 0 JarBook.Variant}
 
