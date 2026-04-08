@@ -1031,6 +1031,12 @@ mod tests {
                 data[0] = 0x03;
                 prop_assert!(decode_vote_message(&data).is_none());
             }
+
+            #[test]
+            fn decode_vote_message_never_panics(data in prop::collection::vec(any::<u8>(), 0..1024)) {
+                // Arbitrary bytes must never panic — just return None for invalid input.
+                let _ = decode_vote_message(&data);
+            }
         }
     }
 

@@ -1570,3 +1570,17 @@ fn check_queue_depths(
         "pending blocks buffer"
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn decode_block_message_never_panics(data in prop::collection::vec(any::<u8>(), 0..2048)) {
+            let config = Config::tiny();
+            let _ = decode_block_message(&data, &config);
+        }
+    }
+}

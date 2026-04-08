@@ -515,4 +515,16 @@ mod tests {
         assert_eq!(state.pending_audits.len(), 1);
         assert!(state.pending_audits.contains_key(&new_hash));
     }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn decode_announcement_never_panics(data in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let _ = decode_announcement(&data);
+            }
+        }
+    }
 }

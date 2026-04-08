@@ -308,4 +308,16 @@ mod tests {
         assert!(!taken.is_empty());
         assert!(taken.len() <= config.max_tickets_per_block as usize);
     }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn decode_ticket_proof_never_panics(data in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let _ = decode_ticket_proof(&data);
+            }
+        }
+    }
 }

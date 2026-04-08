@@ -674,4 +674,21 @@ mod tests {
         let assurance = gs.generate_assurance(&config, &parent_hash, 0, &secrets[0], &state);
         assert!(assurance.is_none());
     }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn decode_assurance_never_panics(data in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let _ = decode_assurance(&data);
+            }
+
+            #[test]
+            fn decode_guarantee_never_panics(data in prop::collection::vec(any::<u8>(), 0..2048)) {
+                let _ = decode_guarantee(&data);
+            }
+        }
+    }
 }
