@@ -400,3 +400,168 @@ pub fn compute_ring_root(keys: &[ValidatorKey]) -> BandersnatchRingRoot {
         &bandersnatch_keys,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grey_types::header::Ticket;
+
+    fn make_hash(byte: u8) -> Hash {
+        Hash([byte; 32])
+    }
+
+    fn make_validator(i: u8) -> ValidatorKey {
+        ValidatorKey {
+            ed25519: Ed25519PublicKey([i; 32]),
+            bandersnatch: BandersnatchPublicKey([i; 32]),
+            bls: grey_types::BlsPublicKey([i; 144]),
+            metadata: [i; 128],
+        }
+    }
+
+    fn make_ticket(id_byte: u8, attempt: u8) -> Ticket {
+        Ticket {
+            id: make_hash(id_byte),
+            attempt,
+        }
+    }
+
+    // --- accumulate_entropy ---
+
+    #[test]
+    fn test_accumulate_entropy_deterministic() {
+        let eta0 = make_hash(1);
+        let entropy = make_hash(2);
+        let result1 = accumulate_entropy(&eta0, &entropy);
+        let result2 = accumulate_entropy(&eta0, &entropy);
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_accumulate_entropy_different_inputs() {
+        let eta0 = make_hash(1);
+        let r1 = accumulate_entropy(&eta0, &make_hash(2));
+        let r2 = accumulate_entropy(&eta0, &make_hash(3));
+        assert_ne!(r1, r2);
+    }
+
+    #[test]
+    fn test_accumulate_entropy_is_blake2b() {
+        let eta0 = make_hash(1);
+        let entropy = make_hash(2);
+        let mut data = Vec::with_capacity(64);
+        data.extend_from_slice(&eta0.0);
+        data.extend_from_slice(&entropy.0);
+        let expected = grey_crypto::blake2b_256(&data);
+        assert_eq!(accumulate_entropy(&eta0, &entropy), expected);
+    }
+
+    // --- filter_offenders ---
+
+    #[test]
+    fn test_filter_offenders_none() {
+        let keys = vec![make_validator(1), make_validator(2)];
+        let result = filter_offenders(&keys, &[]);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].ed25519, keys[0].ed25519);
+        assert_eq!(result[1].ed25519, keys[1].ed25519);
+    }
+
+    #[test]
+    fn test_filter_offenders_replaces_with_null() {
+        let keys = vec![make_validator(1), make_validator(2), make_validator(3)];
+        let offenders = vec![Ed25519PublicKey([2; 32])];
+        let result = filter_offenders(&keys, &offenders);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].ed25519, keys[0].ed25519); // kept
+        assert_eq!(result[1], ValidatorKey::null()); // nulled
+        assert_eq!(result[2].ed25519, keys[2].ed25519); // kept
+    }
+
+    #[test]
+    fn test_filter_offenders_all() {
+        let keys = vec![make_validator(1), make_validator(2)];
+        let offenders = vec![Ed25519PublicKey([1; 32]), Ed25519PublicKey([2; 32])];
+        let result = filter_offenders(&keys, &offenders);
+        assert!(result.iter().all(|k| *k == ValidatorKey::null()));
+    }
+
+    // --- fallback_key_sequence_raw ---
+
+    #[test]
+    fn test_fallback_key_sequence_raw_empty_validators() {
+        let result = fallback_key_sequence_raw(12, &make_hash(1), &[]);
+        assert_eq!(result.len(), 12);
+        assert!(
+            result
+                .iter()
+                .all(|k| *k == BandersnatchPublicKey::default())
+        );
+    }
+
+    #[test]
+    fn test_fallback_key_sequence_raw_length() {
+        let validators = vec![make_validator(1), make_validator(2)];
+        let result = fallback_key_sequence_raw(10, &make_hash(1), &validators);
+        assert_eq!(result.len(), 10);
+    }
+
+    #[test]
+    fn test_fallback_key_sequence_raw_deterministic() {
+        let validators = vec![make_validator(1), make_validator(2), make_validator(3)];
+        let entropy = make_hash(42);
+        let r1 = fallback_key_sequence_raw(12, &entropy, &validators);
+        let r2 = fallback_key_sequence_raw(12, &entropy, &validators);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_fallback_key_sequence_raw_uses_validator_keys() {
+        let validators = vec![make_validator(10), make_validator(20), make_validator(30)];
+        let result = fallback_key_sequence_raw(100, &make_hash(1), &validators);
+        // Every entry must be one of the validator bandersnatch keys
+        for key in &result {
+            assert!(validators.iter().any(|v| v.bandersnatch == *key));
+        }
+    }
+
+    // --- merge_tickets ---
+
+    #[test]
+    fn test_merge_tickets_empty() {
+        let result = merge_tickets(&[], &[], 10);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_merge_tickets_keeps_lowest() {
+        let existing = vec![make_ticket(1, 0), make_ticket(3, 0)];
+        let new = vec![make_ticket(2, 0), make_ticket(4, 0)];
+        let result = merge_tickets(&existing, &new, 3);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].id, make_hash(1));
+        assert_eq!(result[1].id, make_hash(2));
+        assert_eq!(result[2].id, make_hash(3));
+    }
+
+    #[test]
+    fn test_merge_tickets_truncates() {
+        let tickets: Vec<Ticket> = (0..10).map(|i| make_ticket(i, 0)).collect();
+        let result = merge_tickets(&tickets, &[], 5);
+        assert_eq!(result.len(), 5);
+    }
+
+    // --- SafroleError ---
+
+    #[test]
+    fn test_safrole_error_as_str() {
+        assert_eq!(SafroleError::BadSlot.as_str(), "bad_slot");
+        assert_eq!(SafroleError::UnexpectedTicket.as_str(), "unexpected_ticket");
+        assert_eq!(SafroleError::BadTicketProof.as_str(), "bad_ticket_proof");
+        assert_eq!(SafroleError::DuplicateTicket.as_str(), "duplicate_ticket");
+        assert_eq!(
+            SafroleError::TicketNotRetained.as_str(),
+            "ticket_not_retained"
+        );
+    }
+}
