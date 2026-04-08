@@ -713,6 +713,19 @@ fn handle_host_call(
 ) -> bool {
     const RESULT_NONE: u64 = u64::MAX;
 
+    /// Read data from a capability or resume with RESULT_NONE and return early.
+    macro_rules! read_data_or_fail {
+        ($pvm:expr, $cap:expr, $off:expr, $len:expr) => {
+            match $pvm.kernel_read_data($cap, $off, $len) {
+                Some(data) => data,
+                None => {
+                    $pvm.kernel_resume(RESULT_NONE, 0);
+                    return true;
+                }
+            }
+        };
+    }
+
     tracing::info!(slot, service_id, "handle_host_call");
     match slot {
         1 => {
@@ -765,13 +778,7 @@ fn handle_host_call(
             let max_len = regs[10] as usize;
             let cap_idx = regs[12] as u8;
 
-            let key = match pvm.kernel_read_data(cap_idx, key_off, key_len) {
-                Some(k) => k,
-                None => {
-                    pvm.kernel_resume(RESULT_NONE, 0);
-                    return true;
-                }
-            };
+            let key = read_data_or_fail!(pvm, cap_idx, key_off, key_len);
             // Look up in current service's storage
             let value = regular
                 .accounts
@@ -795,20 +802,8 @@ fn handle_host_call(
             let val_len = regs[10] as u32;
             let cap_idx = regs[12] as u8;
 
-            let key = match pvm.kernel_read_data(cap_idx, key_off, key_len) {
-                Some(k) => k,
-                None => {
-                    pvm.kernel_resume(RESULT_NONE, 0);
-                    return true;
-                }
-            };
-            let value = match pvm.kernel_read_data(cap_idx, val_off, val_len) {
-                Some(v) => v,
-                None => {
-                    pvm.kernel_resume(RESULT_NONE, 0);
-                    return true;
-                }
-            };
+            let key = read_data_or_fail!(pvm, cap_idx, key_off, key_len);
+            let value = read_data_or_fail!(pvm, cap_idx, val_off, val_len);
             // Get old value length for return
             let account = match regular.accounts.get_mut(&service_id) {
                 Some(a) => a,
