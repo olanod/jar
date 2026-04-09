@@ -50,6 +50,23 @@ theorem quotaEcon_setQuota_never_none (e : QuotaEcon) (mi mb : UInt64) :
   simp [quotaEcon_setQuota_always_some]
 
 -- ============================================================================
+-- canAffordStorage monotonicity
+-- ============================================================================
+
+/-- canAffordStorage monotonicity: if storage is affordable under quota e1,
+    and e2 has at least as large quotas, then it's affordable under e2.
+    This is the key safety property — increasing quotas never revokes
+    previously affordable storage. -/
+theorem quotaEcon_canAffordStorage_mono
+    (e1 e2 : QuotaEcon) (items bytes bI bL bS : Nat)
+    (hItems : e1.quotaItems.toNat ≤ e2.quotaItems.toNat)
+    (hBytes : e1.quotaBytes.toNat ≤ e2.quotaBytes.toNat)
+    (h : @EconModel.canAffordStorage QuotaEcon QuotaTransfer _ e1 items bytes bI bL bS = true) :
+    @EconModel.canAffordStorage QuotaEcon QuotaTransfer _ e2 items bytes bI bL bS = true := by
+  simp only [EconModel.canAffordStorage, Bool.and_eq_true, decide_eq_true_eq] at h ⊢
+  exact ⟨Nat.le_trans h.1 hItems, Nat.le_trans h.2 hBytes⟩
+
+-- ============================================================================
 -- Serialization size invariants (Merklization correctness)
 -- ============================================================================
 
