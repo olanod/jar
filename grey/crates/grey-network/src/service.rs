@@ -558,62 +558,34 @@ async fn run_network_loop(
                         gossipsub::Event::Message { message, propagation_source, .. }
                     )) => {
                         let topic = message.topic.as_str();
-                        // Map dynamic topic string to static for rate tracking
-                        let static_topic: &'static str = if topic == BLOCKS_TOPIC {
-                            BLOCKS_TOPIC
-                        } else if topic == FINALITY_TOPIC {
-                            FINALITY_TOPIC
-                        } else if topic == GUARANTEES_TOPIC {
-                            GUARANTEES_TOPIC
-                        } else if topic == ASSURANCES_TOPIC {
-                            ASSURANCES_TOPIC
-                        } else if topic == ANNOUNCEMENTS_TOPIC {
-                            ANNOUNCEMENTS_TOPIC
-                        } else if topic == TICKETS_TOPIC {
-                            TICKETS_TOPIC
-                        } else {
-                            // Unknown topic, skip rate tracking
-                            ""
-                        };
-                        if !static_topic.is_empty()
-                            && !rate_tracker.record(&propagation_source, static_topic)
-                        {
-                            tracing::warn!(
-                                "Peer {} exceeding message rate limit on topic '{}'",
-                                propagation_source,
-                                static_topic,
-                            );
+                        // Macro to handle rate tracking + event dispatch per topic
+                        macro_rules! dispatch_topic {
+                            ($static_topic:expr, $event:ident, $priority:ident) => {{
+                                if !rate_tracker.record(&propagation_source, $static_topic) {
+                                    tracing::warn!(
+                                        "Peer {} exceeding message rate limit on topic '{}'",
+                                        propagation_source,
+                                        $static_topic,
+                                    );
+                                }
+                                send_event!(NetworkEvent::$event {
+                                    data: message.data,
+                                    source: propagation_source,
+                                }, $priority);
+                            }};
                         }
                         if topic == BLOCKS_TOPIC {
-                            send_event!(NetworkEvent::BlockReceived {
-                                data: message.data,
-                                source: propagation_source,
-                            }, high);
+                            dispatch_topic!(BLOCKS_TOPIC, BlockReceived, high);
                         } else if topic == FINALITY_TOPIC {
-                            send_event!(NetworkEvent::FinalityVote {
-                                data: message.data,
-                                source: propagation_source,
-                            }, critical);
+                            dispatch_topic!(FINALITY_TOPIC, FinalityVote, critical);
                         } else if topic == GUARANTEES_TOPIC {
-                            send_event!(NetworkEvent::GuaranteeReceived {
-                                data: message.data,
-                                source: propagation_source,
-                            }, low);
+                            dispatch_topic!(GUARANTEES_TOPIC, GuaranteeReceived, low);
                         } else if topic == ASSURANCES_TOPIC {
-                            send_event!(NetworkEvent::AssuranceReceived {
-                                data: message.data,
-                                source: propagation_source,
-                            }, normal);
+                            dispatch_topic!(ASSURANCES_TOPIC, AssuranceReceived, normal);
                         } else if topic == ANNOUNCEMENTS_TOPIC {
-                            send_event!(NetworkEvent::AnnouncementReceived {
-                                data: message.data,
-                                source: propagation_source,
-                            }, normal);
+                            dispatch_topic!(ANNOUNCEMENTS_TOPIC, AnnouncementReceived, normal);
                         } else if topic == TICKETS_TOPIC {
-                            send_event!(NetworkEvent::TicketReceived {
-                                data: message.data,
-                                source: propagation_source,
-                            }, low);
+                            dispatch_topic!(TICKETS_TOPIC, TicketReceived, low);
                         }
                     }
                     // Handle request-response events
