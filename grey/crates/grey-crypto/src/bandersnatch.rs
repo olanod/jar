@@ -13,6 +13,20 @@ use std::sync::OnceLock;
 
 type Suite = suite::BandersnatchSha512Ell2;
 
+/// Deserialize a VRF output point from the first 32 bytes and return its hash.
+///
+/// The first 32 bytes of a Bandersnatch VRF signature encode a compressed curve
+/// point (the VRF output). This function deserializes it and returns both the
+/// VRF output (for verification) and its 32-byte hash Y(s) (for entropy/ticket ID).
+fn deserialize_vrf_output(signature_prefix: &[u8]) -> Option<(ark_vrf::Output<Suite>, [u8; 32])> {
+    let output_point = AffinePoint::deserialize_compressed(&mut &signature_prefix[..32]).ok()?;
+    let output = ark_vrf::Output::<Suite>::from_affine(output_point);
+    let hash = output.hash();
+    let mut result = [0u8; 32];
+    result.copy_from_slice(&hash[..32]);
+    Some((output, result))
+}
+
 /// Deserialize compressed Bandersnatch public keys to affine points.
 ///
 /// Invalid keys are replaced with the padding point so that ring indices
@@ -242,8 +256,7 @@ pub fn ring_vrf_verify(
     let verifier = params.verifier(verifier_key);
 
     // Parse the VRF output from the first 32 bytes
-    let output_point = AffinePoint::deserialize_compressed(&mut &signature[..32]).ok()?;
-    let output = ark_vrf::Output::<Suite>::from_affine(output_point);
+    let (output, result) = deserialize_vrf_output(&signature[..32])?;
 
     // Parse the proof from the remaining bytes
     let proof = RingProof::deserialize_compressed(&mut &signature[32..]).ok()?;
@@ -251,12 +264,7 @@ pub fn ring_vrf_verify(
     // Construct VRF input from the data
     let input = ark_vrf::Input::<Suite>::new(vrf_input_data)?;
 
-    // Extract VRF output hash before verify (which consumes output)
-    let hash = output.hash();
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&hash[..32]);
-
-    // Verify the proof
+    // Verify the proof (consumes output)
     ark_vrf::Public::<Suite>::verify(input, output, ad, &proof, &verifier).ok()?;
 
     Some(result)
@@ -272,11 +280,7 @@ pub fn vrf_output_hash(signature: &[u8]) -> Option<[u8; 32]> {
     if signature.len() < 32 {
         return None;
     }
-    let output_point = AffinePoint::deserialize_compressed(&mut &signature[..32]).ok()?;
-    let output = ark_vrf::Output::<Suite>::from_affine(output_point);
-    let hash = output.hash();
-    let mut result = [0u8; 32];
-    result.copy_from_slice(&hash[..32]);
+    let (_output, result) = deserialize_vrf_output(&signature[..32])?;
     Some(result)
 }
 
