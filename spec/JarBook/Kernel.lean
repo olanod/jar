@@ -51,6 +51,8 @@ terminated.
 
 {docstring Jar.JAVM.Cap.DispatchResult}
 
+{docstring PvmRunFn}
+
 # Capability Indirection Resolution
 
 Cap slot references use a u32 HANDLE-chain encoding (up to 3 levels of
@@ -127,6 +129,8 @@ phi\[11\] selects the operation, phi\[12\] encodes subject (high u32) and
 object (low u32) with indirection.
 
 {docstring dispatchEcall}
+
+{docstring Jar.JAVM.Kernel.DispatchResult}
 
 # Kernel Initialization and Execution
 

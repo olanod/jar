@@ -35,6 +35,10 @@ cross-CNode transfer.
 
 {docstring Jar.JAVM.Cap.Cap.isCopyable}
 
+{docstring Jar.JAVM.Cap.Cap.tryCopy}
+
+{docstring Jar.JAVM.Cap.CapRef}
+
 {docstring Jar.JAVM.Cap.Access}
 
 ## DATA: Physical Pages (Move-Only, Partial Mapping)
@@ -145,6 +149,10 @@ unmodified. The compiler uses this for fast-path inlining of protocol calls.
 
 {docstring Jar.JAVM.Cap.CapTable.isEmpty}
 
+{docstring Jar.JAVM.Cap.setOriginal}
+
+{docstring Jar.JAVM.Cap.maxIndirectionDepth}
+
 # VM Lifecycle
 
 VMs follow a strict state machine: IDLE (can be CALLed) -> RUNNING (executing) ->
@@ -183,7 +191,11 @@ phi\[7..10\] have the same meaning in both instructions.
 
 {docstring Jar.JAVM.Cap.EcalliOp}
 
+{docstring Jar.JAVM.Cap.EcallOp}
+
 {docstring Jar.JAVM.Cap.decodeEcalli}
+
+{docstring Jar.JAVM.Cap.decodeEcall}
 
 {docstring Jar.JAVM.Cap.DispatchResult}
 

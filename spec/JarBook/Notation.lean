@@ -47,7 +47,11 @@ association list.
 
 {docstring Array.cyclicGet}
 
+{docstring Array.firstN}
+
 {docstring Array.lastN}
+
+{docstring IntRange}
 
 # Octet Sequences
 
@@ -60,6 +64,10 @@ The 256-bit hash type `H` is `OctetSeq 32`.
 {docstring Hash}
 
 {docstring Hash.zero}
+
+{docstring OctetSeq.mk!}
+
+{docstring Hash.mk!}
 
 # Cryptographic Key Types
 
