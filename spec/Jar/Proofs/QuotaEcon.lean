@@ -99,6 +99,39 @@ theorem quotaEcon_setQuota_then_canAfford
   exact ⟨hItems, hBytes⟩
 
 -- ============================================================================
+-- Serialization roundtrip (deserializeEcon ∘ serializeEcon = id)
+-- ============================================================================
+
+/-- deserializeEcon (serializeEcon e) 0 recovers the original QuotaEcon.
+    Combined with the codec roundtrip, this proves that the Merklization
+    serialization format is lossless for QuotaEcon values. -/
+theorem quotaEcon_deserialize_serialize_roundtrip [JarConfig] (e : QuotaEcon) :
+    @EconModel.deserializeEcon QuotaEcon QuotaTransfer _
+      (@EconModel.serializeEcon QuotaEcon QuotaTransfer _ e) 0 = some (e, 16) := by
+  show (let data := Codec.encodeFixedNat 8 e.quotaItems.toNat
+                    ++ Codec.encodeFixedNat 8 e.quotaBytes.toNat
+        if 0 + 16 ≤ data.size then
+          let quotaItems := Codec.decodeFixedNat (data.extract 0 (0 + 8))
+          let quotaBytes := Codec.decodeFixedNat (data.extract (0 + 8) (0 + 16))
+          some ({ quotaItems := UInt64.ofNat quotaItems, quotaBytes := UInt64.ofNat quotaBytes }, 0 + 16)
+        else none) = some (e, 16)
+  have hsz : (Codec.encodeFixedNat 8 e.quotaItems.toNat
+              ++ Codec.encodeFixedNat 8 e.quotaBytes.toNat).size = 16 := by
+    rw [byteArray_append_size, encodeFixedNat_size, encodeFixedNat_size]
+  simp only [hsz, Nat.le_refl, ↓reduceIte]
+  have hleft : (Codec.encodeFixedNat 8 e.quotaItems.toNat
+                ++ Codec.encodeFixedNat 8 e.quotaBytes.toNat).extract 0 8
+               = Codec.encodeFixedNat 8 e.quotaItems.toNat := by
+    exact ByteArray.extract_append_eq_left (encodeFixedNat_size 8 e.quotaItems.toNat)
+  have hright : (Codec.encodeFixedNat 8 e.quotaItems.toNat
+                 ++ Codec.encodeFixedNat 8 e.quotaBytes.toNat).extract 8 16
+                = Codec.encodeFixedNat 8 e.quotaBytes.toNat := by
+    exact ByteArray.extract_append_eq_right (encodeFixedNat_size 8 e.quotaItems.toNat)
+      (by rw [encodeFixedNat_size, encodeFixedNat_size])
+  rw [hleft, hright, decodeFixedNat_encodeFixedNat, decodeFixedNat_encodeFixedNat]
+  simp [UInt64.ofNat_toNat]
+
+-- ============================================================================
 -- Serialization size invariants (Merklization correctness)
 -- ============================================================================
 

@@ -71,6 +71,39 @@ theorem balanceEcon_absorbEjected_balance (e ejected : BalanceEcon) :
   rfl
 
 -- ============================================================================
+-- Serialization roundtrip (deserializeEcon ∘ serializeEcon = id)
+-- ============================================================================
+
+/-- deserializeEcon (serializeEcon e) 0 recovers the original BalanceEcon.
+    Combined with the codec roundtrip, this proves that the Merklization
+    serialization format is lossless for BalanceEcon values. -/
+theorem balanceEcon_deserialize_serialize_roundtrip [JarConfig] (e : BalanceEcon) :
+    @EconModel.deserializeEcon BalanceEcon BalanceTransfer _
+      (@EconModel.serializeEcon BalanceEcon BalanceTransfer _ e) 0 = some (e, 16) := by
+  show (let data := Codec.encodeFixedNat 8 e.balance.toNat
+                    ++ Codec.encodeFixedNat 8 e.gratis.toNat
+        if 0 + 16 ≤ data.size then
+          let balance := Codec.decodeFixedNat (data.extract 0 (0 + 8))
+          let gratis := Codec.decodeFixedNat (data.extract (0 + 8) (0 + 16))
+          some ({ balance := UInt64.ofNat balance, gratis := UInt64.ofNat gratis }, 0 + 16)
+        else none) = some (e, 16)
+  have hsz : (Codec.encodeFixedNat 8 e.balance.toNat
+              ++ Codec.encodeFixedNat 8 e.gratis.toNat).size = 16 := by
+    rw [byteArray_append_size, encodeFixedNat_size, encodeFixedNat_size]
+  simp only [hsz, Nat.le_refl, ↓reduceIte]
+  have hleft : (Codec.encodeFixedNat 8 e.balance.toNat
+                ++ Codec.encodeFixedNat 8 e.gratis.toNat).extract 0 8
+               = Codec.encodeFixedNat 8 e.balance.toNat := by
+    exact ByteArray.extract_append_eq_left (encodeFixedNat_size 8 e.balance.toNat)
+  have hright : (Codec.encodeFixedNat 8 e.balance.toNat
+                 ++ Codec.encodeFixedNat 8 e.gratis.toNat).extract 8 16
+                = Codec.encodeFixedNat 8 e.gratis.toNat := by
+    exact ByteArray.extract_append_eq_right (encodeFixedNat_size 8 e.balance.toNat)
+      (by rw [encodeFixedNat_size, encodeFixedNat_size])
+  rw [hleft, hright, decodeFixedNat_encodeFixedNat, decodeFixedNat_encodeFixedNat]
+  simp [UInt64.ofNat_toNat]
+
+-- ============================================================================
 -- Serialization size invariants (same as QuotaEcon — both models produce
 -- 16-byte serializeEcon and 24-byte encodeInfo)
 -- ============================================================================
