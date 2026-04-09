@@ -189,4 +189,74 @@ theorem balanceEcon_encodeInfo_size [JarConfig] (e : BalanceEcon)
   rw [byteArray_append_size, byteArray_append_size,
       encodeFixedNat_size, encodeFixedNat_size, encodeFixedNat_size]
 
+-- ============================================================================
+-- debitTransfer monotonicity (higher balance ⟹ debit still succeeds)
+-- ============================================================================
+
+/-- debitTransfer monotonicity: if debit succeeds at balance b₁, it also
+    succeeds at any higher balance b₂ ≥ b₁ (same gratis).
+    This is a safety property — increasing a service's balance never
+    breaks previously affordable transfers. -/
+theorem balanceEcon_debitTransfer_mono (e1 e2 : BalanceEcon) (amount : UInt64) (e1' : BalanceEcon)
+    (hBal : e1.balance.toNat ≤ e2.balance.toNat)
+    (h : @EconModel.debitTransfer BalanceEcon BalanceTransfer _ e1 amount = some e1') :
+    ∃ e2', @EconModel.debitTransfer BalanceEcon BalanceTransfer _ e2 amount = some e2' := by
+  simp only [EconModel.debitTransfer] at h ⊢
+  split at h
+  next hge1 =>
+    have hge2 : e2.balance ≥ amount := Nat.le_trans hge1 hBal
+    exact ⟨{ e2 with balance := e2.balance - amount }, by simp [hge2]⟩
+  next => simp at h
+
+-- ============================================================================
+-- debitTransfer preserves gratis
+-- ============================================================================
+
+/-- debitTransfer does not change the gratis field.
+    Only the balance is affected by a debit. -/
+theorem balanceEcon_debitTransfer_preserves_gratis (e e' : BalanceEcon) (amount : UInt64)
+    (h : @EconModel.debitTransfer BalanceEcon BalanceTransfer _ e amount = some e') :
+    e'.gratis = e.gratis := by
+  simp only [EconModel.debitTransfer] at h
+  split at h
+  next => simp only [Option.some.injEq] at h; subst h; rfl
+  next => simp at h
+
+-- ============================================================================
+-- creditTransfer does not change gratis
+-- ============================================================================
+
+/-- creditTransfer does not change the gratis field. -/
+theorem balanceEcon_creditTransfer_preserves_gratis (e : BalanceEcon) (t : BalanceTransfer) :
+    (@EconModel.creditTransfer BalanceEcon BalanceTransfer _ e t).gratis = e.gratis := by
+  rfl
+
+-- ============================================================================
+-- debitTransfer decreases balance by exact amount
+-- ============================================================================
+
+/-- When debitTransfer succeeds, the resulting balance equals the original
+    balance minus the amount (at the Nat level, no wrapping). -/
+theorem balanceEcon_debitTransfer_balance (e e' : BalanceEcon) (amount : UInt64)
+    (h : @EconModel.debitTransfer BalanceEcon BalanceTransfer _ e amount = some e') :
+    e'.balance.toNat = e.balance.toNat - amount.toNat := by
+  simp only [EconModel.debitTransfer] at h
+  split at h
+  next hge =>
+    simp only [Option.some.injEq] at h; subst h
+    exact UInt64.toNat_sub_of_le _ _ hge
+  next => simp at h
+
+-- ============================================================================
+-- absorbEjected commutative (balance addition)
+-- ============================================================================
+
+/-- absorbEjected is commutative at the balance level: absorbing a into b
+    gives the same balance as absorbing b into a. -/
+theorem balanceEcon_absorbEjected_comm_balance (e1 e2 : BalanceEcon) :
+    (@EconModel.absorbEjected BalanceEcon BalanceTransfer _ e1 e2).balance
+    = (@EconModel.absorbEjected BalanceEcon BalanceTransfer _ e2 e1).balance := by
+  show e1.balance + e2.balance = e2.balance + e1.balance
+  rw [UInt64.add_comm]
+
 end Jar.Proofs
