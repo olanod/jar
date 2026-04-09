@@ -331,6 +331,17 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     let mut last_assurance_slot: Timeslot = 0;
     let mut monitor_tick: u64 = 0;
 
+    /// Increment an atomic counter on rpc_state if present.
+    macro_rules! inc_metric {
+        ($field:ident) => {
+            if let Some(ref rpc_st) = rpc_state {
+                rpc_st
+                    .$field
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        };
+    }
+
     loop {
         tokio::select! {
             signal_name = &mut shutdown => {
@@ -914,9 +925,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                 let Some(event) = event else { break };
                 match event {
                     NetworkEvent::BlockReceived { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_blocks_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_blocks_received);
                         match decode_block_message(&data, protocol) {
                             Some((block, _hash)) => {
                                 let block_hash = grey_crypto::header_hash(&block.header);
@@ -1113,9 +1122,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                     NetworkEvent::FinalityVote { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_finality_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_finality_received);
                         if let Some(vote_msg) = finality::decode_vote_message(&data) {
                             if finality::verify_vote(&vote_msg.vote, vote_msg.vote_type, &state) {
                                 // Persist vote to store for crash recovery
@@ -1215,9 +1222,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                     NetworkEvent::AnnouncementReceived { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_announcements_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_announcements_received);
                         if let Some(ann) = audit::decode_announcement(&data) {
                             if audit::verify_announcement(&ann, &state) {
                                 tracing::info!(
@@ -1250,9 +1255,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         }
                     }
                     NetworkEvent::GuaranteeReceived { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_guarantees_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_guarantees_received);
                         // Extract work report hash (first 32 bytes) for dedup
                         if data.len() >= 32 {
                             let mut rh = [0u8; 32];
@@ -1280,9 +1283,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         );
                     }
                     NetworkEvent::AssuranceReceived { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_assurances_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_assurances_received);
                         tracing::debug!(
                             "Validator {} received assurance from {}",
                             config.validator_index,
@@ -1314,9 +1315,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         let _ = response_tx.send(block_data);
                     }
                     NetworkEvent::TicketReceived { data, source } => {
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.gossip_tickets_received.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(gossip_tickets_received);
                         if let Some(proof) = tickets::decode_ticket_proof(&data)
                             && ticket_state.add_ticket(proof, protocol, &state) {
                                 tracing::debug!(
@@ -1334,9 +1333,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                             vi
                         );
                         // Increment peer count for metrics
-                        if let Some(ref rpc_st) = rpc_state {
-                            rpc_st.peer_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        }
+                        inc_metric!(peer_count);
                     }
                 }
             }
