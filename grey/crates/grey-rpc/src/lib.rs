@@ -272,7 +272,7 @@ impl JamRpcServer for RpcImpl {
         self.track_request("jam_getHead");
         match self.state.store.get_head() {
             Ok((hash, slot)) => Ok(serde_json::json!({
-                "hash": hex::encode(hash.0),
+                "hash": hash.to_hex(),
                 "slot": slot,
             })),
             Err(_) => Ok(serde_json::json!({
@@ -290,9 +290,9 @@ impl JamRpcServer for RpcImpl {
             Ok(block) => Ok(serde_json::json!({
                 "timeslot": block.header.timeslot,
                 "author_index": block.header.author_index,
-                "parent_hash": hex::encode(block.header.parent_hash.0),
-                "state_root": hex::encode(block.header.state_root.0),
-                "extrinsic_hash": hex::encode(block.header.extrinsic_hash.0),
+                "parent_hash": block.header.parent_hash.to_hex(),
+                "state_root": block.header.state_root.to_hex(),
+                "extrinsic_hash": block.header.extrinsic_hash.to_hex(),
                 "tickets_count": block.extrinsic.tickets.len(),
                 "guarantees_count": block.extrinsic.guarantees.len(),
                 "assurances_count": block.extrinsic.assurances.len(),
@@ -306,7 +306,7 @@ impl JamRpcServer for RpcImpl {
         self.track_request("jam_getBlockBySlot");
         match self.state.store.get_block_hash_by_slot(slot) {
             Ok(hash) => Ok(serde_json::json!({
-                "hash": hex::encode(hash.0),
+                "hash": hash.to_hex(),
                 "slot": slot,
             })),
             Err(grey_store::StoreError::NotFound) => Err(not_found("no block at this slot")),
@@ -356,7 +356,7 @@ impl JamRpcServer for RpcImpl {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
         Ok(serde_json::json!({
-            "hash": hex::encode(hash.0),
+            "hash": hash.to_hex(),
             "status": "submitted",
         }))
     }
@@ -365,7 +365,7 @@ impl JamRpcServer for RpcImpl {
         self.track_request("jam_getFinalized");
         match self.state.store.get_finalized() {
             Ok((hash, slot)) => Ok(serde_json::json!({
-                "hash": hex::encode(hash.0),
+                "hash": hash.to_hex(),
                 "slot": slot,
             })),
             Err(_) => Ok(serde_json::json!({
@@ -418,14 +418,14 @@ impl JamRpcServer for RpcImpl {
         // Get block header for state_root
         let block = self.state.store.get_block(&head_hash).map_internal_err()?;
 
-        let anchor = hex::encode(head_hash.0);
-        let state_root = hex::encode(block.header.state_root.0);
+        let anchor = head_hash.to_hex();
+        let state_root = block.header.state_root.to_hex();
         let beefy_root = self
             .state
             .store
             .get_accumulation_root(&head_hash, &head_hash)
             .map_internal_err()?
-            .map(|h| hex::encode(h.0))
+            .map(|h| h.to_hex())
             .unwrap_or_else(|| hex::encode([0u8; 32]));
 
         // Direct lookup for service code hash (avoids full state deserialization)
@@ -434,7 +434,7 @@ impl JamRpcServer for RpcImpl {
             .store
             .get_service_code_hash(&head_hash, service_id)
             .map_internal_err()?
-            .map(|h| hex::encode(h.0));
+            .map(|h| h.to_hex());
 
         Ok(serde_json::json!({
             "slot": head_slot,
@@ -460,7 +460,7 @@ impl JamRpcServer for RpcImpl {
         {
             Some(meta) => Ok(serde_json::json!({
                 "service_id": service_id,
-                "code_hash": hex::encode(meta.code_hash.0),
+                "code_hash": meta.code_hash.to_hex(),
                 "quota_items": meta.quota_items,
                 "min_accumulate_gas": meta.min_accumulate_gas,
                 "min_on_transfer_gas": meta.min_on_transfer_gas,
@@ -483,7 +483,7 @@ impl JamRpcServer for RpcImpl {
         let genesis_hash = grey_crypto::blake2b_256(&config_blob);
         Ok(serde_json::json!({
             "protocol_version": "0.7.2",
-            "genesis_hash": hex::encode(genesis_hash.0),
+            "genesis_hash": genesis_hash.to_hex(),
             "validators_count": c.validators_count,
             "core_count": c.core_count,
             "epoch_length": c.epoch_length,
@@ -548,8 +548,8 @@ impl JamRpcServer for RpcImpl {
         let validator_count = validators_raw.len() / 336;
 
         Ok(serde_json::json!({
-            "block_hash": hex::encode(block_hash.0),
-            "state_root": hex::encode(block.header.state_root.0),
+            "block_hash": block_hash.to_hex(),
+            "state_root": block.header.state_root.to_hex(),
             "timeslot": slot,
             "entropy": entropy,
             "validator_count": validator_count,
@@ -604,9 +604,9 @@ impl JamRpcServer for RpcImpl {
         for (i, v) in validators.iter().enumerate() {
             entries.push(serde_json::json!({
                 "index": i,
-                "ed25519": hex::encode(v.ed25519.0),
-                "bandersnatch": hex::encode(v.bandersnatch.0),
-                "bls": hex::encode(v.bls.0),
+                "ed25519": v.ed25519.to_hex(),
+                "bandersnatch": v.bandersnatch.to_hex(),
+                "bls": v.bls.to_hex(),
                 "metadata": hex::encode(v.metadata),
             }));
         }
@@ -640,7 +640,7 @@ impl JamRpcServer for RpcImpl {
             if let Ok(hash) = self.state.store.get_block_hash_by_slot(slot) {
                 blocks.push(serde_json::json!({
                     "slot": slot,
-                    "hash": hex::encode(hash.0),
+                    "hash": hash.to_hex(),
                 }));
             }
         }
@@ -1360,7 +1360,7 @@ mod tests {
 
         let client = HttpClientBuilder::default().build(&url).unwrap();
         let result: serde_json::Value = client.request("jam_getHead", rpc_params![]).await.unwrap();
-        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["hash"], hash.to_hex());
         assert_eq!(result["slot"], 100);
     }
 
@@ -1372,7 +1372,7 @@ mod tests {
 
         let client = HttpClientBuilder::default().build(&url).unwrap();
         let result: serde_json::Value = client
-            .request("jam_getBlock", rpc_params![hex::encode(hash.0)])
+            .request("jam_getBlock", rpc_params![hash.to_hex()])
             .await
             .unwrap();
         assert_eq!(result["timeslot"], 50);
@@ -1418,7 +1418,7 @@ mod tests {
             .request("jam_getBlockBySlot", rpc_params![77])
             .await
             .unwrap();
-        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["hash"], hash.to_hex());
         assert_eq!(result["slot"], 77);
     }
 
@@ -1456,7 +1456,7 @@ mod tests {
             .request("jam_getFinalized", rpc_params![])
             .await
             .unwrap();
-        assert_eq!(result["hash"], hex::encode(hash.0));
+        assert_eq!(result["hash"], hash.to_hex());
         assert_eq!(result["slot"], 60);
     }
 
@@ -1675,7 +1675,7 @@ mod tests {
         assert_eq!(result["service_id"], 2000);
         assert_eq!(
             result["code_hash"].as_str().unwrap(),
-            hex::encode(expected_hash.0),
+            expected_hash.to_hex(),
             "code_hash should match blake2b of the code data"
         );
         assert_eq!(result["quota_items"], 1_000_000u64);
@@ -1735,11 +1735,11 @@ mod tests {
 
         // Explicit block hash
         let result2: serde_json::Value = client
-            .request("jam_getState", rpc_params![Some(hex::encode(hash.0))])
+            .request("jam_getState", rpc_params![Some(hash.to_hex())])
             .await
             .unwrap();
         assert_eq!(result2["timeslot"], 1);
-        assert_eq!(result2["block_hash"], hex::encode(hash.0));
+        assert_eq!(result2["block_hash"], hash.to_hex());
     }
 
     #[tokio::test]
@@ -1772,7 +1772,7 @@ mod tests {
         // Verify validator keys match genesis secrets
         for (i, secret) in secrets.iter().enumerate() {
             let v = &validators[i];
-            let expected_ed = hex::encode(secret.ed25519.public_key().0);
+            let expected_ed = secret.ed25519.public_key().to_hex();
             let expected_band = hex::encode(secret.bandersnatch.public_key_bytes());
             assert_eq!(
                 v["ed25519"].as_str().unwrap(),
