@@ -302,12 +302,12 @@ pub fn is_ticket_sealed(series: &SealKeySeries) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+mod test_helpers {
     use super::*;
     use grey_types::state::*;
     use std::collections::BTreeMap;
 
-    fn make_validator(seed: u8) -> ValidatorKey {
+    pub fn make_validator(seed: u8) -> ValidatorKey {
         ValidatorKey {
             bandersnatch: BandersnatchPublicKey([seed; 32]),
             ed25519: grey_types::Ed25519PublicKey([seed; 32]),
@@ -316,7 +316,7 @@ mod tests {
         }
     }
 
-    fn make_test_state() -> State {
+    pub fn make_test_state() -> State {
         let validators: Vec<ValidatorKey> = (0..TOTAL_VALIDATORS)
             .map(|i| make_validator(i as u8))
             .collect();
@@ -349,6 +349,13 @@ mod tests {
             accumulation_history: vec![],
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::test_helpers::{make_test_state, make_validator};
+    use grey_types::state::*;
 
     #[test]
     fn test_outside_in_even() {
@@ -871,52 +878,9 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use super::*;
+    use super::test_helpers::{make_test_state, make_validator};
     use grey_types::state::*;
     use proptest::prelude::*;
-    use std::collections::BTreeMap;
-
-    fn make_validator(seed: u8) -> ValidatorKey {
-        ValidatorKey {
-            bandersnatch: BandersnatchPublicKey([seed; 32]),
-            ed25519: grey_types::Ed25519PublicKey([seed; 32]),
-            bls: grey_types::BlsPublicKey([seed; 144]),
-            metadata: [seed; 128],
-        }
-    }
-
-    fn make_test_state() -> State {
-        let validators: Vec<ValidatorKey> = (0..TOTAL_VALIDATORS)
-            .map(|i| make_validator(i as u8))
-            .collect();
-
-        State {
-            auth_pool: vec![vec![]; TOTAL_CORES as usize],
-            recent_blocks: RecentBlocks {
-                headers: vec![],
-                accumulation_log: vec![],
-            },
-            accumulation_outputs: vec![],
-            safrole: SafroleState {
-                pending_keys: validators.clone(),
-                ring_root: grey_types::BandersnatchRingRoot::default(),
-                seal_key_series: SealKeySeries::Fallback(vec![]),
-                ticket_accumulator: vec![],
-            },
-            services: BTreeMap::new(),
-            entropy: [Hash::ZERO; 4],
-            pending_validators: validators.clone(),
-            current_validators: validators.clone(),
-            previous_validators: validators,
-            pending_reports: vec![None; TOTAL_CORES as usize],
-            timeslot: 0,
-            auth_queue: vec![vec![]; TOTAL_CORES as usize],
-            privileged_services: PrivilegedServices::default(),
-            judgments: Judgments::default(),
-            statistics: ValidatorStatistics::default(),
-            accumulation_queue: vec![],
-            accumulation_history: vec![],
-        }
-    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(64))]
