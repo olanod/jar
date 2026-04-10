@@ -10,25 +10,15 @@ use grey_types::state::PendingReport;
 use grey_types::validator::ValidatorKey;
 use grey_types::work::WorkReport;
 
-/// Error type for assurances validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AssuranceError {
-    NotSortedOrUniqueAssurers,
-    BadSignature,
-    BadValidatorIndex,
-    CoreNotEngaged,
-    BadAttestationParent,
-}
-
-impl AssuranceError {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::NotSortedOrUniqueAssurers => "not_sorted_or_unique_assurers",
-            Self::BadSignature => "bad_signature",
-            Self::BadValidatorIndex => "bad_validator_index",
-            Self::CoreNotEngaged => "core_not_engaged",
-            Self::BadAttestationParent => "bad_attestation_parent",
-        }
+stf_error! {
+    /// Error type for assurances validation.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum AssuranceError {
+        NotSortedOrUniqueAssurers => "not_sorted_or_unique_assurers",
+        BadSignature => "bad_signature",
+        BadValidatorIndex => "bad_validator_index",
+        CoreNotEngaged => "core_not_engaged",
+        BadAttestationParent => "bad_attestation_parent",
     }
 }
 

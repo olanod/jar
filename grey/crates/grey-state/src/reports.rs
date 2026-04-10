@@ -18,65 +18,35 @@ const MAX_OUTPUT_PER_ITEM: usize = 18_432;
 /// Maximum segment root lookup entries per work report.
 const MAX_SEGMENT_LOOKUPS: usize = 4;
 
-/// Error type for reports validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ReportError {
-    OutOfOrderGuarantee,
-    BadCoreIndex,
-    CoreEngaged,
-    DuplicatePackage,
-    MissingWorkResults,
-    NotSortedOrUniqueGuarantors,
-    BadValidatorIndex,
-    BannedValidator,
-    InsufficientGuarantees,
-    WrongAssignment,
-    BadSignature,
-    AnchorNotRecent,
-    BadStateRoot,
-    BadBeefyMmrRoot,
-    FutureReportSlot,
-    ReportEpochBeforeLast,
-    CoreUnauthorized,
-    BadServiceId,
-    BadCodeHash,
-    ServiceItemGasTooLow,
-    WorkReportGasTooHigh,
-    WorkReportTooBig,
-    TooManyDependencies,
-    DependencyMissing,
-    SegmentRootLookupInvalid,
-}
-
-impl ReportError {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::OutOfOrderGuarantee => "out_of_order_guarantee",
-            Self::BadCoreIndex => "bad_core_index",
-            Self::CoreEngaged => "core_engaged",
-            Self::DuplicatePackage => "duplicate_package",
-            Self::MissingWorkResults => "missing_work_results",
-            Self::NotSortedOrUniqueGuarantors => "not_sorted_or_unique_guarantors",
-            Self::BadValidatorIndex => "bad_validator_index",
-            Self::BannedValidator => "banned_validator",
-            Self::InsufficientGuarantees => "insufficient_guarantees",
-            Self::WrongAssignment => "wrong_assignment",
-            Self::BadSignature => "bad_signature",
-            Self::AnchorNotRecent => "anchor_not_recent",
-            Self::BadStateRoot => "bad_state_root",
-            Self::BadBeefyMmrRoot => "bad_beefy_mmr_root",
-            Self::FutureReportSlot => "future_report_slot",
-            Self::ReportEpochBeforeLast => "report_epoch_before_last",
-            Self::CoreUnauthorized => "core_unauthorized",
-            Self::BadServiceId => "bad_service_id",
-            Self::BadCodeHash => "bad_code_hash",
-            Self::ServiceItemGasTooLow => "service_item_gas_too_low",
-            Self::WorkReportGasTooHigh => "work_report_gas_too_high",
-            Self::WorkReportTooBig => "work_report_too_big",
-            Self::TooManyDependencies => "too_many_dependencies",
-            Self::DependencyMissing => "dependency_missing",
-            Self::SegmentRootLookupInvalid => "segment_root_lookup_invalid",
-        }
+stf_error! {
+    /// Error type for reports validation.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum ReportError {
+        OutOfOrderGuarantee => "out_of_order_guarantee",
+        BadCoreIndex => "bad_core_index",
+        CoreEngaged => "core_engaged",
+        DuplicatePackage => "duplicate_package",
+        MissingWorkResults => "missing_work_results",
+        NotSortedOrUniqueGuarantors => "not_sorted_or_unique_guarantors",
+        BadValidatorIndex => "bad_validator_index",
+        BannedValidator => "banned_validator",
+        InsufficientGuarantees => "insufficient_guarantees",
+        WrongAssignment => "wrong_assignment",
+        BadSignature => "bad_signature",
+        AnchorNotRecent => "anchor_not_recent",
+        BadStateRoot => "bad_state_root",
+        BadBeefyMmrRoot => "bad_beefy_mmr_root",
+        FutureReportSlot => "future_report_slot",
+        ReportEpochBeforeLast => "report_epoch_before_last",
+        CoreUnauthorized => "core_unauthorized",
+        BadServiceId => "bad_service_id",
+        BadCodeHash => "bad_code_hash",
+        ServiceItemGasTooLow => "service_item_gas_too_low",
+        WorkReportGasTooHigh => "work_report_gas_too_high",
+        WorkReportTooBig => "work_report_too_big",
+        TooManyDependencies => "too_many_dependencies",
+        DependencyMissing => "dependency_missing",
+        SegmentRootLookupInvalid => "segment_root_lookup_invalid",
     }
 }
 
