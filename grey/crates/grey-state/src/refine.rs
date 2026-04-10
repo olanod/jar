@@ -15,25 +15,17 @@ use javm::kernel::KernelResult;
 use std::collections::BTreeMap;
 
 /// Error during refinement.
+#[derive(Debug, thiserror::Error)]
 pub enum RefineError {
     /// Service code not found for the given code hash.
+    #[error("code not found: 0x{}", hex::encode(&.0.0[..8]))]
     CodeNotFound(Hash),
     /// Authorization failed.
+    #[error("authorization failed: {0}")]
     AuthorizationFailed(String),
     /// PVM initialization failed.
+    #[error("PVM initialization failed")]
     PvmInitFailed,
-}
-
-impl std::fmt::Display for RefineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RefineError::CodeNotFound(h) => {
-                write!(f, "code not found: 0x{}", hex::encode(&h.0[..8]))
-            }
-            RefineError::AuthorizationFailed(msg) => write!(f, "authorization failed: {msg}"),
-            RefineError::PvmInitFailed => write!(f, "PVM initialization failed"),
-        }
-    }
 }
 
 /// Context for looking up service code and state during refinement.
