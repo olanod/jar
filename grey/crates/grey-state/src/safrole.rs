@@ -261,7 +261,10 @@ pub(crate) fn accumulate_entropy(eta0: &Hash, entropy: &Hash) -> Hash {
 }
 
 /// Filter offenders from a validator key set (eq 6.14: Φ).
-pub fn filter_offenders(keys: &[ValidatorKey], offenders: &[Ed25519PublicKey]) -> Vec<ValidatorKey> {
+pub fn filter_offenders(
+    keys: &[ValidatorKey],
+    offenders: &[Ed25519PublicKey],
+) -> Vec<ValidatorKey> {
     let offender_set: BTreeSet<_> = offenders.iter().collect();
     keys.iter()
         .map(|k| {
