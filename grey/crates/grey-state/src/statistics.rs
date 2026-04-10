@@ -361,3 +361,166 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use grey_types::config::Config;
+    use grey_types::header::Extrinsic;
+    use grey_types::state::{ValidatorRecord, ValidatorStatistics};
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+
+    fn make_stats(n: usize) -> ValidatorStatistics {
+        ValidatorStatistics {
+            current: vec![ValidatorRecord::default(); n],
+            last: vec![ValidatorRecord::default(); n],
+            core_stats: vec![],
+            service_stats: BTreeMap::new(),
+        }
+    }
+
+    proptest! {
+        /// Only the author's blocks_produced is incremented; others unchanged.
+        #[test]
+        fn only_author_blocks_produced_incremented(
+            author_index in 0u16..6,
+        ) {
+            let config = Config::tiny(); // V=6
+            let n = config.validators_count as usize;
+            let mut stats = make_stats(n);
+            let extrinsic = Extrinsic::default();
+
+            update_statistics(
+                &config, &mut stats, 0, 1, author_index, &extrinsic,
+                &[], &[], &BTreeMap::new(),
+            );
+
+            for (i, v) in stats.current.iter().enumerate() {
+                if i == author_index as usize {
+                    prop_assert_eq!(v.blocks_produced, 1);
+                } else {
+                    prop_assert_eq!(v.blocks_produced, 0);
+                }
+            }
+        }
+
+        /// Author index out of range never panics and leaves stats untouched.
+        #[test]
+        fn out_of_range_author_no_panic(
+            author_index in 6u16..1000,
+            prior_slot in 0u32..100,
+        ) {
+            let config = Config::tiny(); // V=6
+            let n = config.validators_count as usize;
+            let mut stats = make_stats(n);
+            let extrinsic = Extrinsic::default();
+
+            update_statistics(
+                &config, &mut stats, prior_slot, prior_slot + 1,
+                author_index, &extrinsic, &[], &[], &BTreeMap::new(),
+            );
+
+            for v in &stats.current {
+                prop_assert_eq!(v.blocks_produced, 0);
+            }
+        }
+
+        /// Epoch rotation: when new_epoch > old_epoch, last gets old current
+        /// and current resets (then author block added).
+        #[test]
+        fn epoch_rotation_preserves_previous(
+            old_epoch in 0u32..100,
+            author_index in 0u16..6,
+        ) {
+            let config = Config::tiny(); // E=12
+            let n = config.validators_count as usize;
+            let mut stats = make_stats(n);
+            let extrinsic = Extrinsic::default();
+
+            // First: produce a block in old_epoch
+            let prior_slot = old_epoch * config.epoch_length;
+            let slot1 = prior_slot + 1;
+            update_statistics(
+                &config, &mut stats, prior_slot, slot1,
+                author_index, &extrinsic, &[], &[], &BTreeMap::new(),
+            );
+            let saved_blocks = stats.current[author_index as usize].blocks_produced;
+            prop_assert_eq!(saved_blocks, 1);
+
+            // Second: cross epoch boundary
+            let new_epoch_slot = (old_epoch + 1) * config.epoch_length;
+            update_statistics(
+                &config, &mut stats, slot1, new_epoch_slot,
+                author_index, &extrinsic, &[], &[], &BTreeMap::new(),
+            );
+
+            // last should have the pre-rotation value
+            prop_assert_eq!(stats.last[author_index as usize].blocks_produced, 1);
+            // current should be reset + the new block
+            prop_assert_eq!(stats.current[author_index as usize].blocks_produced, 1);
+        }
+
+        /// Same-epoch updates accumulate without rotation.
+        #[test]
+        fn same_epoch_accumulates(
+            num_blocks in 1u32..10,
+            author_index in 0u16..6,
+        ) {
+            let config = Config::tiny(); // E=12
+            let n = config.validators_count as usize;
+            let mut stats = make_stats(n);
+            let extrinsic = Extrinsic::default();
+
+            for i in 0..num_blocks {
+                update_statistics(
+                    &config, &mut stats, i, i + 1,
+                    author_index, &extrinsic, &[], &[], &BTreeMap::new(),
+                );
+            }
+
+            prop_assert_eq!(
+                stats.current[author_index as usize].blocks_produced,
+                num_blocks
+            );
+            // No rotation happened, so last should be untouched
+            prop_assert_eq!(stats.last[author_index as usize].blocks_produced, 0);
+        }
+
+        /// Ticket and preimage counts match extrinsic content.
+        #[test]
+        fn ticket_preimage_counts_match(
+            num_tickets in 0usize..5,
+            num_preimages in 0usize..5,
+            preimage_size in 0usize..100,
+            author_index in 0u16..6,
+        ) {
+            let config = Config::tiny();
+            let n = config.validators_count as usize;
+            let mut stats = make_stats(n);
+
+            let extrinsic = Extrinsic {
+                tickets: (0..num_tickets)
+                    .map(|i| grey_types::header::TicketProof {
+                        attempt: i as u8,
+                        proof: vec![],
+                    })
+                    .collect(),
+                preimages: (0..num_preimages)
+                    .map(|i| (i as u32, vec![0u8; preimage_size]))
+                    .collect(),
+                ..Extrinsic::default()
+            };
+
+            update_statistics(
+                &config, &mut stats, 0, 1, author_index, &extrinsic,
+                &[], &[], &BTreeMap::new(),
+            );
+
+            let record = &stats.current[author_index as usize];
+            prop_assert_eq!(record.tickets_introduced, num_tickets as u32);
+            prop_assert_eq!(record.preimages_introduced, num_preimages as u32);
+            prop_assert_eq!(record.preimage_bytes, (num_preimages * preimage_size) as u64);
+        }
+    }
+}
