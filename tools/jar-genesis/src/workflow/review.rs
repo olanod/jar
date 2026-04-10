@@ -5,6 +5,7 @@ use crate::git;
 use crate::github;
 use crate::lean;
 use crate::review;
+use crate::snapshot;
 use crate::types::{MergeReadiness, SelectTargetsOutput};
 
 /// Run the review workflow: process a /review comment.
@@ -55,12 +56,15 @@ pub fn run(
             .parse::<u64>()?
     };
 
-    // Get ranking snapshot
+    // Get ranking + variances snapshot
     let ranking_json =
         git::show_file("origin/genesis-state:ranking.json").unwrap_or_else(|_| "{}".to_string());
-    let ranking: serde_json::Value = serde_json::from_str(&ranking_json)?;
+    let ranking_map: serde_json::Value = serde_json::from_str(&ranking_json)?;
+    let scores_json =
+        git::show_file("origin/genesis-state:scores.json").unwrap_or_else(|_| "{}".to_string());
+    let scores_map: serde_json::Value = serde_json::from_str(&scores_json)?;
 
-    let ranking_snapshot = find_ranking_snapshot(&cache_indices, &ranking, pr_created_epoch);
+    let snap = snapshot::find(&cache_indices, &ranking_map, &scores_map, pr_created_epoch)?;
 
     // Compute comparison targets
     let mut targets_input = serde_json::json!({
@@ -68,8 +72,11 @@ pub fn run(
         "prCreatedAt": pr_created_epoch,
         "indices": cache_indices,
     });
-    if let Some(snapshot) = &ranking_snapshot {
-        targets_input["ranking"] = snapshot.clone();
+    if let Some(s) = &snap {
+        targets_input["ranking"] = s.ranking.clone();
+        if let Some(v) = &s.variances {
+            targets_input["variances"] = v.clone();
+        }
     }
 
     let targets_output: SelectTargetsOutput =
@@ -117,14 +124,3 @@ pub fn run(
     Ok(())
 }
 
-fn find_ranking_snapshot(
-    indices: &[serde_json::Value],
-    ranking: &serde_json::Value,
-    epoch: u64,
-) -> Option<serde_json::Value> {
-    let last = indices
-        .iter()
-        .rfind(|idx| idx["epoch"].as_u64().map(|e| e < epoch).unwrap_or(false))?;
-    let commit_hash = last["commitHash"].as_str()?;
-    ranking.get(commit_hash).cloned()
-}
