@@ -872,6 +872,138 @@ mod tests {
                     faults,
                 });
             }
+
+            #[test]
+            fn validator_record_roundtrip(
+                blocks in any::<u32>(),
+                tickets in any::<u32>(),
+                preimages in any::<u32>(),
+                preimage_bytes in any::<u64>(),
+                guarantees in any::<u32>(),
+                assurances in any::<u32>(),
+            ) {
+                assert_codec_roundtrip(&state::ValidatorRecord {
+                    blocks_produced: blocks,
+                    tickets_introduced: tickets,
+                    preimages_introduced: preimages,
+                    preimage_bytes,
+                    reports_guaranteed: guarantees,
+                    assurances_made: assurances,
+                });
+            }
+
+            #[test]
+            fn core_statistics_roundtrip(
+                da_load in any::<u64>(),
+                popularity in any::<u64>(),
+                imports in any::<u64>(),
+                extrinsic_count in any::<u64>(),
+                extrinsic_size in any::<u64>(),
+                exports in any::<u64>(),
+                bundle_size in any::<u64>(),
+                gas_used in any::<u64>(),
+            ) {
+                assert_codec_roundtrip(&state::CoreStatistics {
+                    da_load,
+                    popularity,
+                    imports,
+                    extrinsic_count,
+                    extrinsic_size,
+                    exports,
+                    bundle_size,
+                    gas_used,
+                });
+            }
+
+            #[test]
+            fn service_statistics_roundtrip(
+                provided_count in any::<u64>(),
+                provided_size in any::<u64>(),
+                refinement_count in any::<u64>(),
+                refinement_gas_used in any::<u64>(),
+                imports in any::<u64>(),
+                extrinsic_count in any::<u64>(),
+                extrinsic_size in any::<u64>(),
+                exports in any::<u64>(),
+                accumulate_count in any::<u64>(),
+                accumulate_gas_used in any::<u64>(),
+            ) {
+                assert_codec_roundtrip(&state::ServiceStatistics {
+                    provided_count,
+                    provided_size,
+                    refinement_count,
+                    refinement_gas_used,
+                    imports,
+                    extrinsic_count,
+                    extrinsic_size,
+                    exports,
+                    accumulate_count,
+                    accumulate_gas_used,
+                });
+            }
+
+            #[test]
+            fn recent_block_info_roundtrip(
+                header_hash in proptest::array::uniform32(0u8..),
+                state_root in proptest::array::uniform32(0u8..),
+                acc_root in proptest::array::uniform32(0u8..),
+                n_packages in 0usize..4,
+            ) {
+                let reported_packages: std::collections::BTreeMap<Hash, Hash> = (0..n_packages)
+                    .map(|i| (Hash([(i as u8).wrapping_add(1); 32]), Hash([(i as u8).wrapping_add(100); 32])))
+                    .collect();
+                assert_codec_roundtrip(&state::RecentBlockInfo {
+                    header_hash: Hash(header_hash),
+                    state_root: Hash(state_root),
+                    accumulation_root: Hash(acc_root),
+                    reported_packages,
+                });
+            }
+
+            #[test]
+            fn seal_key_series_tickets_roundtrip(
+                n_tickets in 0usize..5,
+            ) {
+                let tickets: Vec<header::Ticket> = (0..n_tickets)
+                    .map(|i| header::Ticket {
+                        id: Hash([i as u8; 32]),
+                        attempt: (i % 4) as u8,
+                    })
+                    .collect();
+                assert_codec_roundtrip(&state::SealKeySeries::Tickets(tickets));
+            }
+
+            #[test]
+            fn seal_key_series_fallback_roundtrip(
+                n_keys in 0usize..5,
+            ) {
+                let keys: Vec<BandersnatchPublicKey> = (0..n_keys)
+                    .map(|i| BandersnatchPublicKey([i as u8; 32]))
+                    .collect();
+                assert_codec_roundtrip(&state::SealKeySeries::Fallback(keys));
+            }
+
+            #[test]
+            fn recent_blocks_roundtrip(
+                n_headers in 0usize..3,
+                n_log in 0usize..5,
+            ) {
+                let headers: Vec<state::RecentBlockInfo> = (0..n_headers)
+                    .map(|i| state::RecentBlockInfo {
+                        header_hash: Hash([i as u8; 32]),
+                        state_root: Hash([(i + 10) as u8; 32]),
+                        accumulation_root: Hash([(i + 20) as u8; 32]),
+                        reported_packages: std::collections::BTreeMap::new(),
+                    })
+                    .collect();
+                let accumulation_log: Vec<Option<Hash>> = (0..n_log)
+                    .map(|i| if i % 2 == 0 { Some(Hash([i as u8; 32])) } else { None })
+                    .collect();
+                assert_codec_roundtrip(&state::RecentBlocks {
+                    headers,
+                    accumulation_log,
+                });
+            }
         }
     }
 
