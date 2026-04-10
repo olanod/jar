@@ -801,6 +801,77 @@ mod tests {
                     signature: Ed25519Signature(sig_arr),
                 });
             }
+
+            #[test]
+            fn culprit_roundtrip(
+                report_hash in proptest::array::uniform32(0u8..),
+                key in proptest::array::uniform32(0u8..),
+                sig in proptest::collection::vec(0u8.., 64..=64),
+            ) {
+                let mut sig_arr = [0u8; 64];
+                sig_arr.copy_from_slice(&sig);
+                assert_codec_roundtrip(&header::Culprit {
+                    report_hash: Hash(report_hash),
+                    validator_key: Ed25519PublicKey(key),
+                    signature: Ed25519Signature(sig_arr),
+                });
+            }
+
+            #[test]
+            fn fault_roundtrip(
+                report_hash in proptest::array::uniform32(0u8..),
+                is_valid: bool,
+                key in proptest::array::uniform32(0u8..),
+                sig in proptest::collection::vec(0u8.., 64..=64),
+            ) {
+                let mut sig_arr = [0u8; 64];
+                sig_arr.copy_from_slice(&sig);
+                assert_codec_roundtrip(&header::Fault {
+                    report_hash: Hash(report_hash),
+                    is_valid,
+                    validator_key: Ed25519PublicKey(key),
+                    signature: Ed25519Signature(sig_arr),
+                });
+            }
+
+            #[test]
+            fn disputes_extrinsic_roundtrip(
+                n_verdicts in 0usize..3,
+                n_culprits in 0usize..3,
+                n_faults in 0usize..3,
+            ) {
+                let verdicts: Vec<header::Verdict> = (0..n_verdicts)
+                    .map(|i| header::Verdict {
+                        report_hash: Hash([i as u8; 32]),
+                        age: i as u32,
+                        judgments: vec![header::Judgment {
+                            validator_index: i as u16,
+                            is_valid: true,
+                            signature: Ed25519Signature([i as u8; 64]),
+                        }],
+                    })
+                    .collect();
+                let culprits: Vec<header::Culprit> = (0..n_culprits)
+                    .map(|i| header::Culprit {
+                        report_hash: Hash([(i + 10) as u8; 32]),
+                        validator_key: Ed25519PublicKey([(i + 20) as u8; 32]),
+                        signature: Ed25519Signature([(i + 30) as u8; 64]),
+                    })
+                    .collect();
+                let faults: Vec<header::Fault> = (0..n_faults)
+                    .map(|i| header::Fault {
+                        report_hash: Hash([(i + 40) as u8; 32]),
+                        is_valid: i % 2 == 0,
+                        validator_key: Ed25519PublicKey([(i + 50) as u8; 32]),
+                        signature: Ed25519Signature([(i + 60) as u8; 64]),
+                    })
+                    .collect();
+                assert_codec_roundtrip(&header::DisputesExtrinsic {
+                    verdicts,
+                    culprits,
+                    faults,
+                });
+            }
         }
     }
 
