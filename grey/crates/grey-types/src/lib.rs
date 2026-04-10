@@ -93,10 +93,14 @@ pub fn decode_hex_fixed<const N: usize>(s: &str) -> Result<[u8; N], String> {
     Ok(arr)
 }
 
-/// Shared from_hex and Deserialize for all crypto types.
+/// Shared to_hex, from_hex and Deserialize for all crypto types.
 macro_rules! impl_crypto_common {
     ($name:ident, $debug_name:expr) => {
         impl $name {
+            /// Encode the inner bytes as a bare hex string (no `0x` prefix).
+            pub fn to_hex(&self) -> String {
+                hex::encode(self.0)
+            }
             /// Parse from a hex string (with optional 0x prefix). Panics on invalid input.
             pub fn from_hex(s: &str) -> Self {
                 Self(decode_hex_fixed(s).expect(concat!("invalid hex for ", $debug_name)))
@@ -120,7 +124,7 @@ macro_rules! impl_crypto_type {
         impl_crypto_common!($name, $debug_name);
         impl fmt::Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}({})", $debug_name, hex::encode(self.0))
+                write!(f, "{}({})", $debug_name, self.to_hex())
             }
         }
     };
@@ -155,6 +159,11 @@ impl Hash {
         &self.0
     }
 
+    /// Encode the inner bytes as a bare hex string (no `0x` prefix).
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.0)
+    }
+
     /// Parse from a hex string (with optional 0x prefix). Panics on invalid input.
     pub fn from_hex(s: &str) -> Self {
         Self(decode_hex_fixed(s).expect("invalid hex for Hash"))
@@ -163,13 +172,13 @@ impl Hash {
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Hash({})", hex::encode(self.0))
+        write!(f, "Hash({})", self.to_hex())
     }
 }
 
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{}", hex::encode(self.0))
+        write!(f, "0x{}", self.to_hex())
     }
 }
 
@@ -196,7 +205,7 @@ impl<'de> serde::Deserialize<'de> for Hash {
 
 impl serde::Serialize for Hash {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&format!("0x{}", hex::encode(self.0)))
+        s.serialize_str(&format!("0x{}", self.to_hex()))
     }
 }
 
