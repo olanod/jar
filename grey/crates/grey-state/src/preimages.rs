@@ -6,19 +6,12 @@
 use grey_types::{Hash, ServiceId, Timeslot};
 use std::collections::BTreeMap;
 
-/// Error type for preimage validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PreimageError {
-    PreimagesNotSortedUnique,
-    PreimageUnneeded,
-}
-
-impl PreimageError {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::PreimagesNotSortedUnique => "preimages_not_sorted_unique",
-            Self::PreimageUnneeded => "preimage_unneeded",
-        }
+stf_error! {
+    /// Error type for preimage validation.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum PreimageError {
+        PreimagesNotSortedUnique => "preimages_not_sorted_unique",
+        PreimageUnneeded => "preimage_unneeded",
     }
 }
 

@@ -10,29 +10,17 @@ use grey_types::validator::ValidatorKey;
 use grey_types::{BandersnatchPublicKey, BandersnatchRingRoot, Ed25519PublicKey, Hash};
 use std::collections::BTreeSet;
 
-/// Errors from the Safrole sub-transition.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SafroleError {
-    BadSlot,
-    UnexpectedTicket,
-    BadTicketAttempt,
-    BadTicketOrder,
-    BadTicketProof,
-    DuplicateTicket,
-    TicketNotRetained,
-}
-
-impl SafroleError {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::BadSlot => "bad_slot",
-            Self::UnexpectedTicket => "unexpected_ticket",
-            Self::BadTicketAttempt => "bad_ticket_attempt",
-            Self::BadTicketOrder => "bad_ticket_order",
-            Self::BadTicketProof => "bad_ticket_proof",
-            Self::DuplicateTicket => "duplicate_ticket",
-            Self::TicketNotRetained => "ticket_not_retained",
-        }
+stf_error! {
+    /// Errors from the Safrole sub-transition.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum SafroleError {
+        BadSlot => "bad_slot",
+        UnexpectedTicket => "unexpected_ticket",
+        BadTicketAttempt => "bad_ticket_attempt",
+        BadTicketOrder => "bad_ticket_order",
+        BadTicketProof => "bad_ticket_proof",
+        DuplicateTicket => "duplicate_ticket",
+        TicketNotRetained => "ticket_not_retained",
     }
 }
 

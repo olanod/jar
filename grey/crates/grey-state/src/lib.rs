@@ -2,6 +2,32 @@
 //!
 //! Implements the state transition function Υ(σ, B) → σ' (eq 4.1).
 
+/// Define an STF error enum with an `as_str()` method for test-vector output.
+///
+/// Each variant maps to a snake_case string. Variants are listed once;
+/// the macro generates both the enum and the `as_str()` match.
+macro_rules! stf_error {
+    (
+        $(#[$meta:meta])*
+        $vis:vis enum $name:ident {
+            $( $variant:ident => $str:literal ),+ $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        $vis enum $name {
+            $( $variant, )+
+        }
+
+        impl $name {
+            pub fn as_str(&self) -> &'static str {
+                match self {
+                    $( Self::$variant => $str, )+
+                }
+            }
+        }
+    };
+}
+
 pub mod accumulate;
 pub mod assurances;
 pub mod authorizations;

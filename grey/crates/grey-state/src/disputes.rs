@@ -18,46 +18,25 @@ fn check_sorted_unique<T: Ord + Clone>(items: &[T], err: DisputeError) -> Result
     }
 }
 
-/// Error type for disputes validation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DisputeError {
-    JudgementsNotSortedUnique,
-    VerdictsNotSortedUnique,
-    CulpritsNotSortedUnique,
-    FaultsNotSortedUnique,
-    BadSignature,
-    BadVoteSplit,
-    NotEnoughCulprits,
-    NotEnoughFaults,
-    AlreadyJudged,
-    OffenderAlreadyReported,
-    CulpritsVerdictNotBad,
-    FaultVerdictWrong,
-    BadGuarantorKey,
-    BadAuditorKey,
-    BadJudgementAge,
-}
-
-impl DisputeError {
-    /// Convert to the error string used in test vectors.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::JudgementsNotSortedUnique => "judgements_not_sorted_unique",
-            Self::VerdictsNotSortedUnique => "verdicts_not_sorted_unique",
-            Self::CulpritsNotSortedUnique => "culprits_not_sorted_unique",
-            Self::FaultsNotSortedUnique => "faults_not_sorted_unique",
-            Self::BadSignature => "bad_signature",
-            Self::BadVoteSplit => "bad_vote_split",
-            Self::NotEnoughCulprits => "not_enough_culprits",
-            Self::NotEnoughFaults => "not_enough_faults",
-            Self::AlreadyJudged => "already_judged",
-            Self::OffenderAlreadyReported => "offender_already_reported",
-            Self::CulpritsVerdictNotBad => "culprits_verdict_not_bad",
-            Self::FaultVerdictWrong => "fault_verdict_wrong",
-            Self::BadGuarantorKey => "bad_guarantor_key",
-            Self::BadAuditorKey => "bad_auditor_key",
-            Self::BadJudgementAge => "bad_judgement_age",
-        }
+stf_error! {
+    /// Error type for disputes validation.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum DisputeError {
+        JudgementsNotSortedUnique => "judgements_not_sorted_unique",
+        VerdictsNotSortedUnique => "verdicts_not_sorted_unique",
+        CulpritsNotSortedUnique => "culprits_not_sorted_unique",
+        FaultsNotSortedUnique => "faults_not_sorted_unique",
+        BadSignature => "bad_signature",
+        BadVoteSplit => "bad_vote_split",
+        NotEnoughCulprits => "not_enough_culprits",
+        NotEnoughFaults => "not_enough_faults",
+        AlreadyJudged => "already_judged",
+        OffenderAlreadyReported => "offender_already_reported",
+        CulpritsVerdictNotBad => "culprits_verdict_not_bad",
+        FaultVerdictWrong => "fault_verdict_wrong",
+        BadGuarantorKey => "bad_guarantor_key",
+        BadAuditorKey => "bad_auditor_key",
+        BadJudgementAge => "bad_judgement_age",
     }
 }
 
