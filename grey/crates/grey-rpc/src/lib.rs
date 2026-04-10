@@ -322,6 +322,22 @@ fn parse_hash_hex(hex_str: &str) -> Result<Hash, ErrorObjectOwned> {
     Ok(Hash(h))
 }
 
+/// Build a JSON response for a (hash, slot) pair, or a null fallback on error.
+fn hash_slot_response(
+    result: Result<(Hash, u32), grey_store::StoreError>,
+) -> Result<serde_json::Value, ErrorObjectOwned> {
+    match result {
+        Ok((hash, slot)) => Ok(serde_json::json!({
+            "hash": hash.to_hex(),
+            "slot": slot,
+        })),
+        Err(_) => Ok(serde_json::json!({
+            "hash": null,
+            "slot": 0,
+        })),
+    }
+}
+
 #[async_trait]
 impl JamRpcServer for RpcImpl {
     async fn get_status(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
@@ -332,16 +348,7 @@ impl JamRpcServer for RpcImpl {
 
     async fn get_head(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
         let _latency = self.track_request("jam_getHead");
-        match self.state.store.get_head() {
-            Ok((hash, slot)) => Ok(serde_json::json!({
-                "hash": hash.to_hex(),
-                "slot": slot,
-            })),
-            Err(_) => Ok(serde_json::json!({
-                "hash": null,
-                "slot": 0,
-            })),
-        }
+        hash_slot_response(self.state.store.get_head())
     }
 
     async fn get_block(&self, hash_hex: String) -> Result<serde_json::Value, ErrorObjectOwned> {
@@ -425,16 +432,7 @@ impl JamRpcServer for RpcImpl {
 
     async fn get_finalized(&self) -> Result<serde_json::Value, ErrorObjectOwned> {
         let _latency = self.track_request("jam_getFinalized");
-        match self.state.store.get_finalized() {
-            Ok((hash, slot)) => Ok(serde_json::json!({
-                "hash": hash.to_hex(),
-                "slot": slot,
-            })),
-            Err(_) => Ok(serde_json::json!({
-                "hash": null,
-                "slot": 0,
-            })),
-        }
+        hash_slot_response(self.state.store.get_finalized())
     }
 
     async fn read_storage(
