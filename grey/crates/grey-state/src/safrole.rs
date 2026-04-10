@@ -539,3 +539,126 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use crate::test_helpers::{make_hash, make_validator};
+    use grey_types::header::Ticket;
+    use proptest::prelude::*;
+
+    fn arb_hash() -> impl Strategy<Value = Hash> {
+        prop::array::uniform32(any::<u8>()).prop_map(Hash)
+    }
+
+    proptest! {
+        /// outside_in_sequence preserves length and all elements.
+        #[test]
+        fn outside_in_preserves_elements(values in proptest::collection::vec(any::<u32>(), 0..20)) {
+            let result = outside_in_sequence(&values);
+            prop_assert_eq!(result.len(), values.len());
+            let mut sorted_input = values.clone();
+            sorted_input.sort();
+            let mut sorted_result = result.clone();
+            sorted_result.sort();
+            prop_assert_eq!(sorted_input, sorted_result);
+        }
+
+        /// outside_in_sequence: first element is items[0], second is items[last].
+        #[test]
+        fn outside_in_first_and_second(values in proptest::collection::vec(any::<u32>(), 2..20)) {
+            let result = outside_in_sequence(&values);
+            prop_assert_eq!(result[0], values[0]);
+            prop_assert_eq!(result[1], values[values.len() - 1]);
+        }
+
+        /// merge_tickets output is sorted by ticket ID.
+        #[test]
+        fn merge_tickets_sorted(
+            existing_ids in proptest::collection::vec(any::<u8>(), 0..10),
+            new_ids in proptest::collection::vec(any::<u8>(), 0..10),
+            max_size in 1usize..20,
+        ) {
+            let existing: Vec<Ticket> = existing_ids.iter().map(|&b| Ticket {
+                id: make_hash(b), attempt: 0,
+            }).collect();
+            let new: Vec<Ticket> = new_ids.iter().map(|&b| Ticket {
+                id: make_hash(b), attempt: 0,
+            }).collect();
+            let result = merge_tickets(&existing, &new, max_size);
+            prop_assert!(result.len() <= max_size);
+            // Check sorted
+            for w in result.windows(2) {
+                prop_assert!(w[0].id.0 <= w[1].id.0);
+            }
+        }
+
+        /// merge_tickets keeps the lowest IDs.
+        #[test]
+        fn merge_tickets_keeps_lowest(max_size in 1usize..10) {
+            let all: Vec<Ticket> = (0..15u8).map(|i| Ticket {
+                id: make_hash(i), attempt: 0,
+            }).collect();
+            let result = merge_tickets(&all, &[], max_size);
+            // Should have the first max_size elements (they have lowest IDs)
+            for (i, t) in result.iter().enumerate() {
+                prop_assert_eq!(t.id, make_hash(i as u8));
+            }
+        }
+
+        /// fallback_key_sequence_raw length matches epoch_length.
+        #[test]
+        fn fallback_length_matches(
+            epoch_length in 1u32..50,
+            entropy in arb_hash(),
+            num_validators in 1usize..10,
+        ) {
+            let validators: Vec<ValidatorKey> = (0..num_validators)
+                .map(|i| make_validator(i as u8))
+                .collect();
+            let result = fallback_key_sequence_raw(epoch_length, &entropy, &validators);
+            prop_assert_eq!(result.len(), epoch_length as usize);
+        }
+
+        /// fallback_key_sequence_raw is deterministic.
+        #[test]
+        fn fallback_deterministic(
+            entropy in arb_hash(),
+            num_validators in 1usize..10,
+        ) {
+            let validators: Vec<ValidatorKey> = (0..num_validators)
+                .map(|i| make_validator(i as u8))
+                .collect();
+            let r1 = fallback_key_sequence_raw(12, &entropy, &validators);
+            let r2 = fallback_key_sequence_raw(12, &entropy, &validators);
+            prop_assert_eq!(r1, r2);
+        }
+
+        /// filter_offenders preserves length.
+        #[test]
+        fn filter_preserves_length(
+            num_validators in 1usize..10,
+            num_offenders in 0usize..5,
+        ) {
+            let validators: Vec<ValidatorKey> = (0..num_validators)
+                .map(|i| make_validator(i as u8))
+                .collect();
+            let offenders: Vec<Ed25519PublicKey> = (0..num_offenders)
+                .map(|i| Ed25519PublicKey([i as u8; 32]))
+                .collect();
+            let result = filter_offenders(&validators, &offenders);
+            prop_assert_eq!(result.len(), validators.len());
+        }
+
+        /// accumulate_entropy is deterministic.
+        #[test]
+        fn entropy_deterministic(
+            eta0 in arb_hash(),
+            entropy in arb_hash(),
+        ) {
+            let r1 = accumulate_entropy(&eta0, &entropy);
+            let r2 = accumulate_entropy(&eta0, &entropy);
+            prop_assert_eq!(r1, r2);
+        }
+    }
+}
