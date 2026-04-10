@@ -236,7 +236,7 @@ pub async fn run_seq_testnet(
                         // Update RPC status (use try_write to avoid blocking)
                         if let Ok(mut status) = rpc_state.status.try_write() {
                             status.head_slot = slot;
-                            status.head_hash = hex::encode(header_hash.0);
+                            status.head_hash = header_hash.to_hex();
                             status.finalized_slot = finalized_slot;
                             status.blocks_authored = blocks_produced as u64 + 1;
                             status.blocks_imported = blocks_produced as u64 + 1;

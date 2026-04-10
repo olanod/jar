@@ -170,10 +170,10 @@ fn persist_and_notify_block(
     }
     if let Some(rpc_st) = rpc_state {
         let _ = rpc_st.block_notifications.send(serde_json::json!({
-            "hash": hex::encode(hash.0),
+            "hash": hash.to_hex(),
             "slot": slot,
             "author_index": block.header.author_index,
-            "parent_hash": hex::encode(block.header.parent_hash.0),
+            "parent_hash": block.header.parent_hash.to_hex(),
             "guarantees": block.extrinsic.guarantees.len(),
             "assurances": block.extrinsic.assurances.len(),
         }));
@@ -236,7 +236,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
     tracing::info!(
         "Validator {} bandersnatch key: 0x{}",
         config.validator_index,
-        hex::encode(my_bandersnatch.0)
+        my_bandersnatch.to_hex()
     );
 
     // Start the network
@@ -1157,7 +1157,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                                             // Push finality notification to WebSocket subscribers
                                             if let Some(ref rpc_st) = rpc_state {
                                                 let _ = rpc_st.finality_notifications.send(serde_json::json!({
-                                                    "hash": hex::encode(fin_hash.0),
+                                                    "hash": fin_hash.to_hex(),
                                                     "slot": fin_slot,
                                                     "round": grandpa.round,
                                                 }));
@@ -1409,10 +1409,10 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
             status.finalized_slot = grandpa.finalized_slot;
             status.grandpa_round = grandpa.round;
             if let Ok((h, _)) = store.get_head() {
-                status.head_hash = hex::encode(h.0);
+                status.head_hash = h.to_hex();
             }
             if let Ok((h, _)) = store.get_finalized() {
-                status.finalized_hash = hex::encode(h.0);
+                status.finalized_hash = h.to_hex();
             }
         }
     }

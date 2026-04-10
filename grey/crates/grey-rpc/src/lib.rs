@@ -2487,7 +2487,7 @@ mod tests {
         let mut handles = Vec::new();
         for i in 0..100u32 {
             let url = url.clone();
-            let hash_hex = hex::encode(hash.0);
+            let hash_hex = hash.to_hex();
             handles.push(tokio::spawn(async move {
                 let client = HttpClientBuilder::default().build(&url).unwrap();
                 let result: Result<serde_json::Value, _> = match i % 4 {

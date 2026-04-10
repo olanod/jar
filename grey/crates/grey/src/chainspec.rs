@@ -55,7 +55,7 @@ impl ChainSpec {
         Self {
             name: "Grey JAM".to_string(),
             protocol_version: "0.7.2".to_string(),
-            genesis_hash: hex::encode(genesis_hash.0),
+            genesis_hash: genesis_hash.to_hex(),
             boot_peers,
             config: ChainSpecConfig {
                 validators_count: config.validators_count,
@@ -127,7 +127,7 @@ pub fn print_genesis_info(config: &Config) {
         config.ticket_submission_end()
     );
     println!();
-    println!("Genesis config hash: 0x{}", hex::encode(genesis_hash.0));
+    println!("Genesis config hash: 0x{}", genesis_hash.to_hex());
     println!("Genesis seed hash: {seed_hash}");
 }
 
