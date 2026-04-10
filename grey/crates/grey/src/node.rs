@@ -666,11 +666,7 @@ pub async fn run_node(config: NodeConfig) -> Result<(), Box<dyn std::error::Erro
                         let mut assurance_counts = vec![0u32; num_cores];
                         for a in &assurances {
                             for (core, count) in assurance_counts.iter_mut().enumerate() {
-                                let byte_idx = core / 8;
-                                let bit_idx = core % 8;
-                                if byte_idx < a.bitfield.len()
-                                    && (a.bitfield[byte_idx] >> bit_idx) & 1 == 1
-                                {
+                                if a.has_bit(core) {
                                     *count += 1;
                                 }
                             }
