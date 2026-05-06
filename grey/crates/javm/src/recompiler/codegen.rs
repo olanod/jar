@@ -1155,7 +1155,17 @@ impl Compiler {
                         } else {
                             None
                         };
-                        if let Some((base, idx, shift)) = def {
+                        // Bail out when rd aliases base or idx: the host
+                        // register for that operand has been overwritten
+                        // by the add we just emitted, so the ScaledAdd
+                        // peephole would re-add at emit time and produce
+                        // a doubled offset. The same self-reference
+                        // problem the add64 D,D,D and D,A,A branches
+                        // above already guard against.
+                        if let Some((base, idx, shift)) = def
+                            && *rd != base
+                            && *rd != idx
+                        {
                             self.reg_defs[*rd] = RegDef::ScaledAdd { base, idx, shift };
                             self.reg_defs_active |= 1u16 << *rd;
                         } else {

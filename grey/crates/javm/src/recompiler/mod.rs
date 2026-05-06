@@ -1475,6 +1475,84 @@ mod tests {
         assert_eq!(pvm.registers()[2], 17, "φ[2] should be 16 + 1 = 17");
     }
 
+    #[test]
+    fn test_recompile_self_aliased_scaled_add_store() {
+        // Regression for the ScaledAdd self-aliasing bug. When the
+        // recompiler saw `slli idx,src,k; add D,D,idx; sw v,0(D)`
+        // it tracked reg_defs[D] = ScaledAdd{base: D, idx: src, shift: k}
+        // and emitted `lea SCRATCH, [host_D + host_src*2^k]` for the
+        // store. But the `add` had already committed to host_D, so
+        // the LEA double-applied the stride and the store landed at
+        // base + 2*k_bytes_off instead of base + k_bytes_off.
+        //
+        // Repro: φ[0]=32 (base), φ[1]=4 (index), φ[2]=0xDEAD (value).
+        // shlo_l_imm_64 φ[3] = φ[1] << 2 (=16)
+        // add_64        φ[0] = φ[0] + φ[3] (=48)        — self-aliased
+        // store_ind_u32 [φ[0] + 0] ← φ[2]
+        //
+        // Pre-fix: writes 0xDEAD at offset 64 (=48+16). Post-fix:
+        // writes at offset 48 as the source code intends.
+        let layout = DataLayout {
+            mem_size: 4096,
+            arg_start: 0,
+            arg_data: vec![],
+            ro_start: 0,
+            ro_data: vec![],
+            rw_start: 0,
+            rw_data: vec![0u8; 256],
+        };
+
+        let code = vec![
+            // shlo_l_imm_64 φ[3] = φ[1] << 2: ra=3, rb=1
+            151, 0x13, 2, 0, 0, 0,
+            // add_64 φ[0] = φ[0] + φ[3]: ra=0, rb=3, rd=0
+            200, 0x30, 0,
+            // store_ind_u32 [φ[0] + 0] ← φ[2]: ra=2 (val), rb=0 (base)
+            122, 0x02, 0, 0, 0, 0,
+            // ecalli 0
+            10, 0,
+        ];
+        let bitmask = vec![
+            1, 0, 0, 0, 0, 0, // shlo_l_imm_64
+            1, 0, 0,           // add_64
+            1, 0, 0, 0, 0, 0, // store_ind_u32
+            1, 0,              // ecalli
+        ];
+        let mut registers = [0u64; 13];
+        registers[0] = 32;
+        registers[1] = 4;
+        registers[2] = 0xDEAD;
+
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            registers,
+            10000,
+            Some(layout),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
+        let exit = pvm.run();
+        assert_eq!(exit, ExitReason::HostCall(0));
+        assert_eq!(pvm.registers()[0], 48, "φ[0] = 32 + 16 = 48");
+        let at_48 = pvm.read_bytes(48, 4).expect("read at 48");
+        let at_64 = pvm.read_bytes(64, 4).expect("read at 64");
+        assert_eq!(
+            at_48,
+            vec![0xAD, 0xDE, 0x00, 0x00],
+            "store landed at offset 48 (expected). \
+             at_48={at_48:?}, at_64={at_64:?}",
+        );
+        assert_eq!(
+            at_64,
+            vec![0u8; 4],
+            "offset 64 must stay zero — non-zero means the \
+             ScaledAdd peephole double-added the stride. \
+             at_64={at_64:?}",
+        );
+    }
+
     /// Helper: build a program that loads 64-bit values into r0 and r1 via LoadImm64,
     /// applies a ThreeReg instruction (opcode) with ra=0, rb=1, rd=2, then ecalli 0.
     fn run_three_reg_op(opcode: u8, a: u64, b: u64) -> u64 {
