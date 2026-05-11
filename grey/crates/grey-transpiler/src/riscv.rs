@@ -1104,6 +1104,17 @@ impl TranslationContext {
                     // AND rd, x0, rs2 → 0
                     return self.emit_load_imm(rd, 0);
                 }
+                (0, 2) => {
+                    // SLT rd, x0, rs2 → sgtz rd, rs2 (signed)
+                    // rd = 1 if 0 < rs2 signed, else 0.
+                    // PVM `set_gt_s_imm rd, reg, imm` encodes
+                    // "rd = (reg > imm) signed"; with imm=0 this
+                    // is "rd = (rs2 > 0) signed" = SLT rd, x0, rs2.
+                    self.emit_inst(143); // set_gt_s_imm
+                    self.emit_data(pvm_rd | (pvm_rs2 << 4));
+                    self.emit_var_imm(0);
+                    return Ok(());
+                }
                 (0, 3) => {
                     // SLTU rd, x0, rs2 → snez rd, rs2
                     // When rd == rs2, skip the load_imm to avoid clobbering
@@ -2063,5 +2074,35 @@ mod tests {
         // tp(4), t3-t6(28-31) are unmapped → error
         assert!(map_register(4).is_err()); // tp
         assert!(map_register(28).is_err()); // t3
+    }
+
+    #[test]
+    fn translates_slt_x0_rs2_to_set_gt_s_imm() {
+        // Regression for the x0-as-rs1 SLT path. cipher-clerk's
+        // apply_batch monomorphization emits SLT rd, x0, rs2
+        // (signed-compare-against-zero with x0 on the LEFT) in the
+        // balance-overflow check loop. Before the fix this returned
+        // `UnsupportedInstruction { funct7=0x0 funct3=2 }`.
+        //
+        // Encoding: SLT a0, x0, a1
+        //   rd  = x10 (a0)
+        //   rs1 = x0
+        //   rs2 = x11 (a1)
+        //   funct3 = 2 (SLT), funct7 = 0
+        let mut ctx = TranslationContext::new(true);
+        let result = ctx.translate_op(/* funct3 */ 2, /* funct7 */ 0, /* rd */ 10, /* rs1 */ 0, /* rs2 */ 11, /* addr */ 0);
+        assert!(
+            result.is_ok(),
+            "SLT rd=x10, rs1=x0, rs2=x11 should translate: {result:?}",
+        );
+        // PVM emit: set_gt_s_imm (opcode 143) + packed regs (rd=a0→7,
+        // rs2=a1→8 → 7 | (8 << 4) = 0x87) + zero-byte imm (omitted
+        // by emit_var_imm when imm == 0).
+        assert_eq!(
+            ctx.code.as_slice(),
+            &[143u8, 0x87u8],
+            "expected [set_gt_s_imm, packed(a0,a1)], got {:?}",
+            ctx.code,
+        );
     }
 }
