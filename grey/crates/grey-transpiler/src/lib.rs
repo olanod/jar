@@ -299,22 +299,38 @@ pub fn peephole_fuse_load_imm_alu(
                     }
                 }
 
-                // General commutative ALU ops with immediate form
+                // General ALU ops with an immediate form. Beyond
+                // `load_rd == alu_rd`, two correctness constraints:
+                //  • the surviving operand `base` must NOT be the loaded register
+                //    — folding the load away would make `op Rd, Rd, Rd` read the
+                //    stale pre-load value of Rd instead of the immediate;
+                //  • shifts (shl/shr/sar, 207/208/209) are non-commutative, so the
+                //    constant may only fold in as the shift *amount* (the `rb`
+                //    operand), never as the value being shifted (`ra`) — otherwise
+                //    `K << Rb` would be miscompiled to `Rb << K`.
                 if let Some(imm_op) = imm_opcode(alu_op)
                     && fits_i32
                     && load_rd == alu_rd
-                    && (matches_ra || matches_rb)
                 {
+                    let is_shift = matches!(alu_op, 207 | 208 | 209);
+                    let usable = if is_shift {
+                        matches_rb
+                    } else {
+                        matches_ra || matches_rb
+                    };
                     let base = if matches_ra { alu_rb } else { alu_ra };
-                    if emit_fused(
-                        code,
-                        bitmask,
-                        i,
-                        end_of_pair,
-                        imm_op,
-                        alu_rd | (base << 4),
-                        load_val as i32,
-                    ) {
+                    if usable
+                        && base != load_rd
+                        && emit_fused(
+                            code,
+                            bitmask,
+                            i,
+                            end_of_pair,
+                            imm_op,
+                            alu_rd | (base << 4),
+                            load_val as i32,
+                        )
+                    {
                         fused += 1;
                         i = end_of_pair;
                         continue;
