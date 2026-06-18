@@ -127,6 +127,7 @@ impl TranslationContext {
         Ok(())
     }
 
+
     /// Translate one or more 32-bit RISC-V instructions starting at `offset`.
     /// Returns the number of bytes consumed (always 4).
     pub(crate) fn translate_instruction(
@@ -232,7 +233,7 @@ impl TranslationContext {
             0x03 => {
                 // Load
                 let imm = (inst as i32) >> 20;
-                self.translate_load(funct3, rd, rs1, imm)?;
+                self.translate_load(funct3, rd, rs1, imm, _addr)?;
             }
             0x23 => {
                 // Store
@@ -571,16 +572,26 @@ impl TranslationContext {
         rd: u8,
         rs1: u8,
         imm: i32,
+        addr: u64,
     ) -> Result<(), TranspileError> {
         if rd == 0 {
             return Ok(());
         } // Write to x0 is a no-op
 
-        // Fuse load_imm + load_ind: if the base register was just loaded with
-        // a constant address, use the direct load form (OneRegOneImm) instead.
-        // Saves one PVM instruction per fused load.
+        // Fuse `load_imm rs1, K; load rd, off(rs1)` into a direct
+        // absolute-address load — but ONLY when the load overwrites its own base
+        // (`rd == rs1`). Then the loaded constant is dead after the load, so the
+        // load_imm is truncated away and an instruction is saved.
+        //
+        // When `rd != rs1` the base register must survive (it may be reused —
+        // e.g. a switch-table base, or simply a later access through it), so the
+        // load_imm cannot be removed: a direct load would save nothing AND the
+        // base-preserved direct-load path mis-resolves, so we must NOT fuse —
+        // fall through to the indirect `load_ind rd, rs1, off`, which reads the
+        // same address (rs1 still holds K) and is correct.
         if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
             && rs1 == load_rd
+            && rd == rs1
         {
             let combined = load_val.wrapping_add(imm as i64);
             if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
@@ -595,14 +606,14 @@ impl TranslationContext {
                     _ => None,
                 };
                 if let Some(opc) = direct_opcode {
-                    // Only truncate the load_imm if the load destination overwrites
-                    // the base register (rd == rs1). If rd != rs1, the base register
-                    // value may be needed later (e.g., RISC-V switch table pattern:
-                    // lw offset, table(base); add target, offset, base; jr target).
-                    if rd == rs1 {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                    }
+                    // The load overwrites its base, so the load_imm is dead:
+                    // truncate it and repoint this instruction's address_map
+                    // entry to the fused load, else a branch targeting this load
+                    // resolves past the removed load_imm — into the middle of an
+                    // instruction (cf. translate_op, which does the same).
+                    self.code.truncate(undo_pos);
+                    self.bitmask.truncate(undo_pos);
+                    self.address_map.insert(addr, undo_pos as u32);
                     let pvm_rd = self.require_reg(rd)?;
                     self.emit_inst(opc);
                     self.emit_data(pvm_rd);

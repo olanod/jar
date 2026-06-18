@@ -788,7 +788,7 @@ fn translate_section_linked(
                 // LOAD rd, lo12(rs1) → route through translate_load with imm=0.
                 // If pending_load_imm is set (from HI20), this fuses into a
                 // direct load (load_* rd, addr) — saving one instruction.
-                ctx.translate_load(funct3, rd, rs1, 0)?;
+                ctx.translate_load(funct3, rd, rs1, 0, rv_addr)?;
                 offset += 4;
                 continue;
             } else if opcode == 0x23 {
