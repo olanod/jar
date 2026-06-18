@@ -675,6 +675,18 @@ fn translate_section_linked(
                     let jalr_rd = ((jalr >> 7) & 0x1f) as u8;
                     let ret_addr = rv_addr + 8;
 
+                    // A call is not a load_imm-fusing instruction. `translate_one`
+                    // clears a stale `pending_load_imm` for any opcode that can't
+                    // consume it, but this CALL_PLT path bypasses `translate_one`.
+                    // Clearing it here is essential: otherwise a `pending_load_imm`
+                    // left by a preceding PCREL (AUIPC+ADDI) survives across the
+                    // emitted call, and the next fusable instruction (branch, load,
+                    // store, ALU) "undoes" the fusion back to the load_imm's
+                    // position — truncating the call's bytes and desyncing every
+                    // address_map entry past it (a branch target then lands
+                    // mid-instruction → a PVM trap). The load_imm is already
+                    // emitted, so dropping the tracking simply forgoes fusion.
+                    ctx.pending_load_imm = None;
                     // Fused load_imm_jump: set return address and jump in one instruction
                     ctx.emit_call(jalr_rd, ret_addr, target_addr)?;
                     // Map the JALR address too
