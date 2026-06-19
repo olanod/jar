@@ -2562,23 +2562,19 @@ impl Compiler {
     /// Emit a shift by register value using CL.
     /// shift_op: 4=SHL, 5=SHR, 7=SAR, 0=ROL, 1=ROR
     fn emit_shift_by_reg32(&mut self, dst: Reg, shift_reg: Reg, shift_op: u8) {
-        // Need shift amount in CL (RCX = φ[12])
-        // If shift_reg is already RCX, great. Otherwise save/restore.
+        // Need the shift amount in CL (RCX = φ[12]).
         if shift_reg == Reg::RCX {
             self.asm.shift_cl32(shift_op, dst);
         } else if dst == Reg::RCX {
-            // dst is CL — need to swap
-            self.asm.push(shift_reg);
-            self.asm.mov_rr(Reg::RCX, shift_reg);
-            // But we also need dst's value which was in RCX
-            // We pushed shift_reg, not dst. Let me handle this differently.
-            // Move dst to SCRATCH, put shift in CL, shift SCRATCH, move back.
-            self.asm.pop(shift_reg); // undo push
-            self.asm.mov_rr(SCRATCH, dst);
+            // dst IS RCX (the count register). Stash dst's value, load the count
+            // into RCX *before* touching SCRATCH — shift_reg may BE SCRATCH
+            // (callers pass shift_src=SCRATCH when ra==rb), so writing SCRATCH
+            // first would destroy the count. Read shift_reg into RCX, then pop
+            // the saved value into SCRATCH and shift it.
             self.asm.push(Reg::RCX);
             self.asm.mov_rr(Reg::RCX, shift_reg);
+            self.asm.pop(SCRATCH);
             self.asm.shift_cl32(shift_op, SCRATCH);
-            self.asm.pop(Reg::RCX);
             self.asm.mov_rr(dst, SCRATCH);
         } else {
             self.asm.push(Reg::RCX);
@@ -2592,11 +2588,12 @@ impl Compiler {
         if shift_reg == Reg::RCX {
             self.asm.shift_cl64(shift_op, dst);
         } else if dst == Reg::RCX {
-            self.asm.mov_rr(SCRATCH, dst);
+            // See emit_shift_by_reg32: shift_reg may BE SCRATCH, so load the
+            // count into RCX before clobbering SCRATCH with the saved value.
             self.asm.push(Reg::RCX);
             self.asm.mov_rr(Reg::RCX, shift_reg);
+            self.asm.pop(SCRATCH);
             self.asm.shift_cl64(shift_op, SCRATCH);
-            self.asm.pop(Reg::RCX);
             self.asm.mov_rr(dst, SCRATCH);
         } else {
             self.asm.push(Reg::RCX);

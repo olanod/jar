@@ -1640,6 +1640,60 @@ mod tests {
         pvm.registers()[1]
     }
 
+    /// Run a ThreeReg shift `φ[rd] = φ[ra] SHIFT φ[rb]` with φ[ra]=val_a,
+    /// φ[rb]=val_b. Used to exercise variable shifts whose destination and/or
+    /// count land in φ[12]=RCX (and, for rd==rb, force shift_src=SCRATCH).
+    fn run_shift_3reg(opcode: u8, ra: u8, rb: u8, rd: u8, val_a: u64, val_b: u64) -> u64 {
+        let code = vec![
+            20, ra,
+            val_a as u8, (val_a >> 8) as u8, (val_a >> 16) as u8, (val_a >> 24) as u8,
+            (val_a >> 32) as u8, (val_a >> 40) as u8, (val_a >> 48) as u8, (val_a >> 56) as u8,
+            20, rb,
+            val_b as u8, (val_b >> 8) as u8, (val_b >> 16) as u8, (val_b >> 24) as u8,
+            (val_b >> 32) as u8, (val_b >> 40) as u8, (val_b >> 48) as u8, (val_b >> 56) as u8,
+            opcode, (rb << 4) | ra, rd,
+            10, 0,
+        ];
+        let bitmask = vec![
+            1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0,
+        ];
+        let mut pvm = RecompiledPvm::new(
+            &code,
+            bitmask,
+            vec![],
+            [0u64; 13],
+            100_000,
+            Some(test_layout()),
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        )
+        .expect("compilation should succeed");
+        assert_eq!(pvm.run(), ExitReason::HostCall(0));
+        pvm.registers()[rd as usize]
+    }
+
+    /// Regression: variable shifts whose destination is φ[12]=RCX must not
+    /// corrupt the shift count. The `rd==rb` form makes the codegen route the
+    /// count through SCRATCH(RDX); with dst==RCX, the dst==RCX branch must load
+    /// the count into RCX *before* overwriting SCRATCH, or both the count and
+    /// the value get clobbered. (mls-rs TreeKEM hit this: `imm << level` with
+    /// dst/level allocated to φ[12] → wrong node indices → InvalidLeafConsumption
+    /// / InvalidNodeIndex.) ShloL32=197, ShloR32=198, SharR32=199.
+    #[test]
+    fn shift_by_reg_into_rcx_is_correct() {
+        let sx32 = |v: u32| v as i32 as i64 as u64;
+        // dst==RCX, count from a normal reg (φ1).
+        assert_eq!(run_shift_3reg(197, 0, 1, 12, 1, 31), sx32(1u32 << 31));
+        assert_eq!(run_shift_3reg(198, 0, 1, 12, 0xFFFF_FFFF, 4), sx32(0xFFFF_FFFFu32 >> 4));
+        assert_eq!(run_shift_3reg(199, 0, 1, 12, 0x8000_0000, 4), sx32((0x8000_0000u32 as i32 >> 4) as u32));
+        // dst==RCX AND rd==rb → shift_src=SCRATCH (the case the first fix missed).
+        assert_eq!(run_shift_3reg(197, 0, 12, 12, 1, 31), sx32(1u32 << 31));
+        assert_eq!(run_shift_3reg(197, 0, 12, 12, 0xFF, 3), sx32(0xFFu32 << 3));
+        assert_eq!(run_shift_3reg(198, 0, 12, 12, 0xFFFF_FFFF, 4), sx32(0xFFFF_FFFFu32 >> 4));
+        assert_eq!(run_shift_3reg(199, 0, 12, 12, 0x8000_0000, 4), sx32((0x8000_0000u32 as i32 >> 4) as u32));
+        // Sanity: same ops with a non-RCX destination are unaffected.
+        assert_eq!(run_shift_3reg(197, 0, 1, 2, 0xFF, 3), sx32(0xFFu32 << 3));
+    }
+
     // === Division tests ===
 
     #[test]
