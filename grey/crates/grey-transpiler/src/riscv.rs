@@ -836,7 +836,10 @@ impl TranslationContext {
                 4 => return self.emit_load_imm(rd, imm as i64), // XORI rd, x0, imm = imm
                 6 => return self.emit_load_imm(rd, imm as i64), // ORI rd, x0, imm = imm
                 7 => return self.emit_load_imm(rd, 0),          // ANDI rd, x0, imm = 0
-                _ => {}                                         // shifts with x0 → just 0, but rare
+                // SLLI/SRLI/SRAI rd, x0, shamt → 0 (0 shifted any way is 0). MUST
+                // emit it: PVM has no zero register (x0 maps to reg 0 = RA), so
+                // falling through to the register path would shift RA, not 0.
+                _ => return self.emit_load_imm(rd, 0),
             }
         }
 
@@ -1396,6 +1399,19 @@ impl TranslationContext {
         if rd == 0 {
             return Ok(());
         }
+
+        // rs1 = x0 (zero): PVM has no zero register (x0 maps to reg 0 = RA), so
+        // materialize the result directly instead of operating on RA. Mirrors the
+        // rs1==0 handling in `translate_op_imm`.
+        if rs1 == 0 {
+            match funct3 {
+                0 => return self.emit_load_imm(rd, imm as i64), // ADDIW rd, x0, imm = sext32(imm)
+                1 if funct7 != 0x30 => return self.emit_load_imm(rd, 0), // SLLIW rd, x0, _ = 0
+                5 if funct7 != 0x30 => return self.emit_load_imm(rd, 0), // SRLIW/SRAIW rd, x0, _ = 0
+                _ => {} // Zbb unary (clzw/ctzw/cpopw/roriw) on x0 → general path (no Zbb on target)
+            }
+        }
+
         let pvm_rd = self.require_reg(rd)?;
         let pvm_rs1 = self.require_reg(rs1)?;
 
@@ -2115,5 +2131,41 @@ mod tests {
             "expected [set_gt_s_imm, packed(a0,a1)], got {:?}",
             ctx.code,
         );
+    }
+
+    #[test]
+    fn translates_shift_imm_x0_to_load_zero() {
+        // Regression for the x0-as-rs1 shift-immediate path. Rust's stable
+        // `slice::sort` (driftsort) merge emits `slli a2, x0, 3` (= 0) as a
+        // zeroing idiom. Before the fix, the `_ =>` arm fell through to the
+        // register path and shifted PVM reg 0 (= RA, NOT zero), corrupting the
+        // merge-cursor pointers and mis-sorting `&usize` slices.
+        //
+        // SLLI a2, x0, 3:  funct3=1, funct7=0, rd=x12(a2), rs1=x0, imm=shamt=3.
+        // Must emit `load_imm a2, 0` → [51, 9] (a2 → PVM reg 9; zero imm omitted).
+        for (funct3, funct7, what) in [(1u32, 0u32, "SLLI"), (5, 0, "SRLI"), (5, 0x20, "SRAI")] {
+            let mut ctx = TranslationContext::new(true);
+            let r = ctx.translate_op_imm(funct3, funct7, /* rd */ 12, /* rs1 */ 0, /* imm */ 3);
+            assert!(r.is_ok(), "{what} rd=a2, rs1=x0 should translate: {r:?}");
+            assert_eq!(
+                ctx.code.as_slice(),
+                &[51u8, 9u8],
+                "{what} a2, x0, 3 must be load_imm a2,0 (NOT a shift of RA); got {:?}",
+                ctx.code,
+            );
+        }
+    }
+
+    #[test]
+    fn translates_op_imm_32_x0_directly() {
+        // Same x0-as-rs1 class for the RV64-W ops (addiw/slliw/srliw/sraiw).
+        // ADDIW a2, x0, 7 = sext32(7) → load_imm a2, 7 = [51, 9, 7].
+        let mut ctx = TranslationContext::new(true);
+        ctx.translate_op_imm_32(0, 0, 12, 0, 7).unwrap();
+        assert_eq!(ctx.code.as_slice(), &[51u8, 9u8, 7u8], "addiw a2,x0,7 = load_imm 7");
+        // SLLIW a2, x0, 3 = 0 → load_imm a2, 0 = [51, 9].
+        let mut ctx = TranslationContext::new(true);
+        ctx.translate_op_imm_32(1, 0, 12, 0, 3).unwrap();
+        assert_eq!(ctx.code.as_slice(), &[51u8, 9u8], "slliw a2,x0,3 = load_imm 0");
     }
 }
