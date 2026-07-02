@@ -975,8 +975,17 @@ impl TranslationContext {
             // Check if rs2 is the loaded register (ADD/AND/OR/XOR rd, rs1, load_rd)
             let (fuse_base, _commutative) = if rs2 == load_rd && rs1 != load_rd {
                 (Some(rs1), true)
-            } else if rs1 == load_rd && rs2 != load_rd && (funct7, funct3) != (0x20, 0) {
-                // rs1 is the loaded register — only for commutative ops (not SUB)
+            } else if rs1 == load_rd
+                && rs2 != load_rd
+                // The imm sits on the LEFT operand here, so the fused form must be
+                // commutative. SUB, SLT and SLTU are not: `imm - rs2`, `imm < rs2`
+                // and `imm <u rs2` have no left-immediate PVM form (add/set_lt_*_imm
+                // all put the immediate on the right), so fusing would silently
+                // swap the operands. Leave them to the register path.
+                && (funct7, funct3) != (0x20, 0) // SUB
+                && (funct7, funct3) != (0, 2) // SLT
+                && (funct7, funct3) != (0, 3) // SLTU
+            {
                 (Some(rs2), true)
             } else {
                 (None, false)
@@ -2167,5 +2176,37 @@ mod tests {
         let mut ctx = TranslationContext::new(true);
         ctx.translate_op_imm_32(1, 0, 12, 0, 3).unwrap();
         assert_eq!(ctx.code.as_slice(), &[51u8, 9u8], "slliw a2,x0,3 = load_imm 0");
+    }
+
+    #[test]
+    fn does_not_fuse_left_immediate_into_non_commutative_slt() {
+        // Regression: `load_imm rd, K; slt(u) rd, rd, rs2` puts the immediate on
+        // the LEFT operand. SLT/SLTU are not commutative and set_lt_*_imm only
+        // encodes `(reg < imm)`, so fusing emits `(rs2 < K)` instead of the
+        // correct `(K < rs2)`. hkdf's `okm.len() > 255*chunk` check compiled to
+        // exactly this at -Os (`sltu a0, 8160, len`); the fused form flipped it
+        // to `len < 8160`, so every HKDF-expand spuriously returned InvalidLength.
+        for (funct3, what) in [(2u32, "SLT"), (3, "SLTU")] {
+            let mut ctx = TranslationContext::new(true);
+            // `load_imm a0, 8160`, tracked as pending (as translate_op_imm would).
+            let undo = ctx.code.len();
+            ctx.emit_load_imm(10, 8160).unwrap();
+            let load_imm = ctx.code.clone();
+            ctx.pending_load_imm = Some((10, 8160, undo));
+            // SLT(U) a0, a0, a4 (rd=rs1=a0=x10, rs2=a4=x14): must stay `8160 < a4`.
+            ctx.translate_op(funct3, 0, /*rd*/ 10, /*rs1*/ 10, /*rs2*/ 14, /*addr*/ 4)
+                .unwrap();
+            // The load_imm must survive (NOT be truncated into an operand-swapped
+            // set_lt_*_imm) and a register-form compare appended after it.
+            assert_eq!(
+                &ctx.code[..load_imm.len()],
+                load_imm.as_slice(),
+                "{what} with a left immediate must not fuse (would flip the comparison)",
+            );
+            assert!(
+                ctx.code.len() > load_imm.len(),
+                "{what}: a register-form compare must follow the preserved load_imm",
+            );
+        }
     }
 }
