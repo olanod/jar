@@ -39,23 +39,30 @@ mod service {
     // result_disc(1) + result_len(u32=4) = 142
     const PIXEL_DATA_OFFSET: u32 = 142;
 
-    // Entry-point: single entrypoint at PC=0.
-    // The transpiler emits: load_imm_64 SP; load_imm_64 S0 before the ELF code.
-    // φ[7]=op dispatches (0=refine, 1=accumulate).
+    // Two GP entry points, selected by the transpiler's jump prologue by
+    // instruction counter (no φ[7] phase selector): `_start` at IC 0 (refine)
+    // and `accumulate` at IC 5. The host owns SP, so there is no in-blob
+    // preamble.
     //
-    // _start checks a0: if != 1, REPLY immediately (refine = identity).
-    // If a0 == 1, fall through to accumulate_impl, then REPLY.
+    // Refine is the identity: REPLY immediately. Accumulate runs the pixel
+    // apply, then REPLYs.
     core::arch::global_asm!(
         ".global _start",
         ".type _start, @function",
         "_start:",
-        // if a0 != 1, skip accumulate (refine = identity)
-        "li t1, 1",
-        "bne a0, t1, .Lreply",
-        // accumulate
+        // refine (IC 0) = identity: echo the input args as the output.
+        // Output window convention: φ[7] = (args_ptr << 32) | args_len, with
+        // φ[7]=args_ptr and φ[8]=args_len on entry (GP register ABI).
+        "slli a0, a0, 32", // args_ptr << 32
+        "or a0, a0, a1",   // | args_len
+        "li t0, 0",        // ecalli(0) = REPLY (IPC slot 0)
+        "ecall",
+        "unimp",
+        ".global accumulate",
+        ".type accumulate, @function",
+        "accumulate:",
+        // accumulate (IC 5): apply the pixel, then REPLY
         "jal ra, accumulate_impl",
-        ".Lreply:",
-        // REPLY to kernel (IPC slot 0)
         "li t0, 0",
         "ecall",
         "unimp",

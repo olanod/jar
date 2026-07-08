@@ -302,20 +302,35 @@ impl InvocationKernel {
             }
         }
 
-        // Create VM 0 — kernel sets φ[0]=halt, φ[7]=args_base, φ[8]=args_len.
-        // Program sets SP in its preamble (transpiler emits load_imm_64 SP, stack_top).
+        // Create VM 0. GP standard program initialization: the host owns SP,
+        // so the kernel installs φ[1]=stack_top here (the blob carries no SP
+        // preamble). Arguments follow the GP register ABI: φ[7]=args address,
+        // φ[8]=args length. Entry dispatch is by instruction counter (IC 0 =
+        // refine, IC 5 = accumulate) via `set_entry_ic`, not a φ[7] selector.
         let mut vm0 = VmInstance::new(
             invoke_code_id,
             0, // entry_index (set by caller via CALL)
             cap_table,
             remaining_gas,
         );
-        // φ[7]=op set by caller (refine/accumulate), φ[8]=args_base, φ[9]=args_len
-        vm0.set_reg(8, args_base);
-        vm0.set_reg(9, args_len);
+        vm0.set_reg(1, parsed.header.stack_top as u64); // φ[1] = SP (stack top)
+        vm0.set_reg(7, args_base); // φ[7] = args address
+        vm0.set_reg(8, args_len); // φ[8] = args length
         kernel.vm_arena.insert(vm0); // VM 0 gets VmId(0, 0)
 
         Ok(kernel)
+    }
+
+    /// Set the instruction counter (byte offset into code) at which the root
+    /// VM begins executing on the first [`run`](Self::run).
+    ///
+    /// The two-slot GP entry prologue emitted by the transpiler places a jump
+    /// to the refine body at IC 0 and a jump to the accumulate body (or a
+    /// trap, for refine-only blobs) at IC 5. The host therefore selects the
+    /// entry point purely by where it starts the counter: `0` for refine /
+    /// is-authorized, `5` for accumulate.
+    pub fn set_entry_ic(&mut self, entry_ic: u32) {
+        self.vm_arena.vm_mut(self.active_vm).pc = entry_ic;
     }
 
     /// Extract the current flat_mem snapshot from the kernel's DATA cap pages.
@@ -2577,7 +2592,7 @@ mod tests {
                 data_len: 0,
             },
         ];
-        build_blob(memory_pages, 64, &caps, &code_data)
+        build_blob(memory_pages, 64, 4096, &caps, &code_data)
     }
 
     #[test]
@@ -3026,7 +3041,7 @@ mod tests {
                 data_len: 0,
             },
         ];
-        build_blob(memory_pages, 64, &caps, &sub)
+        build_blob(memory_pages, 64, 4096, &caps, &sub)
     }
 
     #[test]

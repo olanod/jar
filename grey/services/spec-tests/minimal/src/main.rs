@@ -10,11 +10,19 @@
 mod service {
     use core::arch::global_asm;
 
-    // Single entrypoint. φ[7]=op (0=refine, 1=accumulate). Both are no-ops.
+    // Two GP entry points, selected by the transpiler's jump prologue:
+    // `_start` (IC 0 = refine) and `accumulate` (IC 5). Both are no-ops that
+    // REPLY immediately.
     global_asm!(
         ".global _start",
         ".type _start, @function",
         "_start:",
+        "li t0, 0", // ecalli(0) = REPLY (IPC slot 0)
+        "ecall",
+        "unimp", // trap if resumed
+        ".global accumulate",
+        ".type accumulate, @function",
+        "accumulate:",
         "li t0, 0", // ecalli(0) = REPLY (IPC slot 0)
         "ecall",
         "unimp", // trap if resumed

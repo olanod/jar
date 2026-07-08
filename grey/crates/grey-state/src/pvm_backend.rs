@@ -6,6 +6,11 @@ use javm::Gas;
 
 pub use javm::ExitReason;
 
+/// Entry instruction counter for refine / is-authorized (IC 0).
+pub const ENTRY_IC_REFINE: u32 = 0;
+/// Entry instruction counter for accumulate (IC 5) — the second prologue slot.
+pub const ENTRY_IC_ACCUMULATE: u32 = 5;
+
 /// PVM instance backed by the capability-based kernel.
 pub struct PvmInstance {
     kernel: Box<javm::kernel::InvocationKernel>,
@@ -13,11 +18,18 @@ pub struct PvmInstance {
 
 impl PvmInstance {
     /// Create a PVM from a code blob, arguments, and gas budget.
-    pub fn initialize(code_blob: &[u8], args: &[u8], gas: Gas) -> Option<Self> {
+    ///
+    /// `entry_ic` is the instruction counter at which the root VM starts,
+    /// selecting the GP entry point: `0` for refine / is-authorized, `5` for
+    /// accumulate (the two-slot jump prologue emitted by the transpiler).
+    pub fn initialize(code_blob: &[u8], args: &[u8], gas: Gas, entry_ic: u32) -> Option<Self> {
         match javm::kernel::InvocationKernel::new(code_blob, args, gas) {
-            Ok(kernel) => Some(PvmInstance {
-                kernel: Box::new(kernel),
-            }),
+            Ok(mut kernel) => {
+                kernel.set_entry_ic(entry_ic);
+                Some(PvmInstance {
+                    kernel: Box::new(kernel),
+                })
+            }
             Err(e) => {
                 tracing::warn!("kernel init failed: {e}");
                 None
