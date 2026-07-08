@@ -836,7 +836,8 @@ def resumeProtocolCall (state : KernelState) (result0 result1 : UInt64) : Kernel
     For jar1: creates VM 0 with protocol caps 1-28, manifest caps, UNTYPED at 254.
     Sets φ[7]=op, φ[8]=args_base, φ[9]=args_len. PC=0. -/
 def initKernel (prog : JAVM.ProgramBlob) (regs : JAVM.Registers) (mem : JAVM.Memory)
-    (gas : Nat) (memoryPages : Nat) (pvmRun : PvmRunFn := JAVM.run) : KernelState :=
+    (gas : Nat) (memoryPages : Nat) (pvmRun : PvmRunFn := JAVM.run)
+    (entryPc : Nat := 0) : KernelState :=
   -- Create code cap from program
   let codeCap : CodeCapData := { id := 0, program := prog, jumpTable := #[] }
   -- Build VM 0 cap table: protocol caps 1-28
@@ -853,11 +854,13 @@ def initKernel (prog : JAVM.ProgramBlob) (regs : JAVM.Registers) (mem : JAVM.Mem
     data := ByteArray.mk (Array.replicate (memoryPages * pageSize) 0)
     totalPages := memoryPages
   }
+  -- The root VM starts at the requested instruction counter: the transpiler's
+  -- two-slot jump prologue places refine at IC 0 and accumulate at IC 5.
   let vm0 : VmInstance := {
     state := .running
     codeCapId := 0
     registers := regs
-    pc := 0
+    pc := entryPc
     capTable := capTable
     caller := none
     entryIndex := 0

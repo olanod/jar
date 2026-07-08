@@ -8,6 +8,17 @@ Runtime-configurable protocol parameters supporting multiple variants
 
 Parameters that differ across variants live in `Params`. Parameters that
 are identical across all known variants remain as global defs in `Constants.lean`.
+
+## Pinned Gray Paper revision
+
+The `gp072_*` variants and the conformance-vector corpus track **graypaper
+v0.7.2** (`gavofyork/graypaper`, tag `v0.7.2`, commit
+`ab2cdbd5b070ba2176e8dd830b06401ce05a954d`, tagged 2025-09-15). The execution
+ABI (two entry points refine/accumulate at IC 0/5, host-owned SP, args in
+ω_7/ω_8) is pinned against `text/{pvm_invocations,accumulation,accounts}.tex`
+at that revision. Bump this pin — and re-bless the vectors from the updated
+oracle — only when the tracked revision changes (see the JAM-alignment
+roadmap, Phase 7).
 -/
 
 namespace Jar

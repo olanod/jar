@@ -85,28 +85,12 @@ struct LinkedElf {
     sub32_relocs: Vec<(u64, u64)>,
     /// Code section address ranges for detecting code pointers.
     code_ranges: Vec<(u64, u64)>,
-    /// ELF entry point (e_entry) — the RISC-V vaddr of _start.
+    /// ELF entry point (e_entry) — the RISC-V vaddr of _start (refine entry).
     entry_vaddr: u64,
-}
-
-/// Transpile an rv64em ELF with relocation processing.
-///
-/// Emit `load_imm_64 reg, value` (PVM opcode 20, 10 bytes).
-fn emit_load_imm_64(code: &mut Vec<u8>, bitmask: &mut Vec<u8>, reg: u8, value: u64) {
-    let start = code.len();
-    code.push(20); // load_imm_64 opcode
-    code.push(reg);
-    code.extend_from_slice(&value.to_le_bytes());
-    bitmask.push(1);
-    for _ in 0..9 {
-        bitmask.push(0);
-    }
-    assert_eq!(code.len() - start, 10);
-}
-
-/// Emit a `load_imm_64 SP, stack_top` preamble.
-fn emit_sp_preamble(code: &mut Vec<u8>, bitmask: &mut Vec<u8>, stack_top: u64) {
-    emit_load_imm_64(code, bitmask, 1, stack_top); // SP = φ[1]
+    /// RISC-V vaddr of the exported `accumulate` symbol, if the service
+    /// defines one (the accumulate entry). `None` for refine-only blobs, whose
+    /// IC-5 prologue slot becomes a trap.
+    accumulate_vaddr: Option<u64>,
 }
 
 /// Transpile an rv64em ELF into a JAR capability manifest PVM blob.
@@ -115,19 +99,32 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     let mut ctx = TranslationContext::new(elf.is_64bit);
     ctx.code_ranges = elf.code_ranges.clone();
 
-    // Emit SP preamble: load_imm_64 SP, stack_top
     let stack_pages = elf.stack_size / 4096;
-    let stack_top = stack_pages as u64 * 4096;
-    emit_sp_preamble(&mut ctx.code, &mut ctx.bitmask, stack_top);
 
-    // Emit an unconditional jump to the ELF entry point (e_entry) so
-    // PC=0 enters at _start rather than whatever function LLD placed
-    // first in .text. The fixup is resolved after translation in
-    // apply_fixups() (which maps RISC-V vaddrs → PVM PCs via jump_table).
-    // A gas-block boundary is required before the jump so the first
-    // instruction lives in its own basic block.
-    if elf.entry_vaddr != 0 {
-        ctx.emit_jump(elf.entry_vaddr);
+    // Emit the two-slot GP entry prologue. ICs are byte offsets into the code,
+    // and a plain jump (opcode 40 + imm32) is exactly 5 bytes, so the two
+    // jumps land at IC 0 and IC 5 respectively — the entry points a GP host
+    // selects by starting the instruction counter at 0 (refine / is-authorized)
+    // or 5 (accumulate). SP is no longer initialized here: the host owns it
+    // (kernel installs φ[1]=stack_top from the blob's container metadata). Each
+    // jump ends its basic block, so IC 5 begins a fresh block. Both fixups are
+    // resolved after translation in apply_fixups() (RISC-V vaddr → PVM PC).
+    //
+    // IC 0 → refine body = the ELF entry point (e_entry / _start).
+    ctx.emit_jump(elf.entry_vaddr);
+    // Hard assert (not debug): the accumulate entry MUST begin at IC 5, so the
+    // refine jump has to occupy exactly bytes 0..5. This is a consensus-visible
+    // GP layout invariant — a one-time cost per link, kept in release builds so
+    // a future change to the jump encoding can't silently misplace IC 5.
+    assert_eq!(ctx.code.len(), 5, "refine jump must occupy IC 0..5");
+    // IC 5 → accumulate body = exported `accumulate` symbol, or a trap for a
+    // refine-only blob (an accumulate invocation must fail loud, not fall
+    // through into the refine body).
+    match elf.accumulate_vaddr {
+        Some(vaddr) => ctx.emit_jump(vaddr),
+        None => {
+            ctx.emit_inst(0); // trap
+        }
     }
 
     for (_file_off, vaddr, data) in &elf.code_sections {
@@ -323,6 +320,14 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         }
     }
 
+    // Resolve the exported `accumulate` entry symbol (the GP IC-5 slot). A
+    // defined symbol has a nonzero code vaddr; an undefined reference (value 0)
+    // is treated as absent so the blob stays refine-only (IC 5 → trap).
+    let accumulate_vaddr = symbols_by_idx
+        .iter()
+        .find(|(name, value)| name == "accumulate" && *value != 0)
+        .map(|(_, value)| *value);
+
     // Compute PVM memory layout
     // PVM linear memory: [stack: 0..s) [ro: s..s+|o|) [rw: s+P(|o|)..] [heap...]
     // We set stack_size = minimum power-of-2 page boundary that contains all ro section addrs.
@@ -493,6 +498,7 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         sub32_relocs,
         code_ranges,
         entry_vaddr: e_entry,
+        accumulate_vaddr,
     })
 }
 

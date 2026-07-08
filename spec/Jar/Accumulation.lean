@@ -1537,16 +1537,16 @@ def accone (ps : PartialState) (serviceId : ServiceId)
           | .perInstruction => JAVM.run
           | .basicBlockFull => JAVM.runBlockGas
           | .basicBlockSinglePass => JAVM.runBlockGasSinglePass
-        -- Single entrypoint PC=0. φ[7]=1 for accumulate, φ[8]=args_base, φ[9]=args_len.
-        -- For gp072: PC=5 (standard dispatch, no single entrypoint).
-        let (entryPC, regs) := if JarConfig.capabilityModel == .v2 then
-          let regs := regs.set! 7 (UInt64.ofNat 1)  -- op = accumulate
-          (0, regs)
-        else (5, regs)
+        -- Accumulate enters at IC 5 — the second slot of the transpiler's
+        -- two-slot GP jump prologue — in both the capability kernel and the
+        -- flat gp072 path. The φ[7]=1 phase selector is retired: dispatch is
+        -- by instruction counter, not a register. Args follow the GP ABI
+        -- (φ[7]=address, φ[8]=length), installed by initProgram.
+        let entryPC := 5
         let (result, ctx') :=
           if JarConfig.capabilityModel == .v2 then
             -- jar1: use capability kernel
-            let kernelState := JAVM.Kernel.initKernel prog regs mem totalGas.toNat 4 runFn
+            let kernelState := JAVM.Kernel.initKernel prog regs mem totalGas.toNat 4 runFn entryPC
             let rec kernelLoop (ks : JAVM.Kernel.KernelState) (ctx : AccContext) (fuel : Nat)
                 : JAVM.InvocationResult × AccContext :=
               match fuel with

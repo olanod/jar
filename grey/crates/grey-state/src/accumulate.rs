@@ -3,7 +3,7 @@
 //! Manages the work-report accumulation queue, dependency resolution,
 //! and PVM execution of service Accumulate code (ΨA).
 
-use crate::pvm_backend::PvmInstance;
+use crate::pvm_backend::{ENTRY_IC_ACCUMULATE, PvmInstance};
 use grey_types::config::Config;
 use grey_types::constants::HOST_WHAT;
 use grey_types::work::{WorkReport, WorkResult};
@@ -618,23 +618,21 @@ fn run_accumulate_pvm(
 ) -> (AccContext, Gas) {
     use javm::kernel::KernelResult;
 
-    let mut pvm = match PvmInstance::initialize(code_blob, args, gas) {
+    // Accumulate enters at IC 5 (the second slot of the GP jump prologue).
+    // The φ[7]=1 phase-selector hack is retired: dispatch is by instruction
+    // counter, not register. Args follow the GP ABI (φ[7]=address, φ[8]=len),
+    // installed by the kernel at init.
+    let mut pvm = match PvmInstance::initialize(code_blob, args, gas, ENTRY_IC_ACCUMULATE) {
         Some(p) => p,
         None => {
             return (exceptional, 0);
         }
     };
 
-    // Single entrypoint PC=0. Set φ[7]=1 for accumulate operation.
-    // φ[8]=args_base and φ[9]=args_len are set by the kernel init.
-    // Set φ[7]=1 for accumulate operation (cold path, before execution)
-    pvm.set_reg(7, 1);
-
     let initial_gas = pvm.gas();
     tracing::info!(
         phi7 = pvm.reg(7),
         phi8 = pvm.reg(8),
-        phi9 = pvm.reg(9),
         "accumulate start regs"
     );
 

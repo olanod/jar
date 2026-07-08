@@ -245,7 +245,12 @@ pub fn build_service_program(
     next_page += 1;
 
     let total = memory_pages.max(next_page + heap_pages);
-    build_blob(total, 64, &caps, &data_section)
+    // Host-owned SP (GP standard init): the stack DATA cap occupies pages
+    // [0, stack_pages), so the initial SP sits at the top of that region.
+    // The kernel installs this into φ[1] at init; the blob carries no SP
+    // preamble.
+    let stack_top = stack_pages * 4096;
+    build_blob(total, 64, stack_top, &caps, &data_section)
 }
 
 #[cfg(test)]

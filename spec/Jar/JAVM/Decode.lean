@@ -377,11 +377,16 @@ def RESULT_OK   : UInt64 := 0
 /-- JAR magic value: 'J'=0x4A, 'A'=0x41, 'R'=0x52, 0x02. -/
 def jarMagic : Nat := decodeLEn ⟨#[0x4A, 0x41, 0x52, 0x02]⟩ 0 4
 
-/-- JAR header (10 bytes). -/
+/-- JAR header (14 bytes). -/
 structure JarHeader where
   memoryPages : Nat
   capCount : Nat
   invokeCap : Nat
+  /-- Initial stack pointer (byte address of the top of the stack region).
+      GP standard program initialization makes the host own SP: the kernel
+      installs `φ[1] = stackTop` at init rather than the blob doing it in a
+      preamble. -/
+  stackTop : Nat
 
 /-- JAR capability entry (19 bytes). -/
 structure JarCapEntry where
@@ -393,16 +398,19 @@ structure JarCapEntry where
   dataOffset : Nat   -- offset into data section
   dataLen : Nat      -- bytes of initial data
 
-/-- Parse a JAR header (11 bytes). Returns header + offset after header. -/
+/-- Parse a JAR header (14 bytes). Returns header + offset after header.
+    Layout: magic(4) ‖ memory_pages(4) ‖ cap_count(1) ‖ invoke_cap(1)
+      ‖ stack_top(4). -/
 def parseJarHeader (blob : ByteArray) : Option (JarHeader × Nat) := do
-  if blob.size < 10 then none
+  if blob.size < 14 then none
   let magic := decodeLEn blob 0 4
   if magic != jarMagic then none
   some ({
     memoryPages := decodeLEn blob 4 4
     capCount := (blob.get! 8).toNat
     invokeCap := (blob.get! 9).toNat
-  }, 10)
+    stackTop := decodeLEn blob 10 4
+  }, 14)
 
 /-- Parse a JAR capability entry (19 bytes) at the given offset. -/
 def parseJarCapEntry (blob : ByteArray) (offset : Nat) : Option (JarCapEntry × Nat) := do

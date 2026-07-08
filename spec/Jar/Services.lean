@@ -281,40 +281,11 @@ inductive AccumulationInput where
 
 -- Ψ_A is implemented in Jar.Accumulation.accone with full PVM execution.
 
--- ============================================================================
--- §12 — On-Transfer Handler (Ψ_T)
--- ============================================================================
-
-/-- Encode on-transfer arguments for PVM input.
-    Format: source(4) ‖ dest(4) ‖ amount(8) ‖ memo(W_T) ‖ gas(8). -/
-private def encodeTransferArgs (t : DeferredTransfer) : ByteArray :=
-  Codec.encodeFixedNat 4 t.source.toNat
-    ++ Codec.encodeFixedNat 4 t.dest.toNat
-    ++ @EconModel.encodeTransferAmount JarConfig.EconType JarConfig.TransferType _ t.payload
-    ++ t.memo.data
-    ++ Codec.encodeFixedNat 8 t.gas.toNat
-
-/-- Ψ_T : On-transfer invocation. GP §12.
-    Called when a service receives a deferred transfer.
-    Runs service code in PVM with the transfer's gas budget.
-    Returns updated service account. -/
-def onTransfer
-    (serviceCode : ByteArray)
-    (_serviceId : ServiceId)
-    (transfer : DeferredTransfer)
-    (acct : ServiceAccount) : ServiceAccount :=
-  let args := encodeTransferArgs transfer
-  match JAVM.initProgram serviceCode args with
-  | none => acct
-  | some (prog, regs, mem) =>
-    let result := JAVM.runProgram prog 0 regs mem (Int64.ofUInt64 transfer.gas)
-    match result.exitReason with
-    | .halt =>
-      -- On-transfer completed successfully; credit the transfer payload
-      { acct with econ := @EconModel.creditTransfer JarConfig.EconType JarConfig.TransferType _ acct.econ transfer.payload }
-    | _ =>
-      -- Panic/OOG/fault: still credit the payload but no side-effects
-      { acct with econ := @EconModel.creditTransfer JarConfig.EconType JarConfig.TransferType _ acct.econ transfer.payload }
+-- On-transfer (Ψ_T) is retired: current graypaper exposes exactly two logical
+-- entry points (refine and accumulate), and deferred transfers are integrated
+-- as accumulate *inputs* (`AccumulationInput.transfer`), not a separate
+-- invocation. The former `onTransfer`/`encodeTransferArgs` were dead code with
+-- zero call sites and have been removed.
 
 -- ============================================================================
 -- §17 — Auditing (off-chain, left opaque)

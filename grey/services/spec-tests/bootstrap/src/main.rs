@@ -14,14 +14,22 @@
 mod service {
     use core::arch::global_asm;
 
-    // Single entrypoint. φ[7]=op. Both are no-ops.
-    // Load a distinguishing constant so the blob hash differs from minimal.
+    // Two GP entry points, selected by the transpiler's jump prologue:
+    // `_start` (IC 0 = refine) and `accumulate` (IC 5). Both are no-ops that
+    // REPLY immediately. A distinguishing constant in `_start` makes the blob
+    // hash differ from `minimal`.
     global_asm!(
         ".global _start",
         ".type _start, @function",
         "_start:",
         "li t0, 0x42", // distinguish from minimal blob
         "li t0, 0",    // ecalli(0) = REPLY (IPC slot 0)
+        "ecall",
+        "unimp", // trap if resumed
+        ".global accumulate",
+        ".type accumulate, @function",
+        "accumulate:",
+        "li t0, 0", // ecalli(0) = REPLY (IPC slot 0)
         "ecall",
         "unimp", // trap if resumed
     );

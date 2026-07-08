@@ -10,6 +10,7 @@
 //!   memory_pages: u32       total Untyped budget
 //!   cap_count: u8           number of initial capabilities
 //!   invoke_cap: u8          cap_index of CODE cap to execute first
+//!   stack_top: u32          initial stack pointer (host-owned SP, GP init)
 //!   args_cap: u8            cap_index of DATA cap for arguments (0xFF = none)
 //!
 //! Capabilities[cap_count]:
@@ -34,8 +35,9 @@ use crate::cap::Access;
 /// JAR magic: 'J','A','R', 0x02.
 pub const JAR_MAGIC: u32 = u32::from_le_bytes([b'J', b'A', b'R', 0x02]);
 
-/// Header size: magic(4) + memory_pages(4) + cap_count(1) + invoke_cap(1) = 10.
-const HEADER_SIZE: usize = 10;
+/// Header size: magic(4) + memory_pages(4) + cap_count(1) + invoke_cap(1)
+///   + stack_top(4) = 14.
+const HEADER_SIZE: usize = 14;
 
 /// Per-cap entry size: cap_index(1) + cap_type(1) + base_page(4) + page_count(4)
 ///   + init_access(1) + data_offset(4) + data_len(4) = 19.
@@ -77,6 +79,12 @@ pub struct ProgramHeader {
     pub cap_count: u8,
     /// Cap index of the CODE cap to execute first.
     pub invoke_cap: u8,
+    /// Initial stack pointer (byte address of the top of the stack region).
+    ///
+    /// GP standard program initialization makes the host own SP: the kernel
+    /// sets `φ[1] = stack_top` at init rather than the blob setting it in a
+    /// preamble. The stack occupies `[0, stack_top)` and grows down.
+    pub stack_top: u32,
 }
 
 /// Parsed JAR blob.
@@ -129,6 +137,7 @@ pub fn parse_blob(blob: &[u8]) -> Option<ParsedBlob<'_>> {
     let memory_pages = read_u32_le(blob, &mut offset)?;
     let cap_count = read_u8(blob, &mut offset)?;
     let invoke_cap = read_u8(blob, &mut offset)?;
+    let stack_top = read_u32_le(blob, &mut offset)?;
 
     // Capability entries
     let entries_size = cap_count as usize * CAP_ENTRY_SIZE;
@@ -185,6 +194,7 @@ pub fn parse_blob(blob: &[u8]) -> Option<ParsedBlob<'_>> {
             memory_pages,
             cap_count,
             invoke_cap,
+            stack_top,
         },
         caps,
         data_section,
@@ -293,13 +303,18 @@ pub fn build_simple_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec
         data_offset: 0,
         data_len: code_data.len() as u32,
     }];
-    build_blob(4, 64, &caps, &code_data)
+    // No stack DATA cap in a minimal blob → SP starts at 0 (stack unused).
+    build_blob(4, 64, 0, &caps, &code_data)
 }
 
 /// Build a JAR blob from components.
+///
+/// `stack_top` is the initial stack pointer the kernel installs into `φ[1]`
+/// (host-owned SP). Pass `0` for blobs that carry no stack DATA cap.
 pub fn build_blob(
     memory_pages: u32,
     invoke_cap: u8,
+    stack_top: u32,
     caps: &[CapManifestEntry],
     data_section: &[u8],
 ) -> Vec<u8> {
@@ -308,11 +323,12 @@ pub fn build_blob(
     let mut blob = vec![0u8; total_size];
     let mut offset = 0;
 
-    // Header (10 bytes: magic + memory_pages + cap_count + invoke_cap)
+    // Header (14 bytes: magic + memory_pages + cap_count + invoke_cap + stack_top)
     write_u32_le(&mut blob, &mut offset, JAR_MAGIC);
     write_u32_le(&mut blob, &mut offset, memory_pages);
     write_u8(&mut blob, &mut offset, cap_count);
     write_u8(&mut blob, &mut offset, invoke_cap);
+    write_u32_le(&mut blob, &mut offset, stack_top);
 
     // Cap entries
     for cap in caps {
@@ -401,12 +417,13 @@ mod tests {
             },
         ];
 
-        let blob = build_blob(10, 64, &caps, &data_section);
+        let blob = build_blob(10, 64, 4096, &caps, &data_section);
         let parsed = parse_blob(&blob).expect("parse failed");
 
         assert_eq!(parsed.header.memory_pages, 10);
         assert_eq!(parsed.header.cap_count, 3);
         assert_eq!(parsed.header.invoke_cap, 64);
+        assert_eq!(parsed.header.stack_top, 4096);
         assert_eq!(parsed.caps.len(), 3);
 
         // CODE cap
@@ -436,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_bad_magic() {
-        let blob = build_blob(10, 64, &[], &[]);
+        let blob = build_blob(10, 64, 0, &[], &[]);
         let mut bad = blob.clone();
         bad[3] = 0x99; // corrupt version byte
         assert!(parse_blob(&bad).is_none());
@@ -448,7 +465,7 @@ mod tests {
         assert!(parse_blob(&[0; 5]).is_none());
 
         // Header says 1 cap but blob is too short
-        let blob = build_blob(10, 64, &[], &[]);
+        let blob = build_blob(10, 64, 0, &[], &[]);
         let mut bad = blob;
         bad[8] = 1; // cap_count = 1 but no cap entries follow
         assert!(parse_blob(&bad).is_none());
@@ -465,19 +482,19 @@ mod tests {
             data_offset: 0,
             data_len: 100, // references 100 bytes but data section is empty
         }];
-        let blob = build_blob(10, 64, &caps, &[]);
+        let blob = build_blob(10, 64, 0, &caps, &[]);
         assert!(parse_blob(&blob).is_none());
     }
 
     #[test]
     fn test_no_args_cap() {
-        let blob = build_blob(5, 64, &[], &[]);
+        let blob = build_blob(5, 64, 0, &[], &[]);
         let _parsed = parse_blob(&blob).unwrap();
     }
 
     #[test]
     fn test_empty_manifest() {
-        let blob = build_blob(0, 0, &[], &[]);
+        let blob = build_blob(0, 0, 0, &[], &[]);
         let parsed = parse_blob(&blob).unwrap();
         assert_eq!(parsed.caps.len(), 0);
         assert_eq!(parsed.data_section.len(), 0);

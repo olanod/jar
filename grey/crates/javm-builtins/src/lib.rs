@@ -74,7 +74,8 @@ macro_rules! javm_entry {
         core::arch::global_asm!(
             ".global _start",
             "_start:",
-            // a0=φ[7]=op, a1=φ[8]=args_base, a2=φ[9]=args_len — passed directly
+            // GP register ABI: a0=φ[7]=args address, a1=φ[8]=args length —
+            // passed straight through to the entry function.
             concat!("call ", stringify!($fn_name)),
             // REPLY to kernel via IPC slot 0
             "li t0, 0",

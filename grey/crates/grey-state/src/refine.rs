@@ -5,7 +5,7 @@
 //! 2. Ψ_R (refine): execute each work item's refinement code
 //! 3. Assemble a WorkReport from the results
 
-use crate::pvm_backend::PvmInstance;
+use crate::pvm_backend::{ENTRY_IC_REFINE, PvmInstance};
 use grey_types::config::Config;
 use grey_types::constants::GAS_IS_AUTHORIZED;
 use grey_types::work::*;
@@ -96,8 +96,8 @@ pub fn invoke_is_authorized(
     args.extend_from_slice(authorization);
     args.extend_from_slice(work_package_encoding);
 
-    let mut pvm =
-        PvmInstance::initialize(code_blob, &args, gas_limit).ok_or(RefineError::PvmInitFailed)?;
+    let mut pvm = PvmInstance::initialize(code_blob, &args, gas_limit, ENTRY_IC_REFINE)
+        .ok_or(RefineError::PvmInitFailed)?;
 
     let initial_gas = pvm.gas();
 
@@ -151,10 +151,11 @@ pub fn invoke_refine(
     _import_data: &[Vec<u8>],
     _lookup_ctx: Option<&dyn RefineContext>,
 ) -> RefineResult {
-    let mut pvm = match PvmInstance::initialize(code_blob, &item.payload, item.gas_limit) {
-        Some(p) => p,
-        None => return error_refine_result(item, WorkResult::BadCode, 0),
-    };
+    let mut pvm =
+        match PvmInstance::initialize(code_blob, &item.payload, item.gas_limit, ENTRY_IC_REFINE) {
+            Some(p) => p,
+            None => return error_refine_result(item, WorkResult::BadCode, 0),
+        };
 
     let initial_gas = pvm.gas();
     let exported_segments: Vec<Vec<u8>> = Vec::new();

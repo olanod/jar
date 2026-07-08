@@ -27,6 +27,7 @@ extern void    jar_ffi_blake2b(const uint8_t* data, size_t len, uint8_t* out);
 extern void    jar_ffi_keccak256(const uint8_t* data, size_t len, uint8_t* out);
 extern uint8_t jar_ffi_ed25519_verify(const uint8_t* key, const uint8_t* msg, size_t msg_len, const uint8_t* sig);
 extern void    jar_ffi_ed25519_sign(const uint8_t* secret, size_t secret_len, const uint8_t* msg, size_t msg_len, uint8_t* out);
+extern void    jar_ffi_ed25519_public_from_seed(const uint8_t* seed, uint8_t* out);
 extern uint8_t jar_ffi_bandersnatch_verify(const uint8_t* key, const uint8_t* ctx, size_t ctx_len, const uint8_t* msg, size_t msg_len, const uint8_t* sig);
 extern void    jar_ffi_bandersnatch_sign(const uint8_t* secret, size_t secret_len, const uint8_t* ctx, size_t ctx_len, const uint8_t* msg, size_t msg_len, uint8_t* out);
 extern uint8_t jar_ffi_bandersnatch_output(const uint8_t* sig, uint8_t* out);

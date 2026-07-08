@@ -812,7 +812,7 @@ pub fn grey_fib_recur_blob() -> Vec<u8> {
         data_offset: 0,
         data_len: code_data.len() as u32,
     }];
-    build_blob(0, 32, &caps, &code_data)
+    build_blob(0, 32, 0, &caps, &code_data)
 }
 
 /// Run the fib_recur benchmark with a specific backend.
