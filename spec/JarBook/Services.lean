@@ -49,11 +49,9 @@ from a work package.
 
 {docstring Jar.Services.AccumulationInput}
 
-# On-Transfer
-
-Invoked when a deferred transfer arrives at a service during accumulation.
-
-{docstring Jar.Services.onTransfer}
+Deferred transfers are integrated as accumulation inputs
+(`AccumulationInput.transfer`) rather than through a separate on-transfer
+entry point, matching current graypaper (Ψ_T removed).
 
 # Auditing
 

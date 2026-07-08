@@ -112,7 +112,11 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     //
     // IC 0 → refine body = the ELF entry point (e_entry / _start).
     ctx.emit_jump(elf.entry_vaddr);
-    debug_assert_eq!(ctx.code.len(), 5, "refine jump must occupy IC 0..5");
+    // Hard assert (not debug): the accumulate entry MUST begin at IC 5, so the
+    // refine jump has to occupy exactly bytes 0..5. This is a consensus-visible
+    // GP layout invariant — a one-time cost per link, kept in release builds so
+    // a future change to the jump encoding can't silently misplace IC 5.
+    assert_eq!(ctx.code.len(), 5, "refine jump must occupy IC 0..5");
     // IC 5 → accumulate body = exported `accumulate` symbol, or a trap for a
     // refine-only blob (an accumulate invocation must fail loud, not fall
     // through into the refine body).
