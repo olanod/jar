@@ -159,3 +159,30 @@ fn disputes_extrinsic_roundtrip() {
         b
     });
 }
+
+#[test]
+fn header_roundtrip() {
+    // header_0 carries an epoch marker (V validator pairs); header_1 a tickets
+    // marker (E tickets) — both param-dependent.
+    for stem in ["header_0", "header_1"] {
+        roundtrip_both_cfg(stem, gp::decode_header, |h| {
+            let mut b = Vec::new();
+            gp::encode_header(h, &mut b);
+            b
+        });
+    }
+}
+
+#[test]
+fn extrinsic_roundtrip() {
+    roundtrip_both_cfg("extrinsic", gp::decode_extrinsic, |e| {
+        let mut b = Vec::new();
+        gp::encode_extrinsic(e, &mut b);
+        b
+    });
+}
+
+#[test]
+fn block_roundtrip() {
+    roundtrip_both_cfg("block", gp::decode_block, gp::encode_block);
+}

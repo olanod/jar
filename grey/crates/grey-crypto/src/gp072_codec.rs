@@ -15,12 +15,14 @@
 
 use grey_types::config::Config;
 use grey_types::header::{
-    Assurance, Culprit, DisputesExtrinsic, Fault, Guarantee, Judgment, TicketProof, Verdict,
+    Assurance, Block, Culprit, DisputesExtrinsic, EpochMarker, Extrinsic, Fault, Guarantee, Header,
+    Judgment, Ticket, TicketProof, UnsignedHeader, Verdict,
 };
 use grey_types::work::{
     AvailabilitySpec, ImportSegment, RefinementContext, WorkDigest, WorkItem, WorkPackage,
     WorkReport, WorkResult,
 };
+use grey_types::{BandersnatchPublicKey, BandersnatchSignature};
 use grey_types::{Ed25519PublicKey, Ed25519Signature, Hash};
 
 /// Fixed length of a Bandersnatch ring-VRF ticket proof (bytes).
@@ -107,6 +109,28 @@ impl<'a> Reader<'a> {
 
     fn ed25519_key(&mut self) -> Result<Ed25519PublicKey, DecodeError> {
         Ok(Ed25519PublicKey(self.array32()?))
+    }
+
+    fn bandersnatch_key(&mut self) -> Result<BandersnatchPublicKey, DecodeError> {
+        Ok(BandersnatchPublicKey(self.array32()?))
+    }
+
+    fn bandersnatch_sig(&mut self) -> Result<BandersnatchSignature, DecodeError> {
+        let mut a = [0u8; 96];
+        a.copy_from_slice(self.take(96)?);
+        Ok(BandersnatchSignature(a))
+    }
+
+    /// An optional value, GP eq (C.6): `0` = none, `1 ⌢ 𝓔(x)` = some.
+    fn option<T>(
+        &mut self,
+        each: impl FnOnce(&mut Self) -> Result<T, DecodeError>,
+    ) -> Result<Option<T>, DecodeError> {
+        match self.u8()? {
+            0 => Ok(None),
+            1 => Ok(Some(each(self)?)),
+            d => Err(DecodeError::BadDiscriminant(d)),
+        }
     }
 
     fn bool(&mut self) -> Result<bool, DecodeError> {
@@ -594,6 +618,135 @@ pub fn encode_assurances(a: &[Assurance], buf: &mut Vec<u8>) {
 
 pub fn decode_assurances(r: &mut Reader, cfg: &Config) -> Result<Vec<Assurance>, DecodeError> {
     r.count_prefixed(|r| decode_assurance(r, cfg))
+}
+
+// --- Header, Extrinsic, Block (GP §C.4 / C.16 / C.25) -----------------------
+
+/// Option encoder, GP eq (C.6): `0` = none, `1 ⌢ 𝓔(x)` = some.
+fn encode_option<T>(opt: &Option<T>, buf: &mut Vec<u8>, each: impl FnOnce(&T, &mut Vec<u8>)) {
+    match opt {
+        None => buf.push(0),
+        Some(x) => {
+            buf.push(1);
+            each(x, buf);
+        }
+    }
+}
+
+/// Ticket: `id(32) ⌢ attempt(u8)`.
+fn encode_ticket(t: &Ticket, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&t.id.0);
+    buf.push(t.attempt);
+}
+
+fn decode_ticket(r: &mut Reader) -> Result<Ticket, DecodeError> {
+    Ok(Ticket {
+        id: r.hash()?,
+        attempt: r.u8()?,
+    })
+}
+
+/// EpochMarker: `entropy(32) ⌢ entropy_prev(32) ⌢ validators`. The validator
+/// list is a fixed-count array (no prefix), one entry per validator; decode
+/// takes the count from the Config.
+pub fn encode_epoch_marker(em: &EpochMarker, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&em.entropy.0);
+    buf.extend_from_slice(&em.entropy_previous.0);
+    for (bk, ek) in &em.validators {
+        buf.extend_from_slice(&bk.0);
+        buf.extend_from_slice(&ek.0);
+    }
+}
+
+pub fn decode_epoch_marker(r: &mut Reader, cfg: &Config) -> Result<EpochMarker, DecodeError> {
+    Ok(EpochMarker {
+        entropy: r.hash()?,
+        entropy_previous: r.hash()?,
+        validators: r.fixed_array(cfg.validators_count as usize, |r| {
+            Ok((r.bandersnatch_key()?, r.ed25519_key()?))
+        })?,
+    })
+}
+
+/// Header, GP eq (C.25): unsigned header ⌢ seal. The tickets marker, when
+/// present, is a fixed-count array of `epoch_length` tickets (no prefix).
+pub fn encode_header(h: &Header, buf: &mut Vec<u8>) {
+    let u = &h.data;
+    buf.extend_from_slice(&u.parent_hash.0);
+    buf.extend_from_slice(&u.state_root.0);
+    buf.extend_from_slice(&u.extrinsic_hash.0);
+    encode_fixed(4, u.timeslot as u64, buf);
+    encode_option(&u.epoch_marker, buf, encode_epoch_marker);
+    encode_option(&u.tickets_marker, buf, |ts, b| {
+        for t in ts {
+            encode_ticket(t, b);
+        }
+    });
+    encode_fixed(2, u.author_index as u64, buf);
+    buf.extend_from_slice(&u.vrf_signature.0);
+    encode_count_prefixed(&u.offenders_marker, buf, |k, b| b.extend_from_slice(&k.0));
+    buf.extend_from_slice(&h.seal.0);
+}
+
+pub fn decode_header(r: &mut Reader, cfg: &Config) -> Result<Header, DecodeError> {
+    let parent_hash = r.hash()?;
+    let state_root = r.hash()?;
+    let extrinsic_hash = r.hash()?;
+    let timeslot = r.fixed(4)? as u32;
+    let epoch_marker = r.option(|r| decode_epoch_marker(r, cfg))?;
+    let tickets_marker = r.option(|r| r.fixed_array(cfg.epoch_length as usize, decode_ticket))?;
+    let author_index = r.fixed(2)? as u16;
+    let vrf_signature = r.bandersnatch_sig()?;
+    let offenders_marker = r.count_prefixed(|r| r.ed25519_key())?;
+    let seal = r.bandersnatch_sig()?;
+    Ok(Header {
+        data: UnsignedHeader {
+            parent_hash,
+            state_root,
+            extrinsic_hash,
+            timeslot,
+            epoch_marker,
+            tickets_marker,
+            author_index,
+            vrf_signature,
+            offenders_marker,
+        },
+        seal,
+    })
+}
+
+/// Extrinsic, GP §C.4: tickets ⌢ preimages ⌢ guarantees ⌢ assurances ⌢ disputes.
+pub fn encode_extrinsic(e: &Extrinsic, buf: &mut Vec<u8>) {
+    encode_tickets(&e.tickets, buf);
+    encode_preimages(&e.preimages, buf);
+    encode_guarantees(&e.guarantees, buf);
+    encode_assurances(&e.assurances, buf);
+    encode_disputes(&e.disputes, buf);
+}
+
+pub fn decode_extrinsic(r: &mut Reader, cfg: &Config) -> Result<Extrinsic, DecodeError> {
+    Ok(Extrinsic {
+        tickets: decode_tickets(r)?,
+        preimages: decode_preimages(r)?,
+        guarantees: decode_guarantees(r)?,
+        assurances: decode_assurances(r, cfg)?,
+        disputes: decode_disputes(r, cfg)?,
+    })
+}
+
+/// Block, GP eq (C.16): header ⌢ extrinsic.
+pub fn encode_block(b: &Block) -> Vec<u8> {
+    let mut buf = Vec::new();
+    encode_header(&b.header, &mut buf);
+    encode_extrinsic(&b.extrinsic, &mut buf);
+    buf
+}
+
+pub fn decode_block(r: &mut Reader, cfg: &Config) -> Result<Block, DecodeError> {
+    Ok(Block {
+        header: decode_header(r, cfg)?,
+        extrinsic: decode_extrinsic(r, cfg)?,
+    })
 }
 
 /// Decode a full byte slice with `decode`, requiring all bytes to be consumed.
