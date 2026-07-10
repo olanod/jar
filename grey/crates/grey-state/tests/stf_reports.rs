@@ -74,8 +74,19 @@ fn parse_service_stats(v: &serde_json::Value) -> ServiceStats {
 }
 
 fn run_reports_test(dir: &str, stem: &str) {
-    let json = common::load_jar_test(dir, stem);
-    let path = format!("{dir}/{stem}");
+    run_reports_test_variant(dir, stem, "jar1");
+}
+
+/// Run a reports STF test vector for a specific variant. Reports is
+/// param-dependent (core_count, epoch_length, rotation_period feed the
+/// core-assignment shuffle and bounds checks), so gp072_tiny must run with
+/// Config::tiny(). gp072_full shares full params with jar1 but is genuinely
+/// new coverage — the jar1 fixtures are largely degenerate bad_signature
+/// cases, so gp072_full's `ok` vectors first exercise the signature-success
+/// and report-hash paths.
+fn run_reports_test_variant(dir: &str, stem: &str, variant: &str) {
+    let json = common::load_jar_test_variant(dir, stem, variant);
+    let path = format!("{dir}/{stem}.{variant}");
 
     let input_json = &json["input"];
     let pre = &json["pre_state"];
@@ -191,7 +202,7 @@ fn run_reports_test(dir: &str, stem: &str) {
         services_statistics: services_statistics.clone(),
     };
 
-    let config = Config::full();
+    let config = common::config_for_variant(variant);
     let result = process_reports(
         &config,
         &mut state,
@@ -587,3 +598,8 @@ stf_test!(
 );
 
 discover_all_test!(DIR, run_reports_test);
+// gp072_tiny/full for reports are NOT enabled yet: report_hash is computed
+// over grey's jar1-format scale encoding of WorkReport, but the gp072
+// guarantee signatures are over the GP (varnat) encoding, so every valid
+// signature fails to verify. Enabling reports gp072 is blocked on a
+// GP-native codec (shared with the codec .bin conformance vectors).
