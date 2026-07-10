@@ -201,6 +201,43 @@ impl InvocationKernel {
         Self::new_inner(blob, args, gas, backend, isa_mode, None)
     }
 
+    /// Create a kernel from a GP **standard program** blob (the graypaper
+    /// v0.7.2 format the `gp072_*` vectors use), the parallel init path to the
+    /// native `JAR\x02` manifest.
+    ///
+    /// The blob is parsed by [`crate::spi`], translated to an equivalent
+    /// manifest, and loaded through [`Self::new_inner`] under the
+    /// graypaper-strict ISA ([`crate::IsaMode::Conformance`]): host calls are
+    /// `ecalli`, and the JAR capability surface (`Ecall`) is rejected. The GP
+    /// argument registers `φ[7]`/`φ[8]` are then installed unconditionally, per
+    /// GP eq A.43 (the manifest args convention only sets them for non-empty
+    /// arguments).
+    pub fn new_standard(
+        blob: &[u8],
+        args: &[u8],
+        gas: u64,
+        backend: crate::backend::PvmBackend,
+    ) -> Result<Self, KernelError> {
+        let prog = crate::spi::parse_standard_program(blob).ok_or(KernelError::InvalidBlob)?;
+        let layout = prog.layout(args).ok_or(KernelError::InvalidBlob)?;
+        let manifest = crate::spi::to_manifest_blob(&prog, args).ok_or(KernelError::InvalidBlob)?;
+        // The args bytes are carried as the manifest's argument DATA cap, so
+        // pass no IPC args to `new_inner` (it would otherwise re-derive φ[7]).
+        let mut kernel = Self::new_inner(
+            &manifest,
+            &[],
+            gas,
+            backend,
+            crate::IsaMode::Conformance,
+            None,
+        )?;
+        let vm = kernel.vm_arena.vm_mut(0);
+        vm.set_reg(1, layout.registers[1]); // φ[1] = SP (stack top)
+        vm.set_reg(7, layout.registers[7]); // φ[7] = argument base
+        vm.set_reg(8, layout.registers[8]); // φ[8] = argument length
+        Ok(kernel)
+    }
+
     fn new_inner(
         blob: &[u8],
         _args: &[u8],
@@ -3566,5 +3603,121 @@ mod tests {
 
         let k2 = InvocationKernel::new_warm(&blob, &[], 100_000, &flat_mem, hb, ht, None).unwrap();
         assert_eq!(k2.code_caps.len(), 1);
+    }
+
+    // === GP standard-program (SPI) init path =================================
+
+    /// Wrap raw code + a memory profile in a bare GP standard-program blob
+    /// (no metadata prefix). Sizes are kept small so every length nat is a
+    /// single byte; `ro`/`rw` are placed verbatim.
+    fn build_standard_program(
+        ro: &[u8],
+        rw: &[u8],
+        heap_pages: u16,
+        stack_size: u32,
+        code: &[u8],
+        bitmask: &[u8],
+    ) -> Vec<u8> {
+        assert!(code.len() < 128, "test code must fit a 1-byte nat");
+        // Code sub-blob, compact deblob: E(|j|=0) ‖ z=1 ‖ E(|c|) ‖ code ‖ bitmask.
+        let mut cb = vec![0u8, 1u8, code.len() as u8];
+        cb.extend_from_slice(code);
+        let mut packed = vec![0u8; code.len().div_ceil(8)];
+        for (i, &b) in bitmask.iter().enumerate() {
+            if b != 0 {
+                packed[i / 8] |= 1 << (i % 8);
+            }
+        }
+        cb.extend_from_slice(&packed);
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&(ro.len() as u32).to_le_bytes()[..3]); // E₃(|o|)
+        blob.extend_from_slice(&(rw.len() as u32).to_le_bytes()[..3]); // E₃(|w|)
+        blob.extend_from_slice(&heap_pages.to_le_bytes()); // E₂(z)
+        blob.extend_from_slice(&stack_size.to_le_bytes()[..3]); // E₃(s)
+        blob.extend_from_slice(ro);
+        blob.extend_from_slice(rw);
+        blob.extend_from_slice(&(cb.len() as u32).to_le_bytes()); // E₄(|c|)
+        blob.extend_from_slice(&cb);
+        blob
+    }
+
+    fn run_standard(blob: &[u8], args: &[u8], backend: crate::backend::PvmBackend) -> KernelResult {
+        let mut kernel = InvocationKernel::new_standard(blob, args, 1_000_000, backend).unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+        kernel.run()
+    }
+
+    const SPI_BACKENDS: [crate::backend::PvmBackend; 2] = [
+        crate::backend::PvmBackend::ForceInterpreter,
+        crate::backend::PvmBackend::ForceRecompiler,
+    ];
+
+    // Standard-program memory landmarks for stack_size == one page.
+    const SPI_STACK_TOP: u64 = (1u64 << 32) - 2 * (1 << 16) - (1 << 24);
+    const SPI_ARG_BASE: u64 = (1u64 << 32) - (1 << 16) - (1 << 24);
+    const SPI_RO_BASE: u64 = 1 << 16;
+
+    #[test]
+    fn spi_standard_program_halts() {
+        // JumpInd RA, 0 → φ[0] (halt address) → halt.
+        let code = [50u8, 0, 0, 0, 0, 0];
+        let bitmask = [1u8, 0, 0, 0, 0, 0];
+        let blob = build_standard_program(&[], &[], 0, 4096, &code, &bitmask);
+        for be in SPI_BACKENDS {
+            assert!(
+                matches!(run_standard(&blob, &[], be), KernelResult::Halt),
+                "a trivial standard program must load and halt on {be:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn spi_standard_sets_gp_registers() {
+        let code = [50u8, 0, 0, 0, 0, 0];
+        let bitmask = [1u8, 0, 0, 0, 0, 0];
+        let blob = build_standard_program(&[], &[], 0, 4096, &code, &bitmask);
+        let args = [0xABu8; 5];
+        let kernel = InvocationKernel::new_standard(
+            &blob,
+            &args,
+            1_000_000,
+            crate::backend::PvmBackend::ForceInterpreter,
+        )
+        .unwrap();
+        let vm = kernel.vm_arena.vm(0);
+        assert_eq!(vm.reg(0), crate::PVM_HALT_ADDR, "φ[0] = RA (halt)");
+        assert_eq!(vm.reg(1), SPI_STACK_TOP, "φ[1] = SP (stack top)");
+        assert_eq!(vm.reg(7), SPI_ARG_BASE, "φ[7] = argument base");
+        assert_eq!(vm.reg(8), args.len() as u64, "φ[8] = argument length");
+    }
+
+    #[test]
+    fn spi_standard_maps_stack_writable() {
+        // Store into the base of the stack page; a correctly mapped writable
+        // stack halts, an unmapped/read-only one faults.
+        let stack_bottom = (SPI_STACK_TOP - 4096) as u32;
+        let (code, bitmask) = store_at_program(stack_bottom);
+        let blob = build_standard_program(&[], &[], 0, 4096, &code, &bitmask);
+        for be in SPI_BACKENDS {
+            assert!(
+                matches!(run_standard(&blob, &[], be), KernelResult::Halt),
+                "the stack region must be mapped writable at its GP address on {be:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn spi_standard_maps_ro_readable() {
+        // Load from the read-only region; a correct mapping halts.
+        let ro = [0x11u8, 0x22, 0x33, 0x44];
+        let (code, bitmask) = load_at_program(SPI_RO_BASE as u32);
+        let blob = build_standard_program(&ro, &[], 0, 4096, &code, &bitmask);
+        for be in SPI_BACKENDS {
+            assert!(
+                matches!(run_standard(&blob, &[], be), KernelResult::Halt),
+                "the read-only region must be mapped readable at Z_Z on {be:?}"
+            );
+        }
     }
 }

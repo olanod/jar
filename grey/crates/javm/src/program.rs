@@ -269,12 +269,13 @@ pub(crate) fn unpack_bitmask(packed: &[u8], code_len: usize) -> Vec<u8> {
     bitmask
 }
 
-/// Build a minimal JAR blob with a single CODE cap from raw components.
-/// Useful for tests — no DATA caps, small memory budget.
-pub fn build_simple_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<u8> {
-    use crate::cap::Access;
-
-    // Build code sub-blob: jump_len(4) + entry_size(1) + code_len(4) + jt + code + packed_bitmask
+/// Encode a CODE cap's data section (the sub-blob `parse_code_blob` reads):
+/// `jump_len(4) ‖ entry_size(1) ‖ code_len(4) ‖ jump_table ‖ code ‖ packed_bitmask`.
+///
+/// This is grey's native fixed-width code-blob encoding. It is variant-neutral:
+/// the CODE cap is internal to javm, so a GP standard program's deblobbed code
+/// is re-encoded through here regardless of the wire format it arrived in.
+pub(crate) fn encode_code_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<u8> {
     let entry_size = if jump_table.is_empty() { 1u8 } else { 4u8 };
     let mut code_data = Vec::new();
     code_data.extend_from_slice(&(jump_table.len() as u32).to_le_bytes());
@@ -284,7 +285,6 @@ pub fn build_simple_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec
         code_data.extend_from_slice(&jt_entry.to_le_bytes()[..entry_size as usize]);
     }
     code_data.extend_from_slice(code);
-    // Pack bitmask
     let packed_len = code.len().div_ceil(8);
     let mut packed = vec![0u8; packed_len];
     for (i, &b) in bitmask.iter().enumerate() {
@@ -293,7 +293,15 @@ pub fn build_simple_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec
         }
     }
     code_data.extend_from_slice(&packed);
+    code_data
+}
 
+/// Build a minimal JAR blob with a single CODE cap from raw components.
+/// Useful for tests — no DATA caps, small memory budget.
+pub fn build_simple_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<u8> {
+    use crate::cap::Access;
+
+    let code_data = encode_code_blob(code, bitmask, jump_table);
     let caps = vec![CapManifestEntry {
         cap_index: 64,
         cap_type: CapEntryType::Code,

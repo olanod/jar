@@ -21,8 +21,20 @@
 
 use alloc::vec::Vec;
 
-use crate::program::{ParsedCodeBlob, unpack_bitmask};
+use crate::cap::Access;
+use crate::program::{
+    CapEntryType, CapManifestEntry, ParsedCodeBlob, build_blob, encode_code_blob, unpack_bitmask,
+};
 use crate::{PVM_HALT_ADDR, PVM_INIT_INPUT_SIZE, PVM_PAGE_SIZE, PVM_ZONE_SIZE};
+
+/// Cap-table slot for the standard program's CODE cap.
+pub(crate) const SPI_CODE_SLOT: u8 = 64;
+/// Cap-table slots for the read-only, read-write, stack, and argument regions.
+/// These sit above the protocol caps (1..=28) and below UNTYPED (254).
+const SPI_RO_SLOT: u8 = 65;
+const SPI_RW_SLOT: u8 = 66;
+const SPI_STACK_SLOT: u8 = 67;
+const SPI_ARGS_SLOT: u8 = 68;
 
 /// `Z_P` — PVM page size (2¹²).
 const Z_P: u64 = PVM_PAGE_SIZE as u64;
@@ -325,6 +337,85 @@ impl StandardProgram {
             registers,
         })
     }
+}
+
+/// Translate a parsed standard program into an equivalent `JAR\x02` manifest
+/// blob, so the existing capability-model kernel init can load it unchanged.
+///
+/// The GP flat-memory regions become DATA caps at their standard-program
+/// addresses: read-only data at `Z_Z`, read-write + heap after a zone gap,
+/// the stack just below the argument zone, and the arguments in the top input
+/// zone. The deblobbed code becomes a CODE cap. Empty regions are omitted.
+///
+/// The manifest carries the layout's stack top so the kernel installs `φ[1]`;
+/// the caller is responsible for the GP argument registers `φ[7]`/`φ[8]`,
+/// which the JAR args convention does not reproduce for empty arguments.
+///
+/// Returns `None` if the layout does not fit the address space.
+pub(crate) fn to_manifest_blob(prog: &StandardProgram, args: &[u8]) -> Option<Vec<u8>> {
+    let layout = prog.layout(args)?;
+    let code_data = encode_code_blob(&prog.code.code, &prog.code.bitmask, &prog.code.jump_table);
+
+    // Data section: code sub-blob, then the ro / rw / args init bytes.
+    let mut data_section = Vec::new();
+    data_section.extend_from_slice(&code_data);
+    let ro_off = data_section.len() as u32;
+    data_section.extend_from_slice(&prog.ro_data);
+    let rw_off = data_section.len() as u32;
+    data_section.extend_from_slice(&prog.rw_data);
+    let args_off = data_section.len() as u32;
+    data_section.extend_from_slice(args);
+
+    let base_page = |addr: u64| (addr / Z_P) as u32;
+    let page_count = |size: u64| (size / Z_P) as u32;
+
+    let mut caps = alloc::vec![CapManifestEntry {
+        cap_index: SPI_CODE_SLOT,
+        cap_type: CapEntryType::Code,
+        base_page: 0,
+        page_count: 0,
+        init_access: Access::RO,
+        data_offset: 0,
+        data_len: code_data.len() as u32,
+    }];
+
+    let mut push_region = |slot: u8, region: SpiRegion, data_off: u32, data_len: u32| {
+        if region.size == 0 {
+            return;
+        }
+        caps.push(CapManifestEntry {
+            cap_index: slot,
+            cap_type: CapEntryType::Data,
+            base_page: base_page(region.base),
+            page_count: page_count(region.size),
+            init_access: if region.writable {
+                Access::RW
+            } else {
+                Access::RO
+            },
+            data_offset: data_off,
+            data_len,
+        });
+    };
+
+    push_region(SPI_RO_SLOT, layout.ro, ro_off, prog.ro_data.len() as u32);
+    push_region(SPI_RW_SLOT, layout.rw, rw_off, prog.rw_data.len() as u32);
+    push_region(SPI_STACK_SLOT, layout.stack, 0, 0);
+    push_region(SPI_ARGS_SLOT, layout.args, args_off, args.len() as u32);
+
+    let memory_pages: u32 = caps
+        .iter()
+        .filter(|c| c.cap_type == CapEntryType::Data)
+        .map(|c| c.page_count)
+        .sum();
+
+    Some(build_blob(
+        memory_pages,
+        SPI_CODE_SLOT,
+        layout.registers[1] as u32,
+        &caps,
+        &data_section,
+    ))
 }
 
 #[cfg(test)]
