@@ -53,10 +53,18 @@ fn recent_blocks_from_json(json: &serde_json::Value) -> RecentBlocks {
     }
 }
 
-/// Run a single history STF test vector.
+/// Run a single history STF test vector (jar1 variant).
 fn run_history_test(dir: &str, stem: &str) {
-    let json = common::load_jar_test(dir, stem);
-    let path = format!("{dir}/{stem}");
+    run_history_test_variant(dir, stem, "jar1");
+}
+
+/// Run a single history STF test vector for a specific variant. History is
+/// param-independent (it reads only RECENT_HISTORY_SIZE = 8, which is 8 in
+/// every variant), so the same transition validates jar1, gp072_tiny, and
+/// gp072_full without a config.
+fn run_history_test_variant(dir: &str, stem: &str, variant: &str) {
+    let json = common::load_jar_test_variant(dir, stem, variant);
+    let path = format!("{dir}/{stem}.{variant}");
 
     let input_json = &json["input"];
     let pre = &json["pre_state"]["beta"];
@@ -160,3 +168,15 @@ stf_test!(
 );
 
 discover_all_test!(DIR, run_history_test);
+discover_all_variant_test!(
+    discover_all_gp072_tiny,
+    DIR,
+    run_history_test_variant,
+    "gp072_tiny"
+);
+discover_all_variant_test!(
+    discover_all_gp072_full,
+    DIR,
+    run_history_test_variant,
+    "gp072_full"
+);

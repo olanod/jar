@@ -419,7 +419,14 @@ pub fn parse_extrinsic(v: &serde_json::Value) -> Extrinsic {
 /// and `{stem}.output.gp072_tiny.json` (containing `{output, post_state}`).
 /// Returns a Value with all four keys at top level, matching the W3F single-file format.
 pub fn load_jar_test(dir: &str, stem: &str) -> serde_json::Value {
-    let variant = "jar1";
+    load_jar_test_variant(dir, stem, "jar1")
+}
+
+/// Load a JAR split-format test vector pair for a specific variant
+/// (`jar1`, `gp072_tiny`, `gp072_full`) into a merged JSON value.
+/// See [`load_jar_test`] for the format; this threads the variant through the
+/// `{stem}.input.{variant}.json` / `.output.{variant}.json` paths.
+pub fn load_jar_test_variant(dir: &str, stem: &str, variant: &str) -> serde_json::Value {
     let input_path = format!("{dir}/{stem}.input.{variant}.json");
     let output_path = format!("{dir}/{stem}.output.{variant}.json");
 
@@ -494,6 +501,28 @@ macro_rules! discover_all_test {
             assert!(!stems.is_empty(), "no test vectors found in {}", $dir);
             for stem in &stems {
                 $runner($dir, stem);
+            }
+        }
+    };
+}
+
+/// Discover and run every vector for a given variant through a variant-aware
+/// runner `fn($dir, $stem, $variant)`. Generates a `discover_all_$variant`
+/// test. Use one invocation per variant (jar1 / gp072_tiny / gp072_full).
+#[macro_export]
+macro_rules! discover_all_variant_test {
+    ($name:ident, $dir:expr, $runner:path, $variant:expr) => {
+        #[test]
+        fn $name() {
+            let stems = common::discover_test_stems_variant($dir, $variant);
+            assert!(
+                !stems.is_empty(),
+                "no {} test vectors found in {}",
+                $variant,
+                $dir
+            );
+            for stem in &stems {
+                $runner($dir, stem, $variant);
             }
         }
     };
