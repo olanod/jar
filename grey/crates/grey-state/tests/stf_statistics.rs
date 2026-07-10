@@ -12,10 +12,19 @@ fn validator_record_from_json(json: &serde_json::Value) -> ValidatorRecord {
     serde_json::from_value(json.clone()).expect("failed to parse ValidatorRecord")
 }
 
-/// Run a single statistics STF test vector.
+/// Run a single statistics STF test vector (jar1 variant).
 fn run_statistics_test(dir: &str, stem: &str) {
-    let json = common::load_jar_test(dir, stem);
-    let path = format!("{dir}/{stem}");
+    run_statistics_test_variant(dir, stem, "jar1");
+}
+
+/// Run a single statistics STF test vector for a specific variant. The only
+/// param that affects the compared output (vals_curr/last_stats) is
+/// epoch_length, via the epoch-rotation branch — so gp072_tiny MUST run with
+/// Config::tiny() (E=12), else the epoch-change vector's boundary at slot
+/// 123456 is missed under E=600.
+fn run_statistics_test_variant(dir: &str, stem: &str, variant: &str) {
+    let json = common::load_jar_test_variant(dir, stem, variant);
+    let path = format!("{dir}/{stem}.{variant}");
 
     let input = &json["input"];
     let pre = &json["pre_state"];
@@ -48,8 +57,8 @@ fn run_statistics_test(dir: &str, stem: &str) {
         service_stats: BTreeMap::new(),
     };
 
-    // Apply transition using tiny config
-    let config = grey_types::config::Config::full();
+    // Apply transition using the variant's config (epoch_length differs).
+    let config = common::config_for_variant(variant);
     let incoming_reports: Vec<&grey_types::work::WorkReport> =
         extrinsic.guarantees.iter().map(|g| &g.report).collect();
     statistics::update_statistics(
@@ -109,3 +118,15 @@ stf_test!(
 );
 
 discover_all_test!(DIR, run_statistics_test);
+discover_all_variant_test!(
+    discover_all_gp072_tiny,
+    DIR,
+    run_statistics_test_variant,
+    "gp072_tiny"
+);
+discover_all_variant_test!(
+    discover_all_gp072_full,
+    DIR,
+    run_statistics_test_variant,
+    "gp072_full"
+);

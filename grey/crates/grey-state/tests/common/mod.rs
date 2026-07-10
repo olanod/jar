@@ -449,6 +449,15 @@ pub fn load_jar_test_variant(dir: &str, stem: &str, variant: &str) -> serde_json
     input_json
 }
 
+/// The protocol [`Config`] a variant runs under. `gp072_tiny` uses the small
+/// test params; `gp072_full` and `jar1` share the full params.
+pub fn config_for_variant(variant: &str) -> grey_types::config::Config {
+    match variant {
+        "gp072_tiny" => grey_types::config::Config::tiny(),
+        _ => grey_types::config::Config::full(),
+    }
+}
+
 /// Parse a ValidatorKey from a JSON value.
 pub fn parse_validator(v: &serde_json::Value) -> ValidatorKey {
     let bandersnatch = bandersnatch_from_hex(v["bandersnatch"].as_str().unwrap());
