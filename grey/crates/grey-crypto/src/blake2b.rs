@@ -16,6 +16,14 @@ pub fn report_hash(report: &WorkReport) -> Hash {
     blake2b_256(&scale::Encode::encode(report))
 }
 
+/// Work-report hash under the graypaper (gp072) wire format. gp072 guarantee
+/// signatures are taken over this hash; grey's jar1 [`report_hash`] uses a
+/// different (fixed-width) encoding, so the two differ for any report with
+/// variable-length fields. Used for gp072 conformance.
+pub fn report_hash_gp072(report: &WorkReport) -> Hash {
+    blake2b_256(&crate::gp072_codec::encode_work_report(report))
+}
+
 /// Build an assurance signing message: X_A ⌢ H(parent_hash ⌢ bitfield).
 ///
 /// Used for signing and verifying availability assurances (Section 11).

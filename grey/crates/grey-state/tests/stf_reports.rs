@@ -10,7 +10,6 @@ use grey_state::reports::{
     AvailAssignment, CoreStats, GuaranteeInput, RecentBlockEntry, ReportsState, ServiceInfo,
     ServiceStats, process_reports,
 };
-use grey_types::config::Config;
 use grey_types::validator::ValidatorKey;
 use grey_types::{Ed25519PublicKey, Hash, ServiceId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -598,8 +597,15 @@ stf_test!(
 );
 
 discover_all_test!(DIR, run_reports_test);
-// gp072_tiny/full for reports are NOT enabled yet: report_hash is computed
-// over grey's jar1-format scale encoding of WorkReport, but the gp072
-// guarantee signatures are over the GP (varnat) encoding, so every valid
-// signature fails to verify. Enabling reports gp072 is blocked on a
-// GP-native codec (shared with the codec .bin conformance vectors).
+discover_all_variant_test!(
+    discover_all_gp072_tiny,
+    DIR,
+    run_reports_test_variant,
+    "gp072_tiny"
+);
+discover_all_variant_test!(
+    discover_all_gp072_full,
+    DIR,
+    run_reports_test_variant,
+    "gp072_full"
+);

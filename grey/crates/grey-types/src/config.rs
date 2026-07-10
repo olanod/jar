@@ -37,6 +37,12 @@ pub struct Config {
     pub gas_total_accumulation: u64,
     /// G_R: Gas allocated for refine.
     pub gas_refine: u64,
+    /// Use the graypaper (gp072) wire format where it is observable in a
+    /// state transition — currently the WorkReport encoding that guarantee
+    /// signatures are taken over. `false` (the default) uses grey's jar1
+    /// codec. This is orthogonal to the tiny/full param split: gp072_full and
+    /// jar1 share params but differ in codec.
+    pub gp072_codec: bool,
 }
 
 impl Config {
@@ -58,6 +64,7 @@ impl Config {
             erasure_pieces_per_segment: 6,
             gas_total_accumulation: 3_500_000_000,
             gas_refine: 5_000_000_000,
+            gp072_codec: false,
         }
     }
 
@@ -79,6 +86,7 @@ impl Config {
             erasure_pieces_per_segment: 1_026,
             gas_total_accumulation: 20_000_000,
             gas_refine: 1_000_000_000,
+            gp072_codec: false,
         }
     }
 

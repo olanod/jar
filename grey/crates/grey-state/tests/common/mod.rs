@@ -452,10 +452,13 @@ pub fn load_jar_test_variant(dir: &str, stem: &str, variant: &str) -> serde_json
 /// The protocol [`Config`] a variant runs under. `gp072_tiny` uses the small
 /// test params; `gp072_full` and `jar1` share the full params.
 pub fn config_for_variant(variant: &str) -> grey_types::config::Config {
-    match variant {
+    let mut config = match variant {
         "gp072_tiny" => grey_types::config::Config::tiny(),
         _ => grey_types::config::Config::full(),
-    }
+    };
+    // gp072 variants sign guarantees over the GP-encoded report hash.
+    config.gp072_codec = variant.starts_with("gp072");
+    config
 }
 
 /// Parse a ValidatorKey from a JSON value.
