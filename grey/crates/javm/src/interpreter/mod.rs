@@ -62,6 +62,11 @@ pub struct Interpreter {
     /// PROT_READ / PROT_READ|WRITE): reads need at least RO, writes need RW,
     /// and any access touching an unmapped page faults.
     page_perms: Vec<u8>,
+    /// True when every page in `page_perms` is [`PERM_RW`]. In that (common)
+    /// case a mapped-page bounds check subsumes the permission check, so the
+    /// accessors skip the per-page table load — recovering the flat-buffer
+    /// speed for programs with no read-only or unmapped pages.
+    perms_uniform_rw: bool,
     /// ı: Instruction counter (program counter), indexes into code bytes.
     pub pc: u32,
     /// c: Instruction bytecode.
@@ -117,6 +122,7 @@ impl Interpreter {
         let pages = flat_mem.len().div_ceil(crate::PVM_PAGE_SIZE as usize);
         flat_mem.resize(pages * crate::PVM_PAGE_SIZE as usize, 0);
         let page_perms = vec![PERM_RW; pages];
+        let perms_uniform_rw = true;
         // Basic blocks and gas blocks share the same boundaries:
         // {0} ∪ post-terminator.
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
@@ -134,6 +140,7 @@ impl Interpreter {
             registers,
             flat_mem,
             page_perms,
+            perms_uniform_rw,
             pc: 0,
             code,
             bitmask,
@@ -222,47 +229,73 @@ impl Interpreter {
             self.flat_mem.len(),
             "page_perms must cover flat_mem exactly"
         );
+        self.perms_uniform_rw = perms.iter().all(|&p| p == PERM_RW);
         self.page_perms = perms;
     }
 
     // --- Flat memory accessors ---
     //
     // Direct pointer access gated by the per-page permission table. The hot
-    // path costs two shifts, two byte loads, and a compare on top of the
-    // unaligned MOV; the page-index bounds check doubles as the byte-range
-    // check because `flat_mem` is exactly `page_perms.len()` pages long.
-    // Reads need at least PERM_RO on every touched page, writes need
+    // path is a single page-index shift, one bounds check, one byte load, and
+    // one compare on top of the unaligned MOV; the page-index bounds check
+    // doubles as the byte-range check because `flat_mem` is exactly
+    // `page_perms.len()` pages long. A wide access that straddles a page
+    // boundary (`off + n > 4096`, rare) checks the second page behind a cold
+    // branch. Reads need at least PERM_RO on every touched page, writes need
     // PERM_RW; failures report the offending page base (GP page faults are
     // page-granular, matching the Lean oracle and the JIT's SIGSEGV path).
+
+    /// True when the last byte of `[a, a+n)` is on a mapped page (bounds
+    /// check). Under uniform-RW memory this subsumes both readable/writable.
+    #[inline(always)]
+    fn in_bounds(&self, a: usize, n: usize) -> bool {
+        (a + n - 1) >> 12 < self.page_perms.len()
+    }
 
     /// True when `[a, a+n)` is entirely on readable pages.
     #[inline(always)]
     fn readable(&self, a: usize, n: usize) -> bool {
-        let first = a >> 12;
-        let last = (a + n - 1) >> 12;
-        if last >= self.page_perms.len() {
+        if self.perms_uniform_rw {
+            return self.in_bounds(a, n);
+        }
+        let page = a >> 12;
+        if page >= self.page_perms.len() {
             return false;
         }
-        // SAFETY: first <= last < page_perms.len().
-        unsafe {
-            *self.page_perms.get_unchecked(first) != PERM_NONE
-                && *self.page_perms.get_unchecked(last) != PERM_NONE
+        // SAFETY: page < page_perms.len().
+        if unsafe { *self.page_perms.get_unchecked(page) } == PERM_NONE {
+            return false;
         }
+        if (a & 0xFFF) + n > crate::PVM_PAGE_SIZE as usize {
+            let last = page + 1;
+            // SAFETY: bounds-checked before the load.
+            return last < self.page_perms.len()
+                && unsafe { *self.page_perms.get_unchecked(last) } != PERM_NONE;
+        }
+        true
     }
 
     /// True when `[a, a+n)` is entirely on writable pages.
     #[inline(always)]
     fn writable(&self, a: usize, n: usize) -> bool {
-        let first = a >> 12;
-        let last = (a + n - 1) >> 12;
-        if last >= self.page_perms.len() {
+        if self.perms_uniform_rw {
+            return self.in_bounds(a, n);
+        }
+        let page = a >> 12;
+        if page >= self.page_perms.len() {
             return false;
         }
-        // SAFETY: first <= last < page_perms.len().
-        unsafe {
-            *self.page_perms.get_unchecked(first) == PERM_RW
-                && *self.page_perms.get_unchecked(last) == PERM_RW
+        // SAFETY: page < page_perms.len().
+        if unsafe { *self.page_perms.get_unchecked(page) } != PERM_RW {
+            return false;
         }
+        if (a & 0xFFF) + n > crate::PVM_PAGE_SIZE as usize {
+            let last = page + 1;
+            // SAFETY: bounds-checked before the load.
+            return last < self.page_perms.len()
+                && unsafe { *self.page_perms.get_unchecked(last) } == PERM_RW;
+        }
+        true
     }
 
     /// Page base of the first page in `[a, a+n)` that fails the access
