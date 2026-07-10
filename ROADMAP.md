@@ -100,13 +100,28 @@ Gates are named after what turns green, not after effort spent.
   suites green on both backends, spec `make test` across all 3 variants,
   harness serial scenario green.
 
-**Phase 2 — the ratchet switched on (M)**
-- Parameterize grey's vector loaders on variant (they hardcode `jar1`);
-  turn on gp072 for the subsystems whose schemas already match: erasure
-  (passes today), reports, history, statistics, authorizations.
-- Wire the 60 gp072 codec `.bin` vectors against grey's codec (they have
-  no Rust consumer today; jar1's wire format has no binary vectors at all).
-- Gate: named subsystems green on `gp072_tiny` + `gp072_full`.
+**Phase 2 — the ratchet switched on (gate MET; codec .bin remaining)**
+- ✅ Parameterized grey's vector loaders on variant (`load_jar_test_variant`
+  + `discover_all_variant_test!` + `config_for_variant`); turned on gp072
+  for all named subsystems: erasure (already green via its own crate),
+  history, authorizations (param-independent), statistics (needs
+  `Config::tiny()` for the epoch-boundary vector), reports. Gate met:
+  every named subsystem green on `gp072_tiny` + `gp072_full`.
+- ✅ Reports was the hard one: `report_hash` was computed over grey's jar1
+  wire format, but gp072 guarantee signatures are over the graypaper
+  (varnat) encoding — and grey's jar1 reports fixtures are all degenerate
+  bad_signature cases, so the signature-verify path had never run. Added a
+  GP-native encoder for the WorkReport family (`grey_crypto::gp072_codec`,
+  encode_nat/GP C.1 + the work types) selected via a new `Config.gp072_codec`
+  flag; all 42 reports vectors now pass on both gp072 variants — first real
+  coverage of signature verify, the ok outputs, and every post-signature
+  error. The 42 passing signatures are cryptographic proof the GP encoder
+  is byte-exact vs the Lean oracle.
+- **Remaining:** wire the 60 gp072 codec `.bin` vectors. This needs the GP
+  (varnat) codec extended from the WorkReport family to the other 10 vector
+  types (block, header, extrinsics, disputes, tickets) plus a decode side
+  for round-trip conformance — a focused buildout on the encoder foundation
+  now in place. Shares the GP-codec lineage with Phase 3's GP SPI loader.
 
 **Phase 3 — blob format + PVM-level conformance (L)**
 - **GP SPI loader** in javm (the standard-program blob format + Y-function
