@@ -9,7 +9,109 @@
 //! `spec/Jar/Codec.lean` (encodeWorkReport / encodeWorkDigest / encodeAvailSpec
 //! / encodeRefinementContext / encodeWorkResult).
 
-use grey_types::work::{AvailabilitySpec, RefinementContext, WorkDigest, WorkReport, WorkResult};
+use grey_types::Hash;
+use grey_types::work::{
+    AvailabilitySpec, ImportSegment, RefinementContext, WorkDigest, WorkItem, WorkPackage,
+    WorkReport, WorkResult,
+};
+
+/// A GP-codec decode failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    /// Ran out of bytes.
+    Eof,
+    /// A discriminant byte was outside the valid range.
+    BadDiscriminant(u8),
+    /// Trailing bytes remained after decoding a top-level value.
+    Trailing(usize),
+}
+
+/// Cursor over a GP-encoded byte slice.
+pub struct Reader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
+        if self.pos + n > self.data.len() {
+            return Err(DecodeError::Eof);
+        }
+        let s = &self.data[self.pos..self.pos + n];
+        self.pos += n;
+        Ok(s)
+    }
+
+    fn u8(&mut self) -> Result<u8, DecodeError> {
+        Ok(self.take(1)?[0])
+    }
+
+    /// `l` little-endian bytes as a u64.
+    pub fn fixed(&mut self, l: usize) -> Result<u64, DecodeError> {
+        let bytes = self.take(l)?;
+        let mut v = 0u64;
+        for (i, &b) in bytes.iter().enumerate() {
+            v |= (b as u64) << (8 * i);
+        }
+        Ok(v)
+    }
+
+    /// Variable-length natural, inverse of [`encode_nat`] (GP C.1).
+    pub fn nat(&mut self) -> Result<u64, DecodeError> {
+        let header = self.u8()?;
+        // Length class l = number of leading 1 bits in the header.
+        let l = header.leading_ones() as usize;
+        if l == 0 {
+            return Ok(header as u64);
+        }
+        if l >= 8 {
+            // 0xFF prefix + 8 LE bytes.
+            return self.fixed(8);
+        }
+        // header low bits carry the top of x; l following bytes carry the rest.
+        let low = self.fixed(l)?;
+        let top = (header as u64) & ((1u64 << (8 - l)) - 1);
+        Ok(low | (top << (8 * l)))
+    }
+
+    pub fn hash(&mut self) -> Result<Hash, DecodeError> {
+        let bytes = self.take(32)?;
+        let mut h = [0u8; 32];
+        h.copy_from_slice(bytes);
+        Ok(Hash(h))
+    }
+
+    /// A varnat-length-prefixed byte blob.
+    pub fn length_prefixed(&mut self) -> Result<Vec<u8>, DecodeError> {
+        let n = self.nat()? as usize;
+        Ok(self.take(n)?.to_vec())
+    }
+
+    /// A varnat-count-prefixed array, decoding each element with `each`.
+    pub fn count_prefixed<T>(
+        &mut self,
+        mut each: impl FnMut(&mut Self) -> Result<T, DecodeError>,
+    ) -> Result<Vec<T>, DecodeError> {
+        let n = self.nat()? as usize;
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            out.push(each(self)?);
+        }
+        Ok(out)
+    }
+
+    fn finish(self) -> Result<(), DecodeError> {
+        if self.pos == self.data.len() {
+            Ok(())
+        } else {
+            Err(DecodeError::Trailing(self.data.len() - self.pos))
+        }
+    }
+}
 
 /// Variable-length natural encoding, GP eq (C.1). Encodes `x` into 1–9 bytes.
 pub fn encode_nat(x: u64, buf: &mut Vec<u8>) {
@@ -137,6 +239,159 @@ pub fn encode_work_report(wr: &WorkReport) -> Vec<u8> {
     buf
 }
 
+/// Encode an ImportSegment: `tree_root(32) ⌢ index(fixed2)`.
+fn encode_import_segment(seg: &ImportSegment, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&seg.hash.0);
+    encode_fixed(2, seg.index as u64, buf);
+}
+
+/// Encode a WorkItem, GP §C.4 (canonical JAM layout): service_id, code_hash,
+/// refine gas, accumulate gas, export_count (fixed2), payload
+/// (length-prefixed), imports (count-prefixed tree_root+index_f2), extrinsics
+/// (count-prefixed hash+len_f4).
+pub fn encode_work_item(item: &WorkItem, buf: &mut Vec<u8>) {
+    encode_fixed(4, item.service_id as u64, buf);
+    buf.extend_from_slice(&item.code_hash.0);
+    encode_fixed(8, item.gas_limit, buf);
+    encode_fixed(8, item.accumulate_gas_limit, buf);
+    encode_fixed(2, item.exports_count as u64, buf);
+    encode_length_prefixed(&item.payload, buf);
+    encode_count_prefixed(&item.imports, buf, encode_import_segment);
+    encode_count_prefixed(&item.extrinsics, buf, |(h, n), b| {
+        b.extend_from_slice(&h.0);
+        encode_fixed(4, *n as u64, b);
+    });
+}
+
+/// Encode a WorkPackage, GP §C.4 (canonical JAM layout): auth_code_host,
+/// auth_code_hash, context, authorization, authorizer_config, items.
+pub fn encode_work_package(wp: &WorkPackage) -> Vec<u8> {
+    let mut buf = Vec::new();
+    encode_fixed(4, wp.auth_code_host as u64, &mut buf);
+    buf.extend_from_slice(&wp.auth_code_hash.0);
+    encode_refinement_context(&wp.context, &mut buf);
+    encode_length_prefixed(&wp.authorization, &mut buf);
+    encode_length_prefixed(&wp.authorizer_config, &mut buf);
+    encode_count_prefixed(&wp.items, &mut buf, encode_work_item);
+    buf
+}
+
+// --- Decoders (inverses of the encoders above) ------------------------------
+
+pub fn decode_work_result(r: &mut Reader) -> Result<WorkResult, DecodeError> {
+    match r.u8()? {
+        0 => Ok(WorkResult::Ok(r.length_prefixed()?)),
+        1 => Ok(WorkResult::OutOfGas),
+        2 => Ok(WorkResult::Panic),
+        3 => Ok(WorkResult::BadExports),
+        4 => Ok(WorkResult::BadCode),
+        5 => Ok(WorkResult::CodeOversize),
+        d => Err(DecodeError::BadDiscriminant(d)),
+    }
+}
+
+pub fn decode_avail_spec(r: &mut Reader) -> Result<AvailabilitySpec, DecodeError> {
+    Ok(AvailabilitySpec {
+        package_hash: r.hash()?,
+        bundle_length: r.fixed(4)? as u32,
+        erasure_root: r.hash()?,
+        exports_root: r.hash()?,
+        exports_count: r.fixed(2)? as u16,
+        // Not on the GP wire; a round-trip re-encode never emits it.
+        erasure_shards: 0,
+    })
+}
+
+pub fn decode_refinement_context(r: &mut Reader) -> Result<RefinementContext, DecodeError> {
+    Ok(RefinementContext {
+        anchor: r.hash()?,
+        state_root: r.hash()?,
+        beefy_root: r.hash()?,
+        lookup_anchor: r.hash()?,
+        lookup_anchor_timeslot: r.fixed(4)? as u32,
+        prerequisites: r.count_prefixed(|r| r.hash())?,
+    })
+}
+
+pub fn decode_work_digest(r: &mut Reader) -> Result<WorkDigest, DecodeError> {
+    Ok(WorkDigest {
+        service_id: r.fixed(4)? as u32,
+        code_hash: r.hash()?,
+        payload_hash: r.hash()?,
+        accumulate_gas: r.fixed(8)?,
+        result: decode_work_result(r)?,
+        gas_used: r.nat()?,
+        imports_count: r.nat()? as u16,
+        extrinsics_count: r.nat()? as u16,
+        extrinsics_size: r.nat()? as u32,
+        exports_count: r.nat()? as u16,
+    })
+}
+
+pub fn decode_work_report(r: &mut Reader) -> Result<WorkReport, DecodeError> {
+    Ok(WorkReport {
+        package_spec: decode_avail_spec(r)?,
+        context: decode_refinement_context(r)?,
+        core_index: r.nat()? as u16,
+        authorizer_hash: r.hash()?,
+        auth_gas_used: r.nat()?,
+        auth_output: r.length_prefixed()?,
+        segment_root_lookup: r
+            .count_prefixed(|r| Ok((r.hash()?, r.hash()?)))?
+            .into_iter()
+            .collect(),
+        results: r.count_prefixed(decode_work_digest)?,
+    })
+}
+
+fn decode_import_segment(r: &mut Reader) -> Result<ImportSegment, DecodeError> {
+    Ok(ImportSegment {
+        hash: r.hash()?,
+        index: r.fixed(2)? as u16,
+    })
+}
+
+pub fn decode_work_item(r: &mut Reader) -> Result<WorkItem, DecodeError> {
+    Ok(WorkItem {
+        service_id: r.fixed(4)? as u32,
+        code_hash: r.hash()?,
+        gas_limit: r.fixed(8)?,
+        accumulate_gas_limit: r.fixed(8)?,
+        exports_count: r.fixed(2)? as u16,
+        payload: r.length_prefixed()?,
+        imports: r.count_prefixed(decode_import_segment)?,
+        extrinsics: r.count_prefixed(|r| Ok((r.hash()?, r.fixed(4)? as u32)))?,
+    })
+}
+
+pub fn decode_work_package(r: &mut Reader) -> Result<WorkPackage, DecodeError> {
+    let auth_code_host = r.fixed(4)? as u32;
+    let auth_code_hash = r.hash()?;
+    let context = decode_refinement_context(r)?;
+    let authorization = r.length_prefixed()?;
+    let authorizer_config = r.length_prefixed()?;
+    let items = r.count_prefixed(decode_work_item)?;
+    Ok(WorkPackage {
+        auth_code_host,
+        auth_code_hash,
+        context,
+        authorization,
+        authorizer_config,
+        items,
+    })
+}
+
+/// Decode a full byte slice with `decode`, requiring all bytes to be consumed.
+pub fn decode_all<T>(
+    data: &[u8],
+    decode: impl FnOnce(&mut Reader) -> Result<T, DecodeError>,
+) -> Result<T, DecodeError> {
+    let mut r = Reader::new(data);
+    let v = decode(&mut r)?;
+    r.finish()?;
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +415,30 @@ mod tests {
         b.clear();
         encode_nat(200, &mut b);
         assert_eq!(b, vec![0x80, 200]);
+    }
+
+    #[test]
+    fn nat_roundtrips() {
+        for x in [
+            0u64,
+            1,
+            42,
+            127,
+            128,
+            200,
+            255,
+            256,
+            16383,
+            16384,
+            1 << 20,
+            1 << 35,
+            u32::MAX as u64,
+            u64::MAX,
+        ] {
+            let mut b = Vec::new();
+            encode_nat(x, &mut b);
+            let mut r = Reader::new(&b);
+            assert_eq!(r.nat().unwrap(), x, "nat roundtrip failed for {x}");
+        }
     }
 }
