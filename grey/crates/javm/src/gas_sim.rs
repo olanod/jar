@@ -33,6 +33,13 @@ impl GasSimulator {
         }
     }
 
+    /// Test-only snapshot of the full simulator state, so two feed paths can
+    /// be checked for identical ROB effect (not just identical block cost).
+    #[cfg(test)]
+    pub fn state(&self) -> ([u32; 13], u32, u8, u32) {
+        (self.reg_done, self.cycle, self.decode_used, self.max_done)
+    }
+
     /// Fast path: feed an instruction using direct register indices instead of
     /// bitmasks. Avoids the shift+OR bitmask construction and trailing_zeros
     /// extraction loop. For typical 2-source, 1-dest instructions.

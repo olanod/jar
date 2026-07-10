@@ -133,6 +133,13 @@ pub enum Opcode {
     // A.5.12: Two registers + two immediates
     LoadImmJumpInd = 180,
 
+    /// Synthetic marker for an invalid opcode at an instruction-start
+    /// position. Never produced by `from_byte` (255 is not in the opcode
+    /// table) — only the interpreter's predecoder emits it, so the fast
+    /// execution loop panics at the invalid instruction exactly like the
+    /// step path and the JIT do, instead of silently skipping it.
+    Invalid = 255,
+
     // A.5.13: Three registers
     Add32 = 190,
     Sub32 = 191,

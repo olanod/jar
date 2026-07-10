@@ -166,11 +166,17 @@ unsafe extern "C" fn sigsegv_handler(
             }
         };
 
-        // Read the guest fault address from RDX (SCRATCH register).
-        let guest_addr = cx.uc_mcontext.gregs[libc::REG_RDX as usize] as u32;
+        // Guest fault address = faulting host address (si_addr) relative to
+        // the guest memory base, masked to the page base. si_addr identifies
+        // the actual faulting page — unlike RDX (the access's base address),
+        // which points at the previous page when an unaligned access
+        // straddles into a protected page. Page-granular fault addresses
+        // match the interpreter and the Lean oracle.
+        let ctx = &mut *state.ctx_ptr;
+        let fault_host = (*_siginfo).si_addr() as usize;
+        let guest_addr = (fault_host.wrapping_sub(ctx.flat_buf as usize) as u32) & !0xFFF;
 
         // Write trap info into JitContext.
-        let ctx = &mut *state.ctx_ptr;
         ctx.exit_reason = EXIT_PAGE_FAULT;
         ctx.exit_arg = guest_addr;
         ctx.pc = pvm_pc;

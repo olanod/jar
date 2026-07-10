@@ -43,14 +43,25 @@ pub struct DecodedInst {
 const _: () = assert!(core::mem::size_of::<DecodedInst>() == 40);
 
 /// PVM instance state (eq A.6).
+/// Page access levels for [`Interpreter::page_perms`].
+pub const PERM_NONE: u8 = 0;
+pub const PERM_RO: u8 = 1;
+pub const PERM_RW: u8 = 2;
+
 #[derive(Clone, Debug)]
 pub struct Interpreter {
     /// ϱ: Gas counter (remaining gas).
     pub gas: Gas,
     /// φ: 13 general-purpose 64-bit registers.
     pub registers: [u64; PVM_REGISTER_COUNT],
-    /// µ: Memory state (flat linear buffer).
+    /// µ: Memory state (flat linear buffer). Always a whole number of
+    /// 4 KiB pages; `page_perms` has exactly one entry per page.
     pub flat_mem: Vec<u8>,
+    /// Per-page access: [`PERM_NONE`] (unmapped), [`PERM_RO`], or [`PERM_RW`].
+    /// Mirrors the recompiler's hardware page protection (PROT_NONE /
+    /// PROT_READ / PROT_READ|WRITE): reads need at least RO, writes need RW,
+    /// and any access touching an unmapped page faults.
+    page_perms: Vec<u8>,
     /// ı: Instruction counter (program counter), indexes into code bytes.
     pub pc: u32,
     /// c: Instruction bytecode.
@@ -97,10 +108,15 @@ impl Interpreter {
         bitmask: Vec<u8>,
         jump_table: Vec<u32>,
         registers: [u64; PVM_REGISTER_COUNT],
-        flat_mem: Vec<u8>,
+        mut flat_mem: Vec<u8>,
         gas: Gas,
         mem_cycles: u8,
     ) -> Self {
+        // Whole-page memory with RW-everywhere default permissions; the
+        // kernel installs the real per-page map via `set_page_perms`.
+        let pages = flat_mem.len().div_ceil(crate::PVM_PAGE_SIZE as usize);
+        flat_mem.resize(pages * crate::PVM_PAGE_SIZE as usize, 0);
+        let page_perms = vec![PERM_RW; pages];
         // Basic blocks and gas blocks share the same boundaries:
         // {0} ∪ post-terminator.
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
@@ -117,6 +133,7 @@ impl Interpreter {
             gas,
             registers,
             flat_mem,
+            page_perms,
             pc: 0,
             code,
             bitmask,
@@ -196,76 +213,141 @@ impl Interpreter {
         )
     }
 
+    /// Install the per-page permission map. `perms` must have exactly one
+    /// entry per 4 KiB page of `flat_mem` — the accessors rely on the page
+    /// bounds check doubling as the byte-range check.
+    pub fn set_page_perms(&mut self, perms: Vec<u8>) {
+        assert_eq!(
+            perms.len() * crate::PVM_PAGE_SIZE as usize,
+            self.flat_mem.len(),
+            "page_perms must cover flat_mem exactly"
+        );
+        self.page_perms = perms;
+    }
+
     // --- Flat memory accessors ---
     //
-    // Use direct pointer access with a single bounds check for the hot path.
-    // On little-endian x86, read_unaligned/write_unaligned compile to single
-    // MOV instructions. The bounds check is a single comparison (no slice ops).
+    // Direct pointer access gated by the per-page permission table. The hot
+    // path costs two shifts, two byte loads, and a compare on top of the
+    // unaligned MOV; the page-index bounds check doubles as the byte-range
+    // check because `flat_mem` is exactly `page_perms.len()` pages long.
+    // Reads need at least PERM_RO on every touched page, writes need
+    // PERM_RW; failures report the offending page base (GP page faults are
+    // page-granular, matching the Lean oracle and the JIT's SIGSEGV path).
 
+    /// True when `[a, a+n)` is entirely on readable pages.
     #[inline(always)]
-    pub fn read_u8(&self, addr: u32) -> Option<u8> {
+    fn readable(&self, a: usize, n: usize) -> bool {
+        let first = a >> 12;
+        let last = (a + n - 1) >> 12;
+        if last >= self.page_perms.len() {
+            return false;
+        }
+        // SAFETY: first <= last < page_perms.len().
+        unsafe {
+            *self.page_perms.get_unchecked(first) != PERM_NONE
+                && *self.page_perms.get_unchecked(last) != PERM_NONE
+        }
+    }
+
+    /// True when `[a, a+n)` is entirely on writable pages.
+    #[inline(always)]
+    fn writable(&self, a: usize, n: usize) -> bool {
+        let first = a >> 12;
+        let last = (a + n - 1) >> 12;
+        if last >= self.page_perms.len() {
+            return false;
+        }
+        // SAFETY: first <= last < page_perms.len().
+        unsafe {
+            *self.page_perms.get_unchecked(first) == PERM_RW
+                && *self.page_perms.get_unchecked(last) == PERM_RW
+        }
+    }
+
+    /// Page base of the first page in `[a, a+n)` that fails the access
+    /// check. Only called after a failed access (cold path).
+    #[cold]
+    fn fault_page(&self, a: usize, n: usize, write: bool) -> u32 {
+        let ok = |p: usize| {
+            p < self.page_perms.len()
+                && if write {
+                    self.page_perms[p] == PERM_RW
+                } else {
+                    self.page_perms[p] != PERM_NONE
+                }
+        };
+        let first = a >> 12;
+        let page = if ok(first) { (a + n - 1) >> 12 } else { first };
+        ((page as u64) << 12) as u32
+    }
+
+    /// Read a byte; `Err` carries the faulting page base.
+    #[inline(always)]
+    pub fn read_u8(&self, addr: u32) -> Result<u8, u32> {
         let a = addr as usize;
-        if a < self.flat_mem.len() {
-            // SAFETY: a < flat_mem.len() is checked above.
-            Some(unsafe { *self.flat_mem.get_unchecked(a) })
+        if self.readable(a, 1) {
+            // SAFETY: readable() bounds-checks the page, and flat_mem covers
+            // every page in page_perms.
+            Ok(unsafe { *self.flat_mem.get_unchecked(a) })
         } else {
-            None
+            Err(self.fault_page(a, 1, false))
         }
     }
 
     #[inline(always)]
-    fn read_u16_le(&self, addr: u32) -> Option<u16> {
+    fn read_u16_le(&self, addr: u32) -> Result<u16, u32> {
         let a = addr as usize;
-        if a + 2 <= self.flat_mem.len() {
-            // SAFETY: a + 2 <= flat_mem.len() ensures the pointer is within bounds.
-            // read_unaligned handles unaligned addresses on x86.
-            Some(unsafe { self.flat_mem.as_ptr().add(a).cast::<u16>().read_unaligned() })
+        if self.readable(a, 2) {
+            // SAFETY: see read_u8; read_unaligned handles unaligned addresses.
+            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u16>().read_unaligned() })
         } else {
-            None
+            Err(self.fault_page(a, 2, false))
         }
     }
 
     #[inline(always)]
-    fn read_u32_le(&self, addr: u32) -> Option<u32> {
+    fn read_u32_le(&self, addr: u32) -> Result<u32, u32> {
         let a = addr as usize;
-        if a + 4 <= self.flat_mem.len() {
-            // SAFETY: a + 4 <= flat_mem.len() ensures the pointer is within bounds.
-            Some(unsafe { self.flat_mem.as_ptr().add(a).cast::<u32>().read_unaligned() })
+        if self.readable(a, 4) {
+            // SAFETY: see read_u8.
+            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u32>().read_unaligned() })
         } else {
-            None
+            Err(self.fault_page(a, 4, false))
         }
     }
 
     #[inline(always)]
-    fn read_u64_le(&self, addr: u32) -> Option<u64> {
+    fn read_u64_le(&self, addr: u32) -> Result<u64, u32> {
         let a = addr as usize;
-        if a + 8 <= self.flat_mem.len() {
-            // SAFETY: a + 8 <= flat_mem.len() ensures the pointer is within bounds.
-            Some(unsafe { self.flat_mem.as_ptr().add(a).cast::<u64>().read_unaligned() })
+        if self.readable(a, 8) {
+            // SAFETY: see read_u8.
+            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u64>().read_unaligned() })
         } else {
-            None
+            Err(self.fault_page(a, 8, false))
         }
     }
 
+    /// Write a byte; `Err` carries the faulting page base.
     #[inline(always)]
-    pub fn write_u8(&mut self, addr: u32, val: u8) -> bool {
+    pub fn write_u8(&mut self, addr: u32, val: u8) -> Result<(), u32> {
         let a = addr as usize;
-        if a < self.flat_mem.len() {
-            // SAFETY: a < flat_mem.len() is checked above.
+        if self.writable(a, 1) {
+            // SAFETY: writable() bounds-checks the page.
             unsafe {
                 *self.flat_mem.get_unchecked_mut(a) = val;
             }
-            true
+            Ok(())
         } else {
-            false
+            Err(self.fault_page(a, 1, true))
         }
     }
 
     #[inline(always)]
-    fn write_u16_le(&mut self, addr: u32, val: u16) -> bool {
+    fn write_u16_le(&mut self, addr: u32, val: u16) -> Result<(), u32> {
         let a = addr as usize;
-        if a + 2 <= self.flat_mem.len() {
-            // SAFETY: a + 2 <= flat_mem.len() ensures the pointer is within bounds.
+        if self.writable(a, 2) {
+            // SAFETY: see write_u8.
             unsafe {
                 self.flat_mem
                     .as_mut_ptr()
@@ -273,17 +355,17 @@ impl Interpreter {
                     .cast::<u16>()
                     .write_unaligned(val);
             }
-            true
+            Ok(())
         } else {
-            false
+            Err(self.fault_page(a, 2, true))
         }
     }
 
     #[inline(always)]
-    fn write_u32_le(&mut self, addr: u32, val: u32) -> bool {
+    fn write_u32_le(&mut self, addr: u32, val: u32) -> Result<(), u32> {
         let a = addr as usize;
-        if a + 4 <= self.flat_mem.len() {
-            // SAFETY: a + 4 <= flat_mem.len() ensures the pointer is within bounds.
+        if self.writable(a, 4) {
+            // SAFETY: see write_u8.
             unsafe {
                 self.flat_mem
                     .as_mut_ptr()
@@ -291,17 +373,17 @@ impl Interpreter {
                     .cast::<u32>()
                     .write_unaligned(val);
             }
-            true
+            Ok(())
         } else {
-            false
+            Err(self.fault_page(a, 4, true))
         }
     }
 
     #[inline(always)]
-    fn write_u64_le(&mut self, addr: u32, val: u64) -> bool {
+    fn write_u64_le(&mut self, addr: u32, val: u64) -> Result<(), u32> {
         let a = addr as usize;
-        if a + 8 <= self.flat_mem.len() {
-            // SAFETY: a + 8 <= flat_mem.len() ensures the pointer is within bounds.
+        if self.writable(a, 8) {
+            // SAFETY: see write_u8.
             unsafe {
                 self.flat_mem
                     .as_mut_ptr()
@@ -309,9 +391,9 @@ impl Interpreter {
                     .cast::<u64>()
                     .write_unaligned(val);
             }
-            true
+            Ok(())
         } else {
-            false
+            Err(self.fault_page(a, 8, true))
         }
     }
 
@@ -388,23 +470,20 @@ impl Interpreter {
         // macros expand to the same code as the hand-written variants.
         macro_rules! step_store {
             ($self:expr, $addr:expr, $write_fn:ident, $val:expr, $next_pc:expr) => {{
-                let a = $addr;
-                if $self.$write_fn(a, $val) {
-                    $self.pc = $next_pc;
-                } else {
-                    return Some(ExitReason::PageFault(a & !0xFFF));
+                match $self.$write_fn($addr, $val) {
+                    Ok(()) => $self.pc = $next_pc,
+                    Err(page) => return Some(ExitReason::PageFault(page)),
                 }
             }};
         }
         macro_rules! step_load {
             ($self:expr, $dst:expr, $addr:expr, $read_fn:ident, |$v:ident| $conv:expr, $next_pc:expr) => {{
-                let a = $addr;
-                match $self.$read_fn(a) {
-                    Some($v) => {
+                match $self.$read_fn($addr) {
+                    Ok($v) => {
                         $self.registers[$dst] = $conv;
                         $self.pc = $next_pc;
                     }
-                    None => return Some(ExitReason::PageFault(a & !0xFFF)),
+                    Err(page) => return Some(ExitReason::PageFault(page)),
                 }
             }};
         }
@@ -461,6 +540,10 @@ impl Interpreter {
 
         // Execute instruction inline
         match opcode {
+            // Never produced by from_byte — the step path rejects invalid
+            // opcodes above; this arm exists for match exhaustiveness.
+            Opcode::Invalid => return Some(ExitReason::Panic),
+
             // === A.5.1: No arguments ===
             Opcode::Trap => return Some(ExitReason::Trap),
             Opcode::Fallthrough | Opcode::Unlikely => {
@@ -1558,21 +1641,19 @@ impl Interpreter {
         // zero runtime overhead.
         macro_rules! do_store {
             ($self:expr, $exit:ident, $addr:expr, $write_fn:ident, $val:expr) => {{
-                let a = $addr;
-                if !$self.$write_fn(a, $val) {
-                    $exit = Some(ExitReason::PageFault(a & !0xFFF));
+                if let Err(page) = $self.$write_fn($addr, $val) {
+                    $exit = Some(ExitReason::PageFault(page));
                 }
             }};
         }
         macro_rules! do_load {
             ($self:expr, $exit:ident, $dst:expr, $addr:expr, $read_fn:ident, |$v:ident| $conv:expr) => {{
-                let a = $addr;
-                match $self.$read_fn(a) {
-                    Some($v) => {
+                match $self.$read_fn($addr) {
+                    Ok($v) => {
                         $self.registers[$dst] = $conv;
                     }
-                    None => {
-                        $exit = Some(ExitReason::PageFault(a & !0xFFF));
+                    Err(page) => {
+                        $exit = Some(ExitReason::PageFault(page));
                     }
                 }
             }};
@@ -1631,6 +1712,9 @@ impl Interpreter {
                     exit = Some(ExitReason::Trap);
                 }
                 Opcode::Fallthrough | Opcode::Unlikely => {}
+                Opcode::Invalid => {
+                    exit = Some(ExitReason::Panic);
+                }
                 Opcode::Ecall => {
                     // Jar extension — panics under GP conformance.
                     if self.isa_mode == crate::IsaMode::Conformance {
@@ -2476,11 +2560,13 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
             }
             j += 1;
         }
-        return 0;
+        // No instruction start within 25 bytes: skip caps at 24 (GP F_skip).
+        return 24;
     }
 
-    // Scalar fallback for near end of bitmask
-    let mut s = 0;
+    // Scalar fallback for near end of bitmask.
+    // No instruction start within 25 bytes → 24 (GP F_skip cap).
+    let mut s = 24;
     for j in 0..25 {
         let idx = start + j;
         let bit = if idx < bm_len { bitmask[idx] } else { 1 };
@@ -2542,7 +2628,8 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
         };
 
         let skip = {
-            let mut s = 0;
+            // No instruction start within 25 bytes → 24 (GP F_skip cap).
+            let mut s = 24;
             for j in 0..25 {
                 let idx = i + 1 + j;
                 let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
@@ -2609,23 +2696,20 @@ fn compute_block_gas_costs(
             in_block = true;
         }
 
-        // Extract raw register nibbles (same as codegen.rs)
+        // Extract raw register nibbles. Out-of-bounds bytes (a truncated
+        // instruction at end-of-code) read as 0 — matching the zeta
+        // zero-extension the decoder and the JIT compile loop use, so the
+        // gas model sees the same register operands that execution does.
+        // (0xFF here would clamp to register 12 via reg_bit, a spurious
+        // dependency that diverges from the recompiler.)
         let opcode_byte = code[pc];
-        let raw_ra = if pc + 1 < len {
-            code[pc + 1] & 0x0F
-        } else {
-            0xFF
-        };
+        let raw_ra = if pc + 1 < len { code[pc + 1] & 0x0F } else { 0 };
         let raw_rb = if pc + 1 < len {
             (code[pc + 1] >> 4) & 0x0F
         } else {
-            0xFF
+            0
         };
-        let raw_rd = if pc + 2 < len {
-            code[pc + 2] & 0x0F
-        } else {
-            0xFF
-        };
+        let raw_rd = if pc + 2 < len { code[pc + 2] & 0x0F } else { 0 };
 
         let fc = fast_cost_from_raw(
             opcode_byte,
@@ -2707,6 +2791,34 @@ fn predecode_instructions(
     while pc < len {
         #[allow(clippy::collapsible_if)] // let-chain requires Rust 2024
         if pc < bitmask.len() && bitmask[pc] == 1 {
+            if Opcode::from_byte(code[pc]).is_none() {
+                // Invalid opcode at an instruction start: emit a synthetic
+                // panic instruction. Sequential advance in the fast loop must
+                // execute (and panic at) this position — silently skipping it
+                // would diverge from the step path and the JIT.
+                let idx = insts.len() as u32;
+                pc_to_idx[pc] = idx;
+                let bb_gas_cost = if pc < gas_block_starts.len() && gas_block_starts[pc] {
+                    block_gas_costs[pc]
+                } else {
+                    0
+                };
+                insts.push(DecodedInst {
+                    opcode: Opcode::Invalid,
+                    ra: 0,
+                    rb: 0,
+                    rd: 0,
+                    imm1: 0,
+                    imm2: 0,
+                    pc: pc as u32,
+                    next_pc: pc as u32 + 1,
+                    next_idx: u32::MAX,
+                    target_idx: u32::MAX,
+                    bb_gas_cost,
+                });
+                pc += 1;
+                continue;
+            }
             if let Some(opcode) = Opcode::from_byte(code[pc]) {
                 let skip = skip_at(pc);
                 let next_pc = (pc + 1 + skip) as u32;
@@ -2737,6 +2849,31 @@ fn predecode_instructions(
                     bb_gas_cost,
                 });
 
+                // When the skip caps at 24 without reaching an instruction
+                // start, sequential flow lands mid-gap — GP panics there
+                // (the bitmask bit at the executed position must be set).
+                // Emit a panic stub so the fast loop's `idx + 1` advance
+                // executes it instead of silently jumping to the next
+                // decoded instruction.
+                let np = next_pc as usize;
+                if np < len && (np >= bitmask.len() || bitmask[np] != 1) {
+                    let idx = insts.len() as u32;
+                    pc_to_idx[np] = idx;
+                    insts.push(DecodedInst {
+                        opcode: Opcode::Invalid,
+                        ra: 0,
+                        rb: 0,
+                        rd: 0,
+                        imm1: 0,
+                        imm2: 0,
+                        pc: next_pc,
+                        next_pc: next_pc + 1,
+                        next_idx: u32::MAX,
+                        target_idx: u32::MAX,
+                        bb_gas_cost: 0,
+                    });
+                }
+
                 pc = next_pc as usize;
                 continue;
             }
@@ -2745,6 +2882,9 @@ fn predecode_instructions(
     }
 
     let sentinel_idx = insts.len() as u32;
+    // Re-entry at pc == len (e.g. resuming after a host call whose next_pc
+    // is the end of code) must land on the sentinel trap.
+    pc_to_idx[len] = sentinel_idx;
 
     // Add a sentinel instruction at the end (trap) so sequential advance past
     // the last instruction doesn't index out of bounds.
@@ -2870,9 +3010,11 @@ mod tests {
     #[test]
     fn test_empty_program() {
         let mut vm = simple_vm(vec![], 100);
-        // PC=0, code is empty, zeta(0)=0 which is trap
+        // PC=0 is already the end of code: the implicit trailing trap fires
+        // (GP: code beyond the end reads as opcode 0 = trap). Both backends
+        // agree — the JIT emits the same trailing trap block.
         let (exit, _) = vm.run();
-        assert_eq!(exit, ExitReason::Panic);
+        assert_eq!(exit, ExitReason::Trap);
     }
 
     #[test]

@@ -1736,6 +1736,28 @@ mod tests {
         assert_eq!(run_three_reg_op(203, u64::MAX, 2), u64::MAX / 2);
     }
 
+    /// Division hazards must not fault the JIT (raw idiv/div raises #DE on
+    /// these) — GP defines results the interpreter also produces.
+    #[test]
+    fn test_recompile_div_hazards() {
+        // Signed 64-bit MIN / -1 -> MIN (idiv overflow); MIN % -1 -> 0.
+        let min = i64::MIN as u64;
+        let neg1 = (-1i64) as u64;
+        assert_eq!(run_three_reg_op(204, min, neg1), min); // DivS64
+        assert_eq!(run_three_reg_op(206, min, neg1), 0); // RemS64
+        // Signed 32-bit MIN / -1 -> sign-extended MIN; MIN % -1 -> 0.
+        let min32 = (i32::MIN as i64) as u64;
+        assert_eq!(run_three_reg_op(194, min32, neg1), min32); // DivS32
+        assert_eq!(run_three_reg_op(196, min32, neg1), 0); // RemS32
+        // Signed X / -1 -> -X for ordinary X.
+        assert_eq!(run_three_reg_op(204, 100, neg1), (-100i64) as u64);
+        // 32-bit divisor whose LOW 32 bits are zero (high bits set) is a
+        // divide-by-zero for the 32-bit op -- must not fault div32.
+        assert_eq!(run_three_reg_op(193, 42, 1u64 << 32), u64::MAX); // DivU32
+        assert_eq!(run_three_reg_op(195, 42, 1u64 << 32), 42); // RemU32
+        assert_eq!(run_three_reg_op(194, 42, 1u64 << 32), u64::MAX); // DivS32
+    }
+
     #[test]
     fn test_recompile_div_s64() {
         assert_eq!(run_three_reg_op(204, 100, 7), 14);

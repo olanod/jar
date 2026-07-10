@@ -1025,7 +1025,7 @@ pub fn compute_block_gas_costs(code: &[u8], bitmask: &[u8]) -> Vec<u32> {
 // ============================================================================
 
 /// Compact instruction cost for the fast simulator.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FastCost {
     pub cycles: u8,
     pub decode_slots: u8,
@@ -1054,7 +1054,8 @@ fn reg_bit(r: u8) -> u16 {
 /// Works for both OneRegImmOffset and TwoRegOneOffset categories.
 fn extract_branch_target_raw(code: &[u8], bitmask: &[u8], pc: usize) -> usize {
     let skip = {
-        let mut s = 0;
+        // No instruction start within 25 bytes → 24 (GP F_skip cap).
+        let mut s = 24;
         for j in 0..25 {
             let idx = pc + 1 + j;
             if idx >= bitmask.len() || bitmask[idx] == 1 {
@@ -1128,7 +1129,10 @@ pub fn fast_cost_from_raw(
             is_terminator: true,
             is_move_reg: false,
         },
-        10 => FastCost {
+        // Ecall (3) and Ecalli (10): same cost shape. Ecall is a terminator
+        // (management-op / dynamic-CALL exit) — kept in sync with GAS_COST_LUT
+        // t[3] so the interpreter's block-gas computation matches the JIT.
+        3 | 10 => FastCost {
             cycles: 100,
             decode_slots: 4,
             exec_unit: EU_ALU,
@@ -1703,7 +1707,10 @@ pub fn fast_cost_from_decoded(
             is_terminator: true,
             is_move_reg: false,
         },
-        10 => FastCost {
+        // Ecall (3) and Ecalli (10): same cost shape. Ecall is a terminator
+        // (management-op / dynamic-CALL exit) — kept in sync with GAS_COST_LUT
+        // t[3] so the interpreter's block-gas computation matches the JIT.
+        3 | 10 => FastCost {
             cycles: 100,
             decode_slots: 4,
             exec_unit: EU_ALU,
@@ -2883,6 +2890,93 @@ pub fn gas_cost_for_block_fast(
 mod tests {
     use super::*;
     use crate::gas_sim::GasSimulator;
+
+    /// Every opcode must cost the same whether the gas is derived by the
+    /// interpreter's hand-written `fast_cost_from_raw` or the JIT's
+    /// `GAS_COST_LUT`-based `fast_cost_lut_regs`. The two are independent
+    /// implementations of the same model; any per-opcode disagreement is a
+    /// consensus bug (gas is consensus-visible), which the differential
+    /// fuzzer surfaces one instance at a time — this test finds them all.
+    #[test]
+    fn lut_matches_hand_table_for_every_opcode() {
+        let code = [0u8; 32];
+        let mut bitmask = [0u8; 32];
+        bitmask[0] = 1;
+        let mem_cycles = crate::gas_cost::DEFAULT_MEM_CYCLES;
+
+        // Register bytes to try: covers distinct regs, dst==src overlap, and
+        // ra==rb (shift/move overlap paths take different decode-slot counts).
+        let reg_bytes: [(u8, u8); 9] = [
+            (0, 0),
+            (0x21, 3),
+            (0x22, 2),
+            (0x11, 1),
+            (0x30, 0),
+            // High nibbles (>12) exercise the register-index clamp, which the
+            // two feed paths must apply identically.
+            (0xde, 0x07),
+            (0xed, 0x0e),
+            (0xff, 0x0f),
+            (0xcd, 0x0c),
+        ];
+
+        let mut mismatches = alloc::vec::Vec::new();
+        for opcode in 0u16..256 {
+            let opcode = opcode as u8;
+            let Some(op) = crate::instruction::Opcode::from_byte(opcode) else {
+                continue; // invalid opcodes are rejected before gas is charged
+            };
+            for (reg_byte1, reg_byte2) in reg_bytes {
+                let mut buf = code;
+                buf[0] = opcode;
+                buf[1] = reg_byte1;
+                buf[2] = reg_byte2;
+                let skip = crate::interpreter::skip_for_bitmask(&bitmask, 0);
+                let (ra, rb, rd) = (buf[1] & 0x0F, (buf[1] >> 4) & 0x0F, buf[2] & 0x0F);
+
+                // Compare the ACTUAL simulator cost of a single-instruction
+                // block through each backend's real feed path:
+                //   interpreter → fast_cost_from_raw → GasSimulator::feed
+                //   JIT (non-branch fast path) → feed_gas_direct → feed_direct
+                //   JIT (branch slow path)     → fast_cost_lut_regs → feed
+                let mut sim_i = GasSimulator::new();
+                sim_i.feed(&fast_cost_from_raw(
+                    opcode, ra, rb, rd, 0, &buf, &bitmask, mem_cycles,
+                ));
+                let interp = sim_i.flush_and_get_cost();
+
+                let mut sim_j = GasSimulator::new();
+                let (_, needs_full) = feed_gas_direct(opcode, ra, rb, rd, &mut sim_j, mem_cycles);
+                if needs_full {
+                    let args = crate::args::decode_args(&buf, 0, skip, op.category());
+                    sim_j.feed(&fast_cost_lut_regs(
+                        opcode, &args, 0, &buf, &bitmask, ra, rb, rd, mem_cycles,
+                    ));
+                }
+                let jit = sim_j.flush_and_get_cost();
+
+                // Compare the full ROB state, not just the lone-block cost:
+                // a per-register completion-time divergence only changes the
+                // block total once a LATER instruction depends on that
+                // register, which the fuzzer hits but a single-instruction
+                // cost comparison misses.
+                if interp != jit || sim_i.state() != sim_j.state() {
+                    mismatches.push((
+                        opcode,
+                        reg_byte1,
+                        reg_byte2,
+                        (interp, sim_i.state()),
+                        (jit, sim_j.state()),
+                    ));
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "gas cost divergence between interpreter (fast_cost_from_raw) and \
+             JIT (GAS_COST_LUT) for opcodes: {mismatches:#?}"
+        );
+    }
 
     /// Helper: compute gas cost for a single-block program using GasSimulator.
     fn block_cost(code: &[u8], bitmask: &[u8]) -> u32 {

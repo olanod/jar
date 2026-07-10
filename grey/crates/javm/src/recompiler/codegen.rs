@@ -298,15 +298,36 @@ impl Compiler {
         while pc < code.len() {
             self.asm.ensure_capacity(512);
 
+            // Not an instruction start: execution can only arrive here by
+            // falling through a skip capped at 24 into an argument-byte gap —
+            // GP panics (the bitmask bit at the executed position must be
+            // set). Emit a panic stub; charge no gas (the position is not a
+            // gas-block start on either backend).
+            if pc >= bitmask.len() || bitmask[pc] != 1 {
+                self.asm.bind_label(self.label_for_pc(pc as u32));
+                self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
+                self.emit_exit(EXIT_PANIC, 0);
+                // The gap swallows the post-terminator flag: the following
+                // real instruction is NOT a gas-block start (matching the
+                // interpreter's computation, which only marks post-terminator
+                // positions whose bitmask bit is set).
+                next_is_gas_start = false;
+                pc += 1;
+                continue;
+            }
+
             // SAFETY: pc < code_len is guaranteed by the loop condition.
             let raw_byte = unsafe { *code_ptr.add(pc) };
             let is_gas_start = next_is_gas_start;
             next_is_gas_start = false;
 
-            // Fast skip for Fallthrough/Unlikely: these produce zero native code
-            // but ARE terminators, so the next instruction starts a new gas block.
-            if raw_byte == 1 || raw_byte == 2 {
-                // Fallthrough=1, Unlikely=2
+            // Fast skip for Fallthrough (op 1): produces zero native code but
+            // IS a terminator, so the next instruction starts a new gas block.
+            // NOTE: Unlikely (op 2) is deliberately NOT handled here — it costs
+            // 40 cycles in the gas tables (vs Fallthrough's 2), so it goes
+            // through the normal path where feed_gas_direct reads the table.
+            // Lumping it here charged 2, diverging from the interpreter.
+            if raw_byte == 1 {
                 let skip = crate::interpreter::skip_for_bitmask(bitmask, pc);
                 if is_gas_start {
                     self.emit_gas_block_start(pc, &mut pending_gas, &mut gas_sim);
@@ -329,6 +350,20 @@ impl Compiler {
             let (opcode, category) = match crate::instruction::decode_opcode_fast(raw_byte) {
                 Some(oc) => oc,
                 None => {
+                    // An invalid opcode at a gas-block start must still open a
+                    // block here: emit_gas_block_start flushes the PREVIOUS
+                    // block's pending gas at this boundary (it also binds the
+                    // label). Skipping it let the previous block's gas keep
+                    // accumulating every following instruction's cost — a
+                    // consensus divergence from the interpreter, which ends
+                    // the block at this post-terminator position. When it is
+                    // NOT a gas-block start, just bind the label (a branch may
+                    // target it). Executing here panics on both backends.
+                    if is_gas_start {
+                        self.emit_gas_block_start(pc, &mut pending_gas, &mut gas_sim);
+                    } else {
+                        self.asm.bind_label(self.label_for_pc(pc as u32));
+                    }
                     self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
                     self.emit_exit(EXIT_PANIC, 0);
                     pc += 1;
@@ -597,6 +632,19 @@ impl Compiler {
             self.asm.patch_i32(patch_offset, cost as i32);
             self.oog_stubs.push((stub_label, block_pc, cost));
         }
+
+        // Implicit trailing trap: running past the last instruction is a
+        // trap (GP: code beyond the end reads as opcode 0). Without this,
+        // fall-through off the last instruction would run straight into the
+        // exit sequences emitted next (misreported as OOG). Mirrors the
+        // interpreter's sentinel: charge 1 gas, trap at pc = code_len.
+        let end_label = self.label_for_pc(code_len as u32);
+        self.asm.bind_label(end_label);
+        self.gas_block_pcs.push(code_len as u32);
+        self.asm.mov_store32_imm(CTX, CTX_PC, code_len as i32);
+        self.asm.sub_mem64_imm32(CTX, CTX_GAS, 1);
+        self.asm.jcc_label(Cc::S, self.oog_label); // CTX_PC already stored
+        self.emit_exit(EXIT_TRAP, 0);
 
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
@@ -1251,6 +1299,13 @@ impl Compiler {
     #[inline(always)]
     fn compile_instruction(&mut self, opcode: Opcode, args: &Args, pc: u32, next_pc: u32) {
         match opcode {
+            // Never produced by decode_opcode_fast — invalid opcodes compile
+            // to an inline panic above; this arm exists for exhaustiveness.
+            Opcode::Invalid => {
+                self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
+                self.emit_exit(EXIT_PANIC, 0);
+            }
+
             // === A.5.1: No arguments ===
             Opcode::Trap => {
                 self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
@@ -2717,10 +2772,17 @@ impl Compiler {
             let b_reg = REG_MAP[*rb];
             let d_reg = REG_MAP[*rd];
 
-            // Check divisor == 0
-            self.asm.test_rr(b_reg, b_reg);
+            // Check divisor == 0. For 32-bit ops the division only uses the
+            // low 32 bits of the divisor, so the zero test must too — a
+            // divisor like 0x1_0000_0000 (low 32 = 0) otherwise passes a
+            // 64-bit test and then faults div32/idiv32 (#DE / SIGFPE).
             let nonzero = self.asm.new_label();
             let done = self.asm.new_label();
+            if is_32bit {
+                self.asm.cmp_ri32(b_reg, 0);
+            } else {
+                self.asm.test_rr(b_reg, b_reg);
+            }
             self.asm.jcc_label(Cc::NE, nonzero);
 
             // Division by zero: quotient = 2^64-1, remainder = dividend
@@ -2735,6 +2797,40 @@ impl Compiler {
             self.asm.jmp_label(done);
 
             self.asm.bind_label(nonzero);
+
+            // Signed overflow guard: idiv faults (#DE / SIGFPE) on MIN / -1.
+            // GP defines it as MIN (div) and 0 (rem). Divisor == -1 is exactly
+            // the overflow case and also the only value where negation matches
+            // signed division (X / -1 = -X), so handle divisor == -1 directly
+            // and skip the faulting idiv entirely.
+            if signed {
+                let not_neg1 = self.asm.new_label();
+                if is_32bit {
+                    self.asm.cmp_ri32(b_reg, -1);
+                } else {
+                    self.asm.cmp_ri(b_reg, -1);
+                }
+                self.asm.jcc_label(Cc::NE, not_neg1);
+
+                if remainder {
+                    // X % -1 == 0.
+                    self.asm.mov_ri64(d_reg, 0);
+                } else {
+                    // X / -1 == -X (wrapping: MIN / -1 == MIN).
+                    if d_reg != a_reg {
+                        self.asm.mov_rr(d_reg, a_reg);
+                    }
+                    if is_32bit {
+                        self.asm.neg32(d_reg);
+                        self.asm.movsxd(d_reg, d_reg);
+                    } else {
+                        self.asm.neg64(d_reg);
+                    }
+                }
+                self.asm.jmp_label(done);
+
+                self.asm.bind_label(not_neg1);
+            }
 
             if b_reg != Reg::RAX {
                 // Fast path: use b_reg directly as divisor (no extra register needed).

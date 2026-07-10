@@ -597,10 +597,19 @@ impl InvocationKernel {
     /// Returns a `DispatchResult` indicating what the kernel should do next.
     #[inline(always)]
     pub fn dispatch_ecalli(&mut self, imm: u32) -> DispatchResult {
-        // Range check: ecalli only valid for 0-127. ≥128 faults the VM.
+        // Range check: ecalli only valid for 0-127. ≥128 panics the VM.
+        // Route through handle_vm_fault so it terminates uniformly: a root VM
+        // becomes RootPanic, a nested VM is delivered to its caller as a
+        // fault. (Returning a raw Fault here previously left the run loop to
+        // `continue` in a half-synced state — the recompiler had written
+        // φ[7] into its live JitContext but not flushed it to the VmInstance,
+        // so the next full-segment rebuild lost it and diverged from the
+        // interpreter.)
         if imm > 127 {
             self.set_active_reg(7, imm as u64);
-            return DispatchResult::Fault(FaultType::Panic); // status 5 when implemented
+            #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+            self.flush_live_ctx();
+            return self.handle_vm_fault(FaultType::Panic);
         }
         // Charge ecalli gas cost (10) — matches GP host call gas charge
         let ecalli_gas: u64 = 10;
@@ -1901,7 +1910,23 @@ impl InvocationKernel {
         ctx.exit_reason = 0;
         ctx.exit_arg = 0;
 
-        // Signal state is already installed. Re-enter native.
+        // Re-install the SIGSEGV state on THIS frame's stack. The state
+        // installed by the original `run_recompiler_inner` lived in that
+        // (now-returned) frame — re-entering native code with a guest page
+        // fault would otherwise dereference a dangling pointer. Same code
+        // cap, so the fields match.
+        use crate::recompiler::signal;
+        let mut signal_state = signal::SignalState {
+            code_start: compiled.native_code.ptr as usize,
+            code_end: compiled.native_code.ptr as usize + compiled.native_code.len,
+            exit_label_addr: compiled.native_code.ptr as usize
+                + compiled.exit_label_offset as usize,
+            ctx_ptr: ctx_raw,
+            trap_table_ptr: compiled.trap_table.as_ptr(),
+            trap_table_len: compiled.trap_table.len(),
+        };
+        signal::SIGNAL_STATE.with(|cell| cell.set(&mut signal_state as *mut _));
+
         let entry = compiled.native_code.entry();
         // SAFETY: entry is valid JIT code; ctx_raw is a valid JitContext.
         unsafe {
@@ -1977,9 +2002,15 @@ impl InvocationKernel {
                 max_addr = max_addr.max(end);
             }
         }
-        // Allocate flat memory and copy in mapped pages from the CODE window (Linux)
-        // or directly from the backing store (non-Linux, where window is not used).
+        // Allocate flat memory plus the per-page permission map, copying in
+        // mapped pages from the CODE window (Linux) or the backing store
+        // (non-Linux). Page-granular: a cap's pages can be individually
+        // unmapped (MGMT_UNMAP), and unmapped window pages are PROT_NONE —
+        // touching them would fault the host, and they must stay PERM_NONE
+        // so guest accesses fault like they do under the JIT.
         let mut flat_mem = vec![0u8; max_addr];
+        let mut page_perms =
+            vec![crate::interpreter::PERM_NONE; max_addr / crate::PVM_PAGE_SIZE as usize];
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         let window_base = self.active_window_base();
         for slot in 0..=255u8 {
@@ -1987,13 +2018,24 @@ impl InvocationKernel {
                 && d.has_any_mapped()
                 && let Some(base_page) = d.base_offset
             {
-                let addr = base_page as usize * crate::PVM_PAGE_SIZE as usize;
-                let len = d.page_count as usize * crate::PVM_PAGE_SIZE as usize;
-                if addr + len <= flat_mem.len() {
-                    // SAFETY: window_base points to the 4GB mmap CODE window.
-                    // addr + len <= flat_mem.len() <= max_addr (computed from
-                    // the same cap table), so both source and destination ranges
-                    // are in bounds. The regions don't overlap (window vs heap).
+                let perm = match d.access {
+                    Some(Access::RO) => crate::interpreter::PERM_RO,
+                    _ => crate::interpreter::PERM_RW,
+                };
+                for i in 0..d.page_count {
+                    if !d.is_page_mapped(i) {
+                        continue;
+                    }
+                    let page = base_page as usize + i as usize;
+                    let addr = page * crate::PVM_PAGE_SIZE as usize;
+                    let len = crate::PVM_PAGE_SIZE as usize;
+                    if addr + len > flat_mem.len() {
+                        continue;
+                    }
+                    page_perms[page] = perm;
+                    // SAFETY: window_base points to the 4GB mmap CODE window;
+                    // the page is mapped (checked above) so the source is
+                    // readable, and addr+len is within flat_mem.
                     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                     unsafe {
                         std::ptr::copy_nonoverlapping(
@@ -2003,9 +2045,8 @@ impl InvocationKernel {
                         );
                     }
                     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
-                    flat_mem[addr..addr + len].copy_from_slice(
-                        self.backing.read_page_slice(d.backing_offset, d.page_count),
-                    );
+                    flat_mem[addr..addr + len]
+                        .copy_from_slice(self.backing.read_page_slice(d.backing_offset + i, 1));
                 }
             }
         }
@@ -2024,6 +2065,7 @@ impl InvocationKernel {
         interp.heap_base = vm.heap_base();
         interp.heap_top = vm.heap_top();
         interp.isa_mode = self.isa_mode;
+        interp.set_page_perms(page_perms);
 
         let (exit, _gas_used) = interp.run();
 
@@ -2038,11 +2080,19 @@ impl InvocationKernel {
                     && d.access == Some(Access::RW)
                     && let Some(base_page) = d.base_offset
                 {
-                    let addr = base_page as usize * crate::PVM_PAGE_SIZE as usize;
-                    let len = d.page_count as usize * crate::PVM_PAGE_SIZE as usize;
-                    if addr + len <= interp.flat_mem.len() {
-                        // SAFETY: wb is the active window base; addr+len is within
-                        // both interp.flat_mem and the window (checked above).
+                    for i in 0..d.page_count {
+                        if !d.is_page_mapped(i) {
+                            continue;
+                        }
+                        let addr =
+                            (base_page as usize + i as usize) * crate::PVM_PAGE_SIZE as usize;
+                        let len = crate::PVM_PAGE_SIZE as usize;
+                        if addr + len > interp.flat_mem.len() {
+                            continue;
+                        }
+                        // SAFETY: wb is the active window base; the page is
+                        // mapped RW (checked above) and addr+len is within
+                        // interp.flat_mem.
                         unsafe {
                             std::ptr::copy_nonoverlapping(
                                 interp.flat_mem.as_ptr().add(addr),
@@ -2058,32 +2108,37 @@ impl InvocationKernel {
         {
             // Collect write-back info first so we can drop the vm borrow before
             // taking &mut self.backing.
-            let writebacks: Vec<(usize, u32, u32)> = {
+            let writebacks: Vec<(usize, u32)> = {
                 let vm_ref = &self.vm_arena.vm(self.active_vm);
-                (0..=255u8)
-                    .filter_map(|slot| {
-                        let d = if let Some(Cap::Data(d)) = vm_ref.cap_table.get(slot) {
-                            d
-                        } else {
-                            return None;
-                        };
-                        if !d.has_any_mapped() || d.access != Some(Access::RW) {
-                            return None;
+                let mut pages = Vec::new();
+                for slot in 0..=255u8 {
+                    let Some(Cap::Data(d)) = vm_ref.cap_table.get(slot) else {
+                        continue;
+                    };
+                    if !d.has_any_mapped() || d.access != Some(Access::RW) {
+                        continue;
+                    }
+                    let Some(base_page) = d.base_offset else {
+                        continue;
+                    };
+                    for i in 0..d.page_count {
+                        if !d.is_page_mapped(i) {
+                            continue;
                         }
-                        let base_page = d.base_offset?;
-                        let addr = base_page as usize * crate::PVM_PAGE_SIZE as usize;
-                        let len = d.page_count as usize * crate::PVM_PAGE_SIZE as usize;
-                        if addr + len > interp.flat_mem.len() {
-                            return None;
+                        let addr =
+                            (base_page as usize + i as usize) * crate::PVM_PAGE_SIZE as usize;
+                        if addr + crate::PVM_PAGE_SIZE as usize > interp.flat_mem.len() {
+                            continue;
                         }
-                        Some((addr, d.backing_offset, d.page_count))
-                    })
-                    .collect()
+                        pages.push((addr, d.backing_offset + i));
+                    }
+                }
+                pages
             };
-            for (addr, backing_offset, page_count) in writebacks {
-                let len = page_count as usize * crate::PVM_PAGE_SIZE as usize;
+            for (addr, backing_page) in writebacks {
+                let len = crate::PVM_PAGE_SIZE as usize;
                 self.backing
-                    .write_page_slice(backing_offset, &interp.flat_mem[addr..addr + len]);
+                    .write_page_slice(backing_page, &interp.flat_mem[addr..addr + len]);
             }
         }
 
@@ -2147,19 +2202,6 @@ impl InvocationKernel {
             };
 
             // Dispatch on the exit reason (shared for both backends).
-            #[cfg(feature = "std")]
-            {
-                let vm = self.vm_arena.vm(self.active_vm);
-                std::eprintln!(
-                    "EXIT reason={exit_reason} arg={exit_arg} pc={} gas={} r7={:#x} r11={} r12={:#x}",
-                    vm.pc,
-                    vm.gas(),
-                    vm.reg(7),
-                    vm.reg(11),
-                    vm.reg(12)
-                );
-            }
-
             match exit_reason {
                 4 => {
                     // HostCall(imm) — ecalli (pc already synced by backend)
@@ -2777,6 +2819,29 @@ mod tests {
     }
 
     #[test]
+    fn test_ecalli_out_of_range_panics_uniformly() {
+        // Ecalli with imm > 127 is invalid and must panic the root VM on both
+        // backends. It previously left the run loop to continue in a
+        // half-synced register state (recompiler φ[7] written to the live
+        // JitContext but not flushed), diverging from the interpreter.
+        let mut code = vec![10u8]; // Ecalli
+        code.extend_from_slice(&200u32.to_le_bytes()); // imm = 200 (> 127)
+        let bitmask = vec![1, 0, 0, 0, 0];
+        let blob = make_blob_with(&code, &bitmask, &[]);
+        for be in [
+            crate::backend::PvmBackend::ForceInterpreter,
+            crate::backend::PvmBackend::ForceRecompiler,
+        ] {
+            let mut kernel = InvocationKernel::new_with_backend(&blob, &[], 50_000, be).unwrap();
+            let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+            assert!(
+                matches!(kernel.run(), KernelResult::Panic),
+                "ecalli(200) must panic the root VM on {be:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_ecall_isa_modes() {
         // LoadImm64 φ[12] = empty-slot subject, then Ecall, then Trap.
         // Jar mode dispatches the ecall (unresolvable subject → WHAT,
@@ -2817,6 +2882,158 @@ mod tests {
             kernel.vm_arena.vm(kernel.active_vm).pc,
             10,
             "Conformance mode panics at the Ecall opcode itself"
+        );
+    }
+
+    /// Build a JAR blob with explicit DATA caps:
+    /// (cap_index, base_page, page_count, access, init bytes).
+    fn make_blob_with_data_caps(
+        code: &[u8],
+        bitmask: &[u8],
+        jump_table: &[u32],
+        data_caps: &[(u8, u32, u32, Access, &[u8])],
+        memory_pages: u32,
+    ) -> Vec<u8> {
+        let mut code_data = Vec::new();
+        code_data.extend_from_slice(&(jump_table.len() as u32).to_le_bytes());
+        code_data.push(1u8); // entry_size = 1 (byte targets)
+        code_data.extend_from_slice(&(code.len() as u32).to_le_bytes());
+        for &t in jump_table {
+            code_data.push(t as u8);
+        }
+        code_data.extend_from_slice(code);
+        let mut packed = vec![0u8; code.len().div_ceil(8)];
+        for (i, &b) in bitmask.iter().enumerate() {
+            if b != 0 {
+                packed[i / 8] |= 1 << (i % 8);
+            }
+        }
+        code_data.extend_from_slice(&packed);
+
+        let mut data_section = code_data.clone();
+        let mut caps = vec![CapManifestEntry {
+            cap_index: 64,
+            cap_type: CapEntryType::Code,
+            base_page: 0,
+            page_count: 0,
+            init_access: Access::RO,
+            data_offset: 0,
+            data_len: code_data.len() as u32,
+        }];
+        for &(cap_index, base_page, page_count, init_access, init) in data_caps {
+            let data_offset = data_section.len() as u32;
+            data_section.extend_from_slice(init);
+            caps.push(CapManifestEntry {
+                cap_index,
+                cap_type: CapEntryType::Data,
+                base_page,
+                page_count,
+                init_access,
+                data_offset,
+                data_len: init.len() as u32,
+            });
+        }
+        build_blob(memory_pages, 64, 4096, &caps, &data_section)
+    }
+
+    fn run_mem_blob(
+        code: &[u8],
+        bitmask: &[u8],
+        data_caps: &[(u8, u32, u32, Access, &[u8])],
+    ) -> KernelResult {
+        let blob = make_blob_with_data_caps(code, bitmask, &[], data_caps, 10);
+        let mut kernel = InvocationKernel::new(&blob, &[], 100_000).unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+        kernel.run()
+    }
+
+    /// `LoadImm T0, addr; StoreIndU32 [T0+0] ← T0; JumpInd RA (halt)`.
+    fn store_at_program(addr: u32) -> (Vec<u8>, Vec<u8>) {
+        let mut code = vec![51, 2]; // LoadImm T0
+        code.extend_from_slice(&addr.to_le_bytes());
+        code.extend_from_slice(&[122, 0x22, 0, 0, 0, 0]); // StoreIndU32 [T0+0] ← T0
+        code.extend_from_slice(&[50, 0, 0, 0, 0, 0]); // JumpInd RA, 0 → halt
+        let mut bitmask = vec![0u8; code.len()];
+        bitmask[0] = 1;
+        bitmask[6] = 1;
+        bitmask[12] = 1;
+        (code, bitmask)
+    }
+
+    /// `LoadImm T0, addr; LoadIndU32 T0 ← [T0+0]; JumpInd RA (halt)`.
+    fn load_at_program(addr: u32) -> (Vec<u8>, Vec<u8>) {
+        let mut code = vec![51, 2]; // LoadImm T0
+        code.extend_from_slice(&addr.to_le_bytes());
+        code.extend_from_slice(&[128, 0x22, 0, 0, 0, 0]); // LoadIndU32 T0 ← [T0+0]
+        code.extend_from_slice(&[50, 0, 0, 0, 0, 0]); // JumpInd RA, 0 → halt
+        let mut bitmask = vec![0u8; code.len()];
+        bitmask[0] = 1;
+        bitmask[6] = 1;
+        bitmask[12] = 1;
+        (code, bitmask)
+    }
+
+    #[test]
+    fn test_write_to_ro_page_faults() {
+        // Page 0: RW stack; page 1: RO data. A store into the RO page must
+        // page-fault at its page base on both backends. (The interpreter
+        // previously accepted the write into its flat buffer and silently
+        // dropped it at write-back.)
+        let (code, bitmask) = store_at_program(0x1000);
+        let caps: &[(u8, u32, u32, Access, &[u8])] = &[
+            (65, 0, 1, Access::RW, &[]),
+            (66, 1, 1, Access::RO, &[0xAA; 8]),
+        ];
+        let result = run_mem_blob(&code, &bitmask, caps);
+        assert!(
+            matches!(result, KernelResult::PageFault(0x1000)),
+            "RO write must fault at the page base, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_from_ro_page_ok() {
+        // Reading the RO page is fine and the program halts.
+        let (code, bitmask) = load_at_program(0x1000);
+        let caps: &[(u8, u32, u32, Access, &[u8])] = &[
+            (65, 0, 1, Access::RW, &[]),
+            (66, 1, 1, Access::RO, &[0xAA; 8]),
+        ];
+        let result = run_mem_blob(&code, &bitmask, caps);
+        assert!(
+            matches!(result, KernelResult::Halt),
+            "RO read should succeed, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_read_from_unmapped_gap_faults() {
+        // Caps at pages 0 and 2 leave a gap at page 1: reading it must
+        // page-fault on both backends. (The interpreter previously returned
+        // zeros for gap reads below the highest mapped address.)
+        let (code, bitmask) = load_at_program(0x1000);
+        let caps: &[(u8, u32, u32, Access, &[u8])] = &[
+            (65, 0, 1, Access::RW, &[]),
+            (66, 2, 1, Access::RW, &[0xBB; 8]),
+        ];
+        let result = run_mem_blob(&code, &bitmask, caps);
+        assert!(
+            matches!(result, KernelResult::PageFault(0x1000)),
+            "gap read must fault at the page base, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_straddling_access_faults_on_second_page() {
+        // A u32 store at 0x0FFE touches pages 0 (RW) and 1 (unmapped): the
+        // fault address is the *second* page's base — matching hardware
+        // (si_addr) under the JIT and the page walk in the interpreter.
+        let (code, bitmask) = store_at_program(0x0FFE);
+        let caps: &[(u8, u32, u32, Access, &[u8])] = &[(65, 0, 1, Access::RW, &[])];
+        let result = run_mem_blob(&code, &bitmask, caps);
+        assert!(
+            matches!(result, KernelResult::PageFault(0x1000)),
+            "straddling fault must report the second page, got: {result:?}"
         );
     }
 
