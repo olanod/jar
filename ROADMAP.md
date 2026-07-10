@@ -68,24 +68,37 @@ Gates are named after what turns green, not after effort spent.
   on current master (the stale `6db1168` pin predates every transpiler/javm
   correctness fix and runs known-buggy codegen).
 
-**Phase 1 — execution ABI (designed; see vos `docs/design/jam-entry-points.md`)**
-- Entry prologue: refine IC 0 / accumulate IC 5; the `φ[7]=1` selector
+**Phase 1 — execution ABI (DONE — see vos `docs/design/jam-entry-points.md`)**
+- ✅ Entry prologue: refine IC 0 / accumulate IC 5; the `φ[7]=1` selector
   retired. Ψ_T stays absent (GP main removed it; transfers are accumulate
-  inputs — `AccumulationInput` already models this).
-- Host-owned SP (`φ[1] = stack_top` set at kernel init; blob preamble
-  dropped) and args in GP's `ω_7/ω_8`.
-- Halt convention: adopt GP's halt address (`djump(2^32−2^16)`, `ω_0`
-  init); retire REPLY-as-termination; refine output read from
-  `μ[ω_7..+ω_8]`, not packed `φ[7]`.
-- Small ISA strictness fixes that ride along: reject opcode 3 (`Ecall`) in
-  conformance mode, validate branch/djump targets against basic-block
-  starts (GP panics; we accept mid-block targets today).
-- **Interpreter/JIT page-permission parity** (consensus-relevant bug found
-  in audit: interpreter's flat Vec allows RO writes and gap reads the JIT
-  faults on) — fix with the memory-map rework, extend the differential
-  fuzzer with RO/gap-bearing programs.
-- Port `φ[7]`-dispatch guests (pixels-service); rebuild all service blobs
-  and test fixtures. Gate: existing jar1 suites still green post-rebuild.
+  inputs — `AccumulationInput` already models this). *(landed 232531b8)*
+- ✅ Host-owned SP (`φ[1] = stack_top` set at kernel init; blob preamble
+  dropped) and args in GP's `ω_7/ω_8`. *(landed 232531b8)*
+- ✅ Halt convention: GP's halt address (`djump(2^32−2^16)`, `ω_0` init);
+  REPLY-as-termination retired (root REPLY now panics; REPLY stays the
+  inter-VM CALL return); refine output read from `μ[ω_7..+ω_8]`, accumulate
+  commitment from `μ[ω_7..+32]` at halt, not packed `φ[7]`. Window
+  accessors validate guest ptr/len against the cap table first. *(ff1976b0)*
+- ✅ ISA strictness: opcode 3 (`Ecall`) rejected under an `IsaMode::
+  Conformance` knob (cache-keyed); branch/djump targets validated against
+  strict basic-block starts ({0} ∪ post-terminator) on both backends and in
+  the Lean oracle; Lean djump gains GP eq-210 alignment; `load_imm_jump_ind`
+  uses the pre-state base register. *(dcfbe17b)*
+- ✅ Interpreter/JIT page-permission parity: the interpreter gained a
+  per-page RO/RW/none map matching the recompiler's mmap protection (RO
+  writes and gap reads now fault identically), fault addresses unified on
+  the page base via `si_addr`, uniform-RW fast path keeps flat-buffer speed.
+  The differential fuzzer was extended (RO/gap memory, ISA modes,
+  self-consistent bitmasks, protocol-call servicing) and drove out **11
+  pre-existing interpreter/JIT divergences** — including a consensus-relevant
+  recompiler-resume signal-state use-after-scope, division `#DE` faults, and
+  several gas-accounting mismatches; each fixed with a regression test.
+  *(7e13230b, f024c184)*
+- ✅ Guests ported off REPLY termination to `ret`/halt (javm_entry! macro,
+  minimal/bootstrap/pixels, grey-bench blobs); service blobs rebuilt and
+  jar1 accumulate vectors re-blessed (gp072 untouched). Gate met: jar1
+  suites green on both backends, spec `make test` across all 3 variants,
+  harness serial scenario green.
 
 **Phase 2 — the ratchet switched on (M)**
 - Parameterize grey's vector loaders on variant (they hardcode `jar1`);
