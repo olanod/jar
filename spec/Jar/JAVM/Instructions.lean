@@ -49,15 +49,28 @@ def setReg (regs : Registers) (r : Fin 13) (v : UInt64) : Registers :=
 def nextPC (pc : Nat) (skip : Nat) : Nat := pc + 1 + skip
 
 /-- Dynamic jump validation. GP eq (210).
-    Returns target PC or none (panic). -/
+    The truncated address `a = addr mod 2^32` resolves as follows:
+    - `a = 2^32 - 2^16`: the halt sentinel — returns `some 0`, mapped to halt
+      by the caller (checked before any validity test).
+    - `a = 0`, `a mod Z_A ≠ 0` (misaligned), or `a > |j|·Z_A` (beyond the jump
+      table): invalid — returns `none` (panic).
+    - otherwise: returns the jump-table entry `j[a/Z_A - 1]` as the target PC.
+      The caller must additionally check that the target lands on a
+      basic-block start (`isBlockStart`), else panic. -/
 def djump (jumpTable : Array UInt32) (addr : UInt64) : Option Nat :=
   let a := addr.toNat % (2^32)
-  if a == 0 then none  -- panic
-  else if a == 2^32 - 2^16 then some 0  -- halt sentinel (handled by caller)
-  else
-    let idx := a / Z_A
-    if idx == 0 || idx > jumpTable.size then none
-    else some (jumpTable[idx - 1]!).toNat
+  if a == 2^32 - 2^16 then some 0  -- halt sentinel (handled by caller)
+  else if a == 0 || a % Z_A != 0 || a / Z_A > jumpTable.size then none  -- panic
+  else some (jumpTable[a / Z_A - 1]!).toNat
+
+/-- Take a static branch/jump to `target`: the target must land on a
+    basic-block start ({0} ∪ post-terminator positions), else panic (GP §A:
+    mid-block landing sites are invalid). Only taken branches are validated —
+    a non-taken branch falls through regardless of its target. -/
+def branchTo (prog : ProgramBlob) (target : UInt64) (regs : Registers)
+    (mem : Memory) : StepResult :=
+  if isBlockStart prog.blockStarts target.toNat then .continue target.toNat regs mem
+  else .panic
 
 -- Unsigned 32-bit truncation
 def trunc32 (x : UInt64) : UInt64 := UInt64.ofNat (x.toNat % (2^32))
@@ -229,7 +242,14 @@ def ashr32 (x : UInt64) (s : Nat) : UInt64 :=
 -- ============================================================================
 
 /-- Execute one PVM instruction. GP Appendix A.
-    Takes current state, returns step result. -/
+    Takes current state, returns step result.
+    Strictness (GP §A): the opcode position must be set in the bitmask, and
+    every taken static branch/jump target (jump, load_imm_jump, branch
+    families) as well as every djump-resolved target (jump_ind,
+    load_imm_jump_ind) must land on a basic-block start
+    ({0} ∪ post-terminator positions) — otherwise the step panics.
+    The djump halt sentinel (2^32 − 2^16 → halt) is checked before any
+    target validation. -/
 def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory)
     : StepResult :=
   let code := prog.code
@@ -271,7 +291,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
   -- ========== Offset jump (40) ==========
   | 40 =>  -- jump
     let target := extractOffset code pc skip
-    .continue target.toNat regs mem
+    branchTo prog target regs mem
 
   -- ========== Reg + Imm (50-62) ==========
   | 50 =>  -- jump_ind
@@ -281,7 +301,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
     match djump prog.jumpTable addr with
     | none => .panic
     | some 0 => .halt
-    | some t => .continue t regs mem
+    | some t => branchTo prog (UInt64.ofNat t) regs mem
 
   | 51 =>  -- load_imm
     let r := regA code pc
@@ -329,7 +349,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
   -- ========== Reg + Imm + Offset (80-90) ==========
   | 80 =>  -- load_imm_jump
     let (r, imm, target) := extractRegImmOffset code pc skip
-    .continue target.toNat (setReg regs r imm) mem
+    branchTo prog target (setReg regs r imm) mem
 
   | 81 | 82 | 83 | 84 | 85 | 86 | 87 | 88 | 89 | 90 =>
     -- branch_{eq,ne,lt_u,le_u,ge_u,gt_u,lt_s,le_s,ge_s,gt_s}_imm
@@ -346,7 +366,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
       | 88 => toSigned rv <= toSigned imm
       | 89 => signedGe rv imm
       | _  => toSigned rv > toSigned imm  -- 90
-    if taken then .continue target.toNat regs mem
+    if taken then branchTo prog target regs mem
     else .continue npc regs mem
 
   -- ========== Two-reg (100-111) ==========
@@ -569,7 +589,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
       | 173 => signedLt a b
       | 174 => a >= b
       | _   => signedGe a b  -- 175
-    if taken then .continue target.toNat regs mem
+    if taken then branchTo prog target regs mem
     else .continue npc regs mem
 
   -- ========== Two-reg + two-imm (180) ==========
@@ -580,7 +600,7 @@ def executeStep (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory
     match djump prog.jumpTable addr with
     | none => .panic
     | some 0 => .halt
-    | some t => .continue t regs' mem
+    | some t => branchTo prog (UInt64.ofNat t) regs' mem
 
   -- ========== Three-reg (190-230) ==========
   | 190 =>  -- add_32

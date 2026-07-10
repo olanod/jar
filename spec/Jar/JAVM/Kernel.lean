@@ -28,7 +28,7 @@ structure CodeCapData where
   jumpTable : Array Nat
 
 instance : Inhabited CodeCapData where
-  default := { id := 0, program := { code := ByteArray.empty, bitmask := ByteArray.empty, jumpTable := #[] }, jumpTable := #[] }
+  default := { id := 0, program := { code := ByteArray.empty, bitmask := ByteArray.empty, jumpTable := #[], blockStarts := ByteArray.empty }, jumpTable := #[] }
 
 /-- Backing store: flat byte array representing all physical pages. -/
 structure BackingStore where

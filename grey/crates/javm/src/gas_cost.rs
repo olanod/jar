@@ -2270,6 +2270,11 @@ static GAS_COST_LUT: [GasCostEntry; 256] = {
     t[0] = gc(2, 1, EU_NONE, 0, 0, F_TERM);
     t[1] = gc(2, 1, EU_NONE, 0, 0, F_TERM);
     t[2] = gc(40, 1, EU_NONE, 0, 0, F_TERM);
+    // Ecall (3): jar management-op/dynamic-CALL exit — a terminator like
+    // Ecalli. Missing F_TERM here meant post-Ecall PCs never became gas-block
+    // starts, so the JIT had no dispatch entry to resume at after the kernel
+    // handled the ecall (re-entry dispatched to offset 0 = the prologue).
+    t[3] = gc(100, 4, EU_ALU, 0, 0, F_TERM);
     t[10] = gc(100, 4, EU_ALU, 0, 0, F_TERM);
     // Control flow
     t[40] = gc(15, 1, EU_ALU, 0, 0, F_TERM);

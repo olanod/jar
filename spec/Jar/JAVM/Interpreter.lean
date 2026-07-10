@@ -387,7 +387,9 @@ def runProgram [JarConfig] (prog : ProgramBlob) (pc : Nat) (regs : Registers)
 
 /-- Ψ_H : PVM invocation with host-call dispatch. GP eq (A.36).
     Repeatedly runs PVM, handling host calls via the provided handler.
-    Stops on halt, panic, OOG, or fault. -/
+    Stops on halt, panic, OOG, or fault. An `ecall` (opcode 3) exit is a panic
+    on this flat path — opcode 3 is not a valid GP instruction; it is only
+    dispatched by the jar1 capability kernel (see `Jar.JAVM.Kernel`). -/
 def runWithHostCalls (ctx : Type) [Inhabited ctx]
     (prog : ProgramBlob) (pc : Nat) (regs : Registers) (mem : Memory)
     (gas : Int64) (handler : HostCallHandler ctx) (context : ctx)
@@ -413,14 +415,10 @@ def runWithHostCalls (ctx : Type) [Inhabited ctx]
           go resumePC result'.registers result'.memory result'.gas context' fuel'
         | _ => (result', context')
       | .ecall =>
-        -- ecall (management ops): treat same as hostCall with a sentinel ID
-        -- The handler can distinguish ecall by the sentinel value
-        let resumePC := result.nextPC
-        let ecallSentinel : UInt64 := UInt64.ofNat (2^64 - 3)
-        let (result', context') := handler ecallSentinel result.gas.toUInt64 result.registers result.memory context
-        match result'.exitReason with
-        | .hostCall _ => go resumePC result'.registers result'.memory result'.gas context' fuel'
-        | _ => (result', context')
+        -- GP: opcode 3 (ecall) is not a valid instruction on the flat
+        -- (conformance) path — it panics. Only the jar1 capability kernel
+        -- (Jar.JAVM.Kernel) dispatches ecall as its management/CALL surface.
+        ({ result with exitReason := .panic }, context)
       | _ => (result, context)
   go pc regs mem gas context (gas.toUInt64.toNat + 1)
 

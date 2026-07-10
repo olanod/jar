@@ -56,6 +56,11 @@ structure ProgramBlob where
   bitmask : ByteArray
   /-- Jump table: maps dynamic jump indices to code positions. -/
   jumpTable : Array UInt32
+  /-- Basic-block starts: one byte per code byte, 1 iff that position begins a
+      basic block — {0} ∪ {position after each terminator instruction}.
+      Taken branch and dynamic-jump targets must land on block starts (GP §A);
+      positions at/after the end of the code are never block starts. -/
+  blockStarts : ByteArray
 
 /-- Decode a fixed-width natural from `n` LE bytes starting at offset. -/
 def decodeLEn (data : ByteArray) (offset n : Nat) : Nat :=
@@ -121,7 +126,61 @@ def decodeDeBlobNat (blob : ByteArray) (offset : Nat) (compact : Bool)
   else if offset + 4 ≤ blob.size then some (decodeLEn blob offset 4, 4)
   else none
 
-/-- Deblob: parse a program blob into (code, bitmask, jumpTable). GP Appendix A.
+-- ============================================================================
+-- Bitmask / Skip / Basic-Block Starts — GP Appendix A
+-- ============================================================================
+
+/-- Check if opcode is a basic block terminator (v0.8.0). -/
+def isTerminator (opcode : Nat) : Bool :=
+  match opcode with
+  | 0 | 1 | 2 => true   -- trap, fallthrough, unlikely
+  | 10 => true           -- ecalli
+  | 40 | 50 | 80 | 180 => true  -- jump, jump_ind, load_imm_jump, load_imm_jump_ind
+  | n => (81 ≤ n && n ≤ 90) || (170 ≤ n && n ≤ 175)  -- branches
+
+/-- Check if bit at position `i` is set in the (unpacked) bitmask.
+    After deblob, the bitmask has one byte per code byte (0 or 1). -/
+def bitmaskGet (bm : ByteArray) (i : Nat) : Bool :=
+  if i < bm.size then bm.get! i != 0
+  else true  -- beyond bitmask is treated as set (for termination)
+
+/-- Skip distance: number of bytes until the next opcode position. GP eq (77).
+    F_skip(i) = min(24, j ∈ ℕ : bitmask[i+1+j] = 1). -/
+def skipDistance (bm : ByteArray) (i : Nat) : Nat :=
+  let rec go (j : Nat) (fuel : Nat) : Nat :=
+    match fuel with
+    | 0 => j
+    | fuel' + 1 =>
+      if j >= 24 then 24
+      else if bitmaskGet bm (i + 1 + j) then j
+      else go (j + 1) fuel'
+  go 0 25
+
+/-- Compute the basic-block start set of a code segment: one byte per code
+    byte, 1 iff the position begins a basic block. Block starts are position 0
+    plus every position immediately following a terminator instruction (GP §A).
+    Note `bitmaskGet` reads as set beyond the end of the bitmask (a decoding
+    convention for termination) — positions at/after the end of the code are
+    deliberately NOT block starts: jumping there is invalid. -/
+def computeBlockStarts (code bitmask : ByteArray) : ByteArray := Id.run do
+  let mut starts := ByteArray.mk (Array.replicate code.size 0)
+  if code.size == 0 then return starts
+  starts := starts.set! 0 1
+  for i in [:code.size] do
+    if bitmaskGet bitmask i && isTerminator (code.get! i).toNat then
+      let next := i + 1 + skipDistance bitmask i
+      if next < code.size then
+        starts := starts.set! next 1
+  return starts
+
+/-- Check whether code position `i` is a basic-block start. Unlike
+    `bitmaskGet`, positions at/after the end of the code are NOT block starts
+    (jump/branch targets there panic). -/
+def isBlockStart (blockStarts : ByteArray) (i : Nat) : Bool :=
+  i < blockStarts.size && blockStarts.get! i != 0
+
+/-- Deblob: parse a program blob into (code, bitmask, jumpTable, blockStarts).
+    GP Appendix A.
     Format: E(|j|) ‖ E₁(z) ‖ E(|c|) ‖ E_z(j) ‖ c ‖ k
     where z = jump table entry size (1-4), j = jump table, c = code, k = bitmask.
     When `compact` is true, E() uses JAM codec variable-length natural (gp072).
@@ -160,41 +219,13 @@ def deblob (blob : ByteArray) (compact : Bool := true) : Option ProgramBlob := d
     if byteIdx < packedBitmask.size then
       UInt8.ofNat ((packedBitmask.get! byteIdx).toNat / (2 ^ bitIdx) % 2)
     else 0)
-  some { code, bitmask, jumpTable }
-
-/-- Check if opcode is a basic block terminator (v0.8.0). -/
-def isTerminator (opcode : Nat) : Bool :=
-  match opcode with
-  | 0 | 1 | 2 => true   -- trap, fallthrough, unlikely
-  | 10 => true           -- ecalli
-  | 40 | 50 | 80 | 180 => true  -- jump, jump_ind, load_imm_jump, load_imm_jump_ind
-  | n => (81 ≤ n && n ≤ 90) || (170 ≤ n && n ≤ 175)  -- branches
-
--- ============================================================================
--- Bitmask / Skip — GP Appendix A
--- ============================================================================
-
-/-- Check if bit at position `i` is set in the (unpacked) bitmask.
-    After deblob, the bitmask has one byte per code byte (0 or 1). -/
-def bitmaskGet (bm : ByteArray) (i : Nat) : Bool :=
-  if i < bm.size then bm.get! i != 0
-  else true  -- beyond bitmask is treated as set (for termination)
-
-/-- Skip distance: number of bytes until the next opcode position. GP eq (77).
-    F_skip(i) = min(24, j ∈ ℕ : bitmask[i+1+j] = 1). -/
-def skipDistance (bm : ByteArray) (i : Nat) : Nat :=
-  let rec go (j : Nat) (fuel : Nat) : Nat :=
-    match fuel with
-    | 0 => j
-    | fuel' + 1 =>
-      if j >= 24 then 24
-      else if bitmaskGet bm (i + 1 + j) then j
-      else go (j + 1) fuel'
-  go 0 25
+  some { code, bitmask, jumpTable, blockStarts := computeBlockStarts code bitmask }
 
 /-- Validate a deblobbed program for v0.8.0 basic block requirements:
     1. Last instruction must be a basic block terminator
-    2. All branch/jump targets must be valid instruction boundaries (bitmask set)
+    2. All jump-table entries must land on basic-block starts
+       ({0} ∪ post-terminator positions — the same set `executeStep` enforces
+       for taken branch and dynamic-jump targets at runtime)
     Returns true if valid. -/
 def validateBasicBlocks (prog : ProgramBlob) : Bool :=
   let code := prog.code
@@ -209,9 +240,8 @@ def validateBasicBlocks (prog : ProgramBlob) : Bool :=
     let lastOpcode := if lastInstr < code.size then code.get! lastInstr |>.toNat else 0
     if !bitmaskGet prog.bitmask lastInstr || !isTerminator lastOpcode then false
     else
-      -- Check all jump table entries point to valid instruction boundaries
-      prog.jumpTable.all fun target =>
-        target.toNat == 0 || bitmaskGet prog.bitmask target.toNat
+      -- Check all jump table entries land on basic-block starts
+      prog.jumpTable.all fun target => isBlockStart prog.blockStarts target.toNat
 
 -- ============================================================================
 -- Register Decoding — GP Appendix A
@@ -465,7 +495,8 @@ def parseCodeSubBlob (blob : ByteArray) (dataOffset dataLen : Nat)
       UInt8.ofNat ((packedBitmask.get! byteIdx).toNat / (2 ^ bitIdx) % 2)
     else 0)
 
-  let prog : ProgramBlob := { code, bitmask, jumpTable }
+  let prog : ProgramBlob :=
+    { code, bitmask, jumpTable, blockStarts := computeBlockStarts code bitmask }
   if !validateBasicBlocks prog then none
   some prog
 

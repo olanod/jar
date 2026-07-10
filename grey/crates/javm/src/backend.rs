@@ -115,16 +115,20 @@ pub fn compile(
     jump_table: &[u32],
     mem_cycles: u8,
     backend: PvmBackend,
+    isa_mode: crate::IsaMode,
 ) -> Result<CompiledProgram, alloc::string::String> {
     match resolve_backend(backend) {
         ResolvedBackend::Interpreter => {
+            // The interpreter enforces the ISA mode at execution time
+            // (Interpreter::isa_mode); the pre-decoded stream is mode-free.
             let prog =
                 crate::interpreter::Interpreter::predecode(code, bitmask, jump_table, mem_cycles);
             Ok(CompiledProgram::Interpreter(prog))
         }
         #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
         ResolvedBackend::Recompiler => {
-            let compiled = crate::recompiler::compile_code(code, bitmask, jump_table, mem_cycles)?;
+            let compiled =
+                crate::recompiler::compile_code(code, bitmask, jump_table, mem_cycles, isa_mode)?;
             Ok(CompiledProgram::Recompiler(compiled))
         }
     }

@@ -72,6 +72,18 @@ pub const PVM_PAGE_SIZE: u32 = 1 << 12;
 /// root VM's ω\[0\] (RA) to it, so `ret` from an entry point halts the VM.
 pub const PVM_HALT_ADDR: u64 = (1 << 32) - (1 << 16);
 
+/// ISA profile the VM executes under.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum IsaMode {
+    /// Full jar surface: opcode 3 (`Ecall`) dispatches capability-kernel
+    /// management ops / dynamic CALL.
+    #[default]
+    Jar,
+    /// Graypaper-strict: opcode 3 is not a valid instruction and panics
+    /// when executed (GP conformance; the cap kernel is a jar extension).
+    Conformance,
+}
+
 /// ZI = 2^24: Standard PVM program initialization input data size.
 pub const PVM_INIT_INPUT_SIZE: u32 = 1 << 24;
 

@@ -181,8 +181,12 @@ pub struct Compiler {
     /// Helper function addresses.
     helpers: HelperFns,
     /// Bitmask reference (1 = instruction start). Stored as raw pointer for self-referential use.
-    bitmask_ptr: *const u8,
-    bitmask_len: usize,
+    /// Strict basic-block starts ({0} ∪ post-terminator), one byte per code
+    /// byte position. Branch/djump targets must land on these (GP A.17/A.18).
+    block_starts_ptr: *const u8,
+    block_starts_len: usize,
+    /// ISA profile: Conformance rejects opcode 3 (Ecall) at execution.
+    isa_mode: crate::IsaMode,
     /// Peephole: tracks how each PVM register was last defined.
     reg_defs: [RegDef; 13],
     /// Bitmask of registers that have non-Unknown reg_defs (for fast invalidation).
@@ -201,12 +205,13 @@ pub struct Compiler {
 
 impl Compiler {
     pub fn new(
-        bitmask: &[u8],
+        block_starts: &[u8],
         _jump_table: &[u32],
         helpers: HelperFns,
         code_len: usize,
         use_mmap: bool,
         mem_cycles: u8,
+        isa_mode: crate::IsaMode,
     ) -> Self {
         // Estimate native code size: ~3x PVM code provides safety margin for
         // direct-write emission (no per-byte capacity checks in hot loop).
@@ -244,10 +249,11 @@ impl Compiler {
             reg_defs_active: 0,
             last_add_cf: None,
             helpers,
-            bitmask_ptr: bitmask.as_ptr(),
-            bitmask_len: bitmask.len(),
+            block_starts_ptr: block_starts.as_ptr(),
+            block_starts_len: block_starts.len(),
             trap_entries: Vec::with_capacity(2048),
             mem_cycles,
+            isa_mode,
         }
     }
 
@@ -259,9 +265,9 @@ impl Compiler {
 
     fn is_basic_block_start(&self, idx: u32) -> bool {
         let i = idx as usize;
-        // SAFETY: bitmask_ptr points to the start of a valid &[u8] slice of length
-        // bitmask_len, and i < bitmask_len is checked before the dereference.
-        i < self.bitmask_len && unsafe { *self.bitmask_ptr.add(i) } == 1
+        // SAFETY: block_starts_ptr points to the start of a valid &[u8] slice of
+        // length block_starts_len, and i is bounds-checked before the dereference.
+        i < self.block_starts_len && unsafe { *self.block_starts_ptr.add(i) } == 1
     }
 
     /// Compile directly from raw code+bitmask. Streaming single-pass:
@@ -595,18 +601,19 @@ impl Compiler {
         // Emit epilogue and exit sequences
         self.emit_exit_sequences();
 
-        // Build dispatch table: PVM PC → native code offset.
-        // gas_block_pcs was populated inline during the single-pass loop.
+        // Build dispatch table: PVM PC → native code offset. Entries default
+        // to the panic stub: entering the program at a PC that is not a
+        // gas-block start must fail loudly, not re-run the prologue (offset 0).
         let table_len = code_len + 1;
-        let mut dispatch_table = vec![0i32; table_len];
+        let panic_offset = self.asm.label_offset(self.panic_label).unwrap_or(0) as i32;
+        let mut dispatch_table = vec![panic_offset; table_len];
+        // gas_block_pcs was populated inline during the single-pass loop.
         for &pvm_pc in self.gas_block_pcs.iter() {
             let label = Label(self.label_base + pvm_pc);
             if let Some(offset) = self.asm.label_offset(label) {
                 dispatch_table[pvm_pc as usize] = offset as i32;
             }
         }
-        // PC=0 must always be valid (program start); if not already set, it'll be
-        // set by the first basic block at PC 0.
 
         let exit_label_offset = self.asm.label_offset(self.exit_label).unwrap_or(0) as u32;
         let trap_table = self.trap_entries;
@@ -1255,9 +1262,16 @@ impl Compiler {
             }
 
             // === A.5.1b: Ecall (management ops, no immediate) ===
+            // Jar extension — under GP conformance opcode 3 is not a valid
+            // instruction and panics when executed.
             Opcode::Ecall => {
-                self.asm.mov_store32_imm(CTX, CTX_PC, next_pc as i32);
-                self.emit_exit(EXIT_ECALL, 0);
+                if self.isa_mode == crate::IsaMode::Conformance {
+                    self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
+                    self.emit_exit(EXIT_PANIC, 0);
+                } else {
+                    self.asm.mov_store32_imm(CTX, CTX_PC, next_pc as i32);
+                    self.emit_exit(EXIT_ECALL, 0);
+                }
             }
 
             // === A.5.2: One immediate ===
@@ -1954,12 +1968,17 @@ impl Compiler {
                     imm_y,
                 } = args
                 {
-                    // GP: registers[ra] = imm_x, addr = registers[rb] + imm_y
-                    // Per GP semantics, ra is written first, then jump uses the
-                    // (possibly updated) rb value.
-                    // If ra==rb, the jump target uses imm_x + imm_y.
+                    // GP A.5.12: the jump address uses the PRE-state ω_B —
+                    // compute it into SCRATCH before writing ω'_A = ν_X (when
+                    // ra == rb the old value addresses the jump). Matches the
+                    // Lean oracle and polkavm.
+                    self.asm.mov_store32_imm(CTX, CTX_PC, pc as i32);
+                    self.asm.mov_rr(SCRATCH, REG_MAP[*rb]);
+                    if *imm_y as i32 != 0 {
+                        self.asm.add_ri(SCRATCH, *imm_y as i32);
+                    }
                     self.asm.mov_ri64(REG_MAP[*ra], *imm_x);
-                    self.emit_dynamic_jump(*rb, *imm_y, pc);
+                    self.emit_dynamic_jump_from_scratch();
                 }
             }
 
@@ -2422,6 +2441,12 @@ impl Compiler {
         if imm as i32 != 0 {
             self.asm.add_ri(SCRATCH, imm as i32);
         }
+        self.emit_dynamic_jump_from_scratch();
+    }
+
+    /// Emit the tail of a dynamic jump: the untruncated target address is
+    /// already in SCRATCH and CTX_PC has been stored by the caller.
+    fn emit_dynamic_jump_from_scratch(&mut self) {
         self.asm.movzx_32_64(SCRATCH, SCRATCH); // truncate to 32-bit
 
         // Halt address (GP eq A.18): djump to 2^32 − 2^16 is a normal halt.

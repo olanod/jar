@@ -133,6 +133,10 @@ In jar1, the JAVM is configured differently from the base Gray Paper PVM specifi
 
 {docstring Jar.JAVM.deblob}
 
+{docstring Jar.JAVM.computeBlockStarts}
+
+{docstring Jar.JAVM.isBlockStart}
+
 {docstring Jar.JAVM.validateBasicBlocks}
 
 # Instruction Operand Decoding
@@ -237,6 +241,8 @@ and sub-blobs for CODE caps.
 {docstring Jar.JAVM.opcodeName}
 
 {docstring Jar.JAVM.StepResult}
+
+{docstring Jar.JAVM.branchTo}
 
 {docstring Jar.JAVM.executeStep}
 

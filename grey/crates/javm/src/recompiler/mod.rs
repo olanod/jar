@@ -191,6 +191,10 @@ pub struct CompiledCode {
     pub dispatch_table: Vec<i32>,
     pub trap_table: Vec<(u32, u32)>,
     pub exit_label_offset: u32,
+    /// Strict basic-block starts ({0} ∪ post-terminator), one byte per code
+    /// byte position. The runtime djump validation reads this through
+    /// `JitContext.bb_starts`.
+    pub block_starts: Vec<u8>,
 }
 
 /// Compile PVM code to native x86-64 without creating an execution context.
@@ -200,6 +204,7 @@ pub fn compile_code(
     bitmask: &[u8],
     jump_table: &[u32],
     mem_cycles: u8,
+    isa_mode: crate::IsaMode,
 ) -> Result<CompiledCode, String> {
     let helpers = HelperFns {
         mem_read_u8: mem_read_u8 as *const () as u64,
@@ -213,7 +218,22 @@ pub fn compile_code(
         sbrk_helper: sbrk_helper as *const () as u64,
     };
 
-    let compiler = Compiler::new(bitmask, jump_table, helpers, code.len(), true, mem_cycles);
+    // GP basic-block starts ({0} ∪ post-terminator): the only valid
+    // branch/djump landing sites. Same computation as the interpreter.
+    let block_starts: Vec<u8> = crate::interpreter::compute_basic_block_starts(code, bitmask)
+        .into_iter()
+        .map(u8::from)
+        .collect();
+
+    let compiler = Compiler::new(
+        &block_starts,
+        jump_table,
+        helpers,
+        code.len(),
+        true,
+        mem_cycles,
+        isa_mode,
+    );
     let result = compiler.compile(code, bitmask);
     let dispatch_table = result.dispatch_table;
 
@@ -232,6 +252,7 @@ pub fn compile_code(
         dispatch_table,
         trap_table: result.trap_table,
         exit_label_offset: result.exit_label_offset,
+        block_starts,
     })
 }
 
@@ -642,8 +663,9 @@ pub struct RecompiledPvm {
     native_code: NativeCode,
     /// JIT context — lives inside the flat_memory mmap region, NOT heap-allocated.
     ctx: *mut JitContext,
-    /// Bitmask (owned; JIT code reads it at runtime through `ctx.bb_starts`).
-    _bitmask: Vec<u8>,
+    /// Basic-block starts (owned; JIT code reads it at runtime through
+    /// `ctx.bb_starts` when validating djump targets).
+    _block_starts: Vec<u8>,
     /// Jump table (owned; JIT code reads it at runtime through `ctx.jt_ptr`).
     _jump_table: Vec<u32>,
     /// Initial gas.
@@ -730,9 +752,17 @@ impl RecompiledPvm {
         // SAFETY: ctx_raw was just initialized above; valid for the lifetime of flat_memory.
         let ctx = unsafe { &mut *ctx_raw };
 
+        // GP basic-block starts ({0} ∪ post-terminator): the only valid
+        // branch/djump landing sites. Same computation as the interpreter.
+        let block_starts: Vec<u8> = crate::interpreter::compute_basic_block_starts(code, &bitmask)
+            .into_iter()
+            .map(u8::from)
+            .collect();
+
         // Set up pointers
         ctx.jt_ptr = jump_table.as_ptr();
-        ctx.bb_starts = bitmask.as_ptr();
+        ctx.bb_starts = block_starts.as_ptr();
+        ctx.bb_len = block_starts.len() as u32;
 
         if debug {
             tracing::debug!(
@@ -758,12 +788,13 @@ impl RecompiledPvm {
 
         let _t2 = std::time::Instant::now();
         let compiler = Compiler::new(
-            &bitmask,
+            &block_starts,
             &jump_table,
             helpers,
             code.len(),
             true, // use mmap-backed assembler
             mem_cycles,
+            crate::IsaMode::Jar,
         );
         let compile_result = compiler.compile(code, &bitmask);
         let _t_compile = _t2.elapsed();
@@ -832,7 +863,7 @@ impl RecompiledPvm {
         let mut result = Self {
             native_code,
             ctx: ctx_raw,
-            _bitmask: bitmask,
+            _block_starts: block_starts,
             _jump_table: jump_table,
             _initial_gas: gas,
             dispatch_table,

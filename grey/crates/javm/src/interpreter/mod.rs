@@ -67,9 +67,12 @@ pub struct Interpreter {
     pub max_heap_pages: u32,
     /// Memory tier load/store cycles (25, 50, 75, or 100).
     pub mem_cycles: u8,
-    /// Set of valid branch/jump landing targets (post-terminator PCs + static branch targets).
-    /// Used for branch validation, not for gas block boundaries.
+    /// GP basic-block starts: {PC=0} ∪ {post-terminator PCs}. Branch and
+    /// djump targets must land on one of these or the instruction panics
+    /// (GP eq A.17/A.18). Gas blocks share the same boundaries.
     pub(crate) basic_block_starts: Vec<bool>,
+    /// ISA profile: Conformance rejects opcode 3 (Ecall) at execution.
+    pub isa_mode: crate::IsaMode,
     /// Gas cost for each gas block (indexed by block start PC).
     /// Only entries at gas block starts are meaningful. Gas blocks are
     /// {PC=0} ∪ {post-terminator PCs}, NOT branch targets.
@@ -98,15 +101,16 @@ impl Interpreter {
         gas: Gas,
         mem_cycles: u8,
     ) -> Self {
+        // Basic blocks and gas blocks share the same boundaries:
+        // {0} ∪ post-terminator.
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
-        let gas_block_starts = compute_gas_block_starts(&code, &bitmask);
         let block_gas_costs =
-            compute_block_gas_costs(&code, &bitmask, &gas_block_starts, mem_cycles);
+            compute_block_gas_costs(&code, &bitmask, &basic_block_starts, mem_cycles);
         let (decoded_insts, pc_to_idx) = predecode_instructions(
             &code,
             &bitmask,
             &basic_block_starts,
-            &gas_block_starts,
+            &basic_block_starts,
             &block_gas_costs,
         );
         Self {
@@ -122,6 +126,7 @@ impl Interpreter {
             max_heap_pages: 0,
             mem_cycles,
             basic_block_starts,
+            isa_mode: crate::IsaMode::default(),
             block_gas_costs,
             need_gas_charge: true,
             tracing_enabled: false,
@@ -140,14 +145,16 @@ impl Interpreter {
         jump_table: &[u32],
         mem_cycles: u8,
     ) -> crate::backend::InterpreterProgram {
+        // Basic blocks and gas blocks share the same boundaries:
+        // {0} ∪ post-terminator.
         let basic_block_starts = compute_basic_block_starts(code, bitmask);
-        let gas_block_starts = compute_gas_block_starts(code, bitmask);
-        let block_gas_costs = compute_block_gas_costs(code, bitmask, &gas_block_starts, mem_cycles);
+        let block_gas_costs =
+            compute_block_gas_costs(code, bitmask, &basic_block_starts, mem_cycles);
         let (decoded_insts, pc_to_idx) = predecode_instructions(
             code,
             bitmask,
             &basic_block_starts,
-            &gas_block_starts,
+            &basic_block_starts,
             &block_gas_costs,
         );
         crate::backend::InterpreterProgram {
@@ -461,7 +468,12 @@ impl Interpreter {
             }
 
             // === A.5.1b: Ecall (management ops, no immediate) ===
+            // Jar extension — under GP conformance opcode 3 is not a valid
+            // instruction and panics when executed.
             Opcode::Ecall => {
+                if self.isa_mode == crate::IsaMode::Conformance {
+                    return Some(ExitReason::Panic);
+                }
                 // Advance PC to next instruction before returning
                 self.pc = next_pc;
                 // Exit with special ecall marker. Kernel reads φ[11]=op, φ[12]=subject|object.
@@ -1174,8 +1186,12 @@ impl Interpreter {
                     imm_y,
                 } = args
                 {
-                    self.registers[ra] = imm_x;
+                    // GP A.5.12: the jump address uses the PRE-state ω_B; the
+                    // register write ω'_A = ν_X happens logically after (when
+                    // ra == rb the old value addresses the jump). Matches the
+                    // Lean oracle and polkavm.
                     let addr = self.registers[rb].wrapping_add(imm_y) % (1u64 << 32);
+                    self.registers[ra] = imm_x;
                     let (exit, new_pc) = self.djump(addr);
                     if let Some(e) = exit {
                         return Some(e);
@@ -1616,6 +1632,11 @@ impl Interpreter {
                 }
                 Opcode::Fallthrough | Opcode::Unlikely => {}
                 Opcode::Ecall => {
+                    // Jar extension — panics under GP conformance.
+                    if self.isa_mode == crate::IsaMode::Conformance {
+                        self.pc = inst.pc;
+                        return (ExitReason::Panic, initial_gas - self.gas);
+                    }
                     self.pc = next_pc;
                     return (ExitReason::Ecall, initial_gas - self.gas);
                 }
@@ -2291,8 +2312,10 @@ impl Interpreter {
 
                 // === Two registers + two immediates ===
                 Opcode::LoadImmJumpInd => {
-                    self.registers[ra] = imm1;
+                    // GP A.5.12: address from PRE-state ω_B (matters when
+                    // ra == rb); write ω'_A = ν_X after.
                     let addr = self.registers[rb].wrapping_add(inst.imm2) % (1u64 << 32);
+                    self.registers[ra] = imm1;
                     let (e, target_pc) = self.djump(addr);
                     if let Some(reason) = e {
                         exit = Some(reason);
@@ -2472,6 +2495,10 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
 /// Compute basic block starts AND a precomputed skip table in a single pass.
 /// `skip_table[pc]` = number of bytes to skip after the opcode byte (instruction size - 1).
 /// Only valid at instruction-start PCs (where `bitmask[pc]` == 1).
+///
+/// Basic blocks per GP: {PC=0} ∪ {post-terminator PCs}. Branch/djump targets
+/// must land on one of these (validated at execution); gas blocks use the
+/// same boundaries (GP PR #508, grey PR #154).
 pub fn compute_basic_block_starts_with_skips(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) {
     let (starts, skip_table) = compute_bb_starts_inner(code, bitmask);
     (starts, skip_table)
@@ -2481,61 +2508,11 @@ pub fn compute_basic_block_starts(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
     compute_bb_starts_inner(code, bitmask).0
 }
 
-/// Compute gas block starts per the JAM spec: {PC=0} ∪ {post-terminator PCs}.
+/// Compute gas block starts: {PC=0} ∪ {post-terminator PCs}.
 ///
-/// Unlike `compute_basic_block_starts`, this does NOT include branch targets.
-/// Gas blocks are defined solely by terminator boundaries (Lean `Interpreter.lean:130`,
-/// GP PR #508). This aligns the interpreter with the recompiler (PR #154).
+/// Gas blocks coincide with GP basic blocks — one shared computation.
 pub fn compute_gas_block_starts(code: &[u8], bitmask: &[u8]) -> Vec<bool> {
-    let len = code.len();
-    if len == 0 {
-        return vec![];
-    }
-
-    let mut starts = vec![false; len];
-
-    // Index 0 is always a gas block start if it's a valid instruction
-    if !bitmask.is_empty() && bitmask[0] == 1 && Opcode::from_byte(code[0]).is_some() {
-        starts[0] = true;
-    }
-
-    let mut i = 0;
-    while i < len {
-        if i >= bitmask.len() || bitmask[i] != 1 {
-            i += 1;
-            continue;
-        }
-        let Some(op) = Opcode::from_byte(code[i]) else {
-            i += 1;
-            continue;
-        };
-
-        let skip = {
-            let mut s = 0;
-            for j in 0..25 {
-                let idx = i + 1 + j;
-                let bit = if idx < bitmask.len() { bitmask[idx] } else { 1 };
-                if bit == 1 {
-                    s = j;
-                    break;
-                }
-            }
-            s
-        };
-
-        if op.is_terminator() {
-            let next = i + 1 + skip;
-            if next < len && next < bitmask.len() && bitmask[next] == 1 {
-                starts[next] = true;
-            }
-        }
-
-        // No branch target marking — gas blocks are terminator-only.
-
-        i += 1 + skip;
-    }
-
-    starts
+    compute_basic_block_starts(code, bitmask)
 }
 
 fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) {
@@ -2586,54 +2563,9 @@ fn compute_bb_starts_inner(code: &[u8], bitmask: &[u8]) -> (Vec<bool>, Vec<u8>) 
             }
         }
 
-        // For branch/jump instructions, mark the target as a basic block start
-        let cat = op.category();
-        match cat {
-            crate::instruction::InstructionCategory::OneOffset if i + 5 <= len => {
-                // Jump: opcode + 4-byte offset
-                let off = i32::from_le_bytes([code[i + 1], code[i + 2], code[i + 3], code[i + 4]]);
-                let target = (i as i64 + off as i64) as usize;
-                if target < len && target < bitmask.len() && bitmask[target] == 1 {
-                    starts[target] = true;
-                }
-            }
-            crate::instruction::InstructionCategory::TwoRegOneOffset if i + 6 <= len => {
-                // Branch: opcode + 1-byte regs + 4-byte offset
-                let off = i32::from_le_bytes([code[i + 2], code[i + 3], code[i + 4], code[i + 5]]);
-                let target = (i as i64 + off as i64) as usize;
-                if target < len && target < bitmask.len() && bitmask[target] == 1 {
-                    starts[target] = true;
-                }
-            }
-            crate::instruction::InstructionCategory::OneRegImmOffset if i + 2 <= len => {
-                // BranchImm: opcode(1) + reg|lx(1) + imm(lx bytes) + offset(ly bytes)
-                // lx is variable (0-4), so compute the actual offset position.
-                let reg_byte = code[i + 1];
-                let lx = ((reg_byte as usize / 16) % 8).min(4);
-                let ly = if skip > lx + 1 {
-                    (skip - lx - 1).min(4)
-                } else {
-                    0
-                };
-                let off_start = i + 2 + lx;
-                if ly > 0 && off_start + ly <= len {
-                    let mut buf = [0u8; 4];
-                    buf[..ly].copy_from_slice(&code[off_start..off_start + ly]);
-                    // Sign-extend from ly bytes
-                    if ly < 4 && buf[ly - 1] & 0x80 != 0 {
-                        for b in &mut buf[ly..4] {
-                            *b = 0xFF;
-                        }
-                    }
-                    let off = i32::from_le_bytes(buf);
-                    let target = (i as i64 + off as i64) as usize;
-                    if target < len && target < bitmask.len() && bitmask[target] == 1 {
-                        starts[target] = true;
-                    }
-                }
-            }
-            _ => {}
-        }
+        // Branch targets are deliberately NOT marked: GP basic blocks are
+        // {0} ∪ post-terminator only, and branch/djump targets must land on
+        // one of those or the instruction panics (GP eq A.17/A.18).
 
         i += 1 + skip; // advance to next instruction start
     }
@@ -3179,13 +3111,12 @@ mod tests {
     }
 
     // ========================================================================
-    // Issue #155 regression tests: gas block starts vs branch target validation
+    // Basic-block strictness tests (GP eq A.17/A.18; supersedes issue #155)
     // ========================================================================
     //
-    // These tests verify that gas block boundaries and branch-target validation
-    // are correctly separated per the JAM spec. Gas blocks are defined as
-    // {PC=0} ∪ {post-terminator PCs}. Branch targets are valid landing sites
-    // but must NOT affect gas block boundaries.
+    // Basic blocks (= gas blocks) are {PC=0} ∪ {post-terminator PCs}. Branch
+    // and djump targets must land on a block start — a taken branch to a
+    // mid-block target panics, and never affects gas block boundaries.
 
     /// Build a program with a branch target that is NOT post-terminator.
     ///
@@ -3232,39 +3163,24 @@ mod tests {
     }
 
     #[test]
-    fn test_gas_block_starts_exclude_branch_targets() {
+    fn test_block_starts_exclude_branch_targets() {
         let (code, bitmask) = branch_target_mid_block_program();
         let bb_starts = compute_basic_block_starts(&code, &bitmask);
-        let gas_starts = compute_gas_block_starts(&code, &bitmask);
 
-        // basic_block_starts includes branch targets
+        // Strict GP set: {0} ∪ post-terminator. The Jump target at PC 3 is
+        // mid-block and must NOT be a valid landing site.
         assert!(bb_starts[0], "PC 0 should be a basic block start");
         assert!(
             bb_starts[1],
             "PC 1 should be a basic block start (post-Fallthrough)"
         );
         assert!(
-            bb_starts[3],
-            "PC 3 should be a basic block start (branch target)"
+            !bb_starts[3],
+            "PC 3 must NOT be a basic block start (mid-block branch target)"
         );
         assert!(
             bb_starts[10],
             "PC 10 should be a basic block start (post-Jump)"
-        );
-
-        // gas_block_starts does NOT include branch targets
-        assert!(gas_starts[0], "PC 0 should be a gas block start");
-        assert!(
-            gas_starts[1],
-            "PC 1 should be a gas block start (post-Fallthrough)"
-        );
-        assert!(
-            !gas_starts[3],
-            "PC 3 should NOT be a gas block start (branch target only)"
-        );
-        assert!(
-            gas_starts[10],
-            "PC 10 should be a gas block start (post-Jump)"
         );
     }
 
@@ -3348,14 +3264,12 @@ mod tests {
     }
 
     #[test]
-    fn test_branch_target_accepted_even_if_not_gas_start() {
-        // A branch target that is NOT a gas block start must still be accepted
-        // as a valid landing site for branch validation.
+    fn test_branch_to_mid_block_target_panics() {
+        // GP eq A.17: a taken branch whose target is not a basic-block start
+        // panics. PC 3 is a mid-block Jump target in this program.
         let (code, bitmask) = branch_target_mid_block_program();
 
-        // PC 3 is a branch target but NOT a gas start.
-        // Verify is_basic_block_start accepts it (branch validation).
-        let vm = Interpreter::new(
+        let mut vm = Interpreter::new(
             code,
             bitmask,
             vec![],
@@ -3365,14 +3279,14 @@ mod tests {
             crate::gas_cost::DEFAULT_MEM_CYCLES,
         );
         assert!(
-            vm.is_basic_block_start(3),
-            "branch target at PC 3 must be a valid basic block start for validation"
+            !vm.is_basic_block_start(3),
+            "mid-block branch target at PC 3 must not be a valid landing site"
         );
+        // Gas cost at PC 3 stays zero (not a block start).
+        assert_eq!(vm.block_gas_costs[3], 0);
 
-        // But the gas cost at PC 3 should be zero (it's not a gas block start).
-        assert_eq!(
-            vm.block_gas_costs[3], 0,
-            "PC 3 should not carry gas cost (not a gas block start)"
-        );
+        // Executing through the Jump at PC 5 (target PC 3) must panic.
+        let exit = vm.run();
+        assert_eq!(exit.0, ExitReason::Panic, "jump to mid-block must panic");
     }
 }

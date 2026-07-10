@@ -30,7 +30,7 @@ use std::collections::HashMap;
 /// Blake2b-256 makes collisions negligible, so no blob equality check is needed.
 #[cfg(feature = "std")]
 pub struct CodeCache {
-    entries: HashMap<[u8; 32], Arc<CodeCap>>,
+    entries: HashMap<([u8; 32], crate::IsaMode), Arc<CodeCap>>,
 }
 
 #[cfg(feature = "std")]
@@ -41,9 +41,10 @@ impl CodeCache {
         }
     }
 
-    /// Blake2b-256 hash of blob bytes for cache dedup key.
-    fn hash_blob(blob: &[u8]) -> [u8; 32] {
-        grey_crypto::blake2b_256(blob).0
+    /// Cache key: blake2b-256 of the blob bytes plus the ISA mode the code
+    /// was compiled under (compiled code embeds mode-dependent behavior).
+    fn cache_key(blob: &[u8], isa_mode: crate::IsaMode) -> ([u8; 32], crate::IsaMode) {
+        (grey_crypto::blake2b_256(blob).0, isa_mode)
     }
 }
 
@@ -131,6 +132,8 @@ pub struct InvocationKernel {
     next_code_id: u16,
     /// Backend selection for CODE cap compilation.
     pub backend: crate::backend::PvmBackend,
+    /// ISA profile for CODE cap compilation and execution.
+    pub isa_mode: crate::IsaMode,
     /// CODE cap ID for fast recompiler resume after ProtocolCall.
     /// When set, the next `run()` call uses `run_recompiler_resume()` instead
     /// of `run_recompiler_segment()`, avoiding a full JitContext rebuild.
@@ -169,6 +172,7 @@ impl InvocationKernel {
             args,
             gas,
             crate::backend::PvmBackend::Default,
+            crate::IsaMode::Jar,
             Some(cache),
         )
     }
@@ -180,7 +184,21 @@ impl InvocationKernel {
         gas: u64,
         backend: crate::backend::PvmBackend,
     ) -> Result<Self, KernelError> {
-        Self::new_inner(blob, _args, gas, backend, None)
+        Self::new_inner(blob, _args, gas, backend, crate::IsaMode::Jar, None)
+    }
+
+    /// Create a new kernel with a specific backend and ISA profile.
+    ///
+    /// `IsaMode::Conformance` executes under the graypaper-strict ISA:
+    /// opcode 3 (`Ecall`, the jar capability-kernel surface) panics.
+    pub fn new_with_backend_and_mode(
+        blob: &[u8],
+        args: &[u8],
+        gas: u64,
+        backend: crate::backend::PvmBackend,
+        isa_mode: crate::IsaMode,
+    ) -> Result<Self, KernelError> {
+        Self::new_inner(blob, args, gas, backend, isa_mode, None)
     }
 
     fn new_inner(
@@ -188,6 +206,7 @@ impl InvocationKernel {
         _args: &[u8],
         gas: u64,
         backend: crate::backend::PvmBackend,
+        isa_mode: crate::IsaMode,
         mut code_cache: Option<&mut CodeCache>,
     ) -> Result<Self, KernelError> {
         let parsed = program::parse_blob(blob).ok_or(KernelError::InvalidBlob)?;
@@ -212,6 +231,7 @@ impl InvocationKernel {
             mem_cycles,
             next_code_id: 0,
             backend,
+            isa_mode,
             recompiler_resume_cap: None,
             #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
             live_ctx: None,
@@ -509,7 +529,7 @@ impl InvocationKernel {
                 }
 
                 // Check compile cache first (blake2b-256 makes collisions negligible).
-                let cache_key = CodeCache::hash_blob(code_data);
+                let cache_key = CodeCache::cache_key(code_data, self.isa_mode);
                 if let Some(cached) = code_cache.as_ref().and_then(|c| c.entries.get(&cache_key)) {
                     let code_cap = Arc::clone(cached);
                     self.code_caps.push(Arc::clone(&code_cap));
@@ -527,6 +547,7 @@ impl InvocationKernel {
                     &code_blob.jump_table,
                     self.mem_cycles,
                     self.backend,
+                    self.isa_mode,
                 )
                 .map_err(|e| {
                     tracing::warn!("compile failed: {e}");
@@ -1833,8 +1854,11 @@ impl InvocationKernel {
                 jt_ptr: code_cap.jump_table.as_ptr(),
                 jt_len: code_cap.jump_table.len() as u32,
                 _pad0: 0,
-                bb_starts: code_cap.bitmask.as_ptr(),
-                bb_len: code_cap.bitmask.len() as u32,
+                // Strict basic-block starts ({0} ∪ post-terminator): djump
+                // targets must land on these, not on arbitrary instruction
+                // starts (GP eq A.18).
+                bb_starts: compiled.block_starts.as_ptr(),
+                bb_len: compiled.block_starts.len() as u32,
                 _pad1: 0,
                 entry_pc: vm.pc,
                 pc: vm.pc,
@@ -1999,6 +2023,7 @@ impl InvocationKernel {
         interp.pc = vm.pc;
         interp.heap_base = vm.heap_base();
         interp.heap_top = vm.heap_top();
+        interp.isa_mode = self.isa_mode;
 
         let (exit, _gas_used) = interp.run();
 
@@ -2122,6 +2147,18 @@ impl InvocationKernel {
             };
 
             // Dispatch on the exit reason (shared for both backends).
+            #[cfg(feature = "std")]
+            {
+                let vm = self.vm_arena.vm(self.active_vm);
+                std::eprintln!(
+                    "EXIT reason={exit_reason} arg={exit_arg} pc={} gas={} r7={:#x} r11={} r12={:#x}",
+                    vm.pc,
+                    vm.gas(),
+                    vm.reg(7),
+                    vm.reg(11),
+                    vm.reg(12)
+                );
+            }
 
             match exit_reason {
                 4 => {
@@ -2613,6 +2650,174 @@ mod tests {
         // Packed bitmask
         blob.push(bitmask[0]); // 1 bit packed
         blob
+    }
+
+    /// Build a JAR blob from raw (code, bitmask bits, jump table).
+    /// Layout mirrors `make_simple_blob`: CODE cap at 64, one RW page at 65.
+    fn make_blob_with(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> Vec<u8> {
+        let mut code_data = Vec::new();
+        code_data.extend_from_slice(&(jump_table.len() as u32).to_le_bytes());
+        code_data.push(1u8); // entry_size = 1 (byte targets)
+        code_data.extend_from_slice(&(code.len() as u32).to_le_bytes());
+        for &t in jump_table {
+            code_data.push(t as u8);
+        }
+        code_data.extend_from_slice(code);
+        let mut packed = vec![0u8; code.len().div_ceil(8)];
+        for (i, &b) in bitmask.iter().enumerate() {
+            if b != 0 {
+                packed[i / 8] |= 1 << (i % 8);
+            }
+        }
+        code_data.extend_from_slice(&packed);
+
+        let caps = vec![
+            CapManifestEntry {
+                cap_index: 64,
+                cap_type: CapEntryType::Code,
+                base_page: 0,
+                page_count: 0,
+                init_access: Access::RO,
+                data_offset: 0,
+                data_len: code_data.len() as u32,
+            },
+            CapManifestEntry {
+                cap_index: 65,
+                cap_type: CapEntryType::Data,
+                base_page: 0,
+                page_count: 1,
+                init_access: Access::RW,
+                data_offset: 0,
+                data_len: 0,
+            },
+        ];
+        build_blob(10, 64, 4096, &caps, &code_data)
+    }
+
+    fn run_blob(code: &[u8], bitmask: &[u8], jump_table: &[u32]) -> KernelResult {
+        let blob = make_blob_with(code, bitmask, jump_table);
+        let mut kernel = InvocationKernel::new(&blob, &[], 100_000).unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+        kernel.run()
+    }
+
+    /// djump program: `LoadImm T0,2; Fallthrough; MoveReg; JumpInd T0,0;
+    /// Trap; JumpInd RA,0`. The djump resolves a = 2 to jump-table entry 0.
+    /// Block starts: {0, 4 (post-Fallthrough), 13 (post-Trap)}; PC 6 is an
+    /// instruction start but mid-block.
+    fn djump_program() -> (Vec<u8>, Vec<u8>) {
+        let code = vec![
+            51, 2, 2, // PC 0: LoadImm T0, 2
+            1, // PC 3: Fallthrough (PC 4 becomes a block start)
+            100, 0x23, // PC 4: MoveReg T1 ← T0 (PC 6 is mid-block; RA untouched)
+            50, 2, 0, 0, 0, 0, // PC 6: JumpInd T0, 0
+            0, // PC 12: Trap (PC 13 becomes a block start)
+            50, 0, 0, 0, 0, 0, // PC 13: JumpInd RA, 0 → halt
+        ];
+        let bitmask = vec![
+            1, 0, 0, // LoadImm
+            1, // Fallthrough
+            1, 0, // MoveReg
+            1, 0, 0, 0, 0, 0, // JumpInd
+            1, // Trap
+            1, 0, 0, 0, 0, 0, // JumpInd (halt)
+        ];
+        (code, bitmask)
+    }
+
+    #[test]
+    fn test_djump_to_block_start_halts() {
+        let (code, bitmask) = djump_program();
+        // Jump-table entry 0 → PC 13 (post-terminator block start): valid.
+        let result = run_blob(&code, &bitmask, &[13]);
+        assert!(
+            matches!(result, KernelResult::Halt),
+            "djump to a block start should reach the halt, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_djump_to_mid_block_panics() {
+        let (code, bitmask) = djump_program();
+        // Jump-table entry 0 → PC 6: an instruction start, but mid-block —
+        // GP eq A.18 panics (previously the two backends disagreed here:
+        // the JIT validated against raw instruction starts).
+        let result = run_blob(&code, &bitmask, &[6]);
+        assert!(
+            matches!(result, KernelResult::Panic),
+            "djump to a mid-block target must panic, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_load_imm_jump_ind_uses_pre_state_base() {
+        // GP A.5.12: `load_imm_jump_ind rA, rB, νX, νY` jumps to
+        // (ω_B + νY) mod 2^32 using the PRE-state ω_B, and writes
+        // ω'_A = νX. With rA == rB the old value must address the jump.
+        let code = vec![
+            51, 2, 2, // PC 0: LoadImm T0, 2
+            180, 0x22, 1, 4, 0, // PC 3: LoadImmJumpInd rA=T0, rB=T0, νX=4, νY=0
+            0, // PC 8: Trap (PC 9 becomes a block start)
+            50, 0, 0, 0, 0, 0, // PC 9: JumpInd RA, 0 → halt
+        ];
+        let bitmask = vec![
+            1, 0, 0, // LoadImm
+            1, 0, 0, 0, 0, // LoadImmJumpInd
+            1, // Trap
+            1, 0, 0, 0, 0, 0, // JumpInd (halt)
+        ];
+        // a = old T0 (2) → jump-table entry 0 → PC 9 → halt. If the write
+        // ω'_A = νX = 4 were applied first, a = 4 would resolve entry 1 →
+        // PC 8 (Trap) → panic.
+        let result = run_blob(&code, &bitmask, &[9, 8]);
+        assert!(
+            matches!(result, KernelResult::Halt),
+            "load_imm_jump_ind must use the pre-state base register, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_ecall_isa_modes() {
+        // LoadImm64 φ[12] = empty-slot subject, then Ecall, then Trap.
+        // Jar mode dispatches the ecall (unresolvable subject → WHAT,
+        // continue) and panics at the Trap (pc 11); Conformance mode panics
+        // at the Ecall opcode itself (pc 10).
+        let mut code = vec![20, 12]; // LoadImm64 φ[12]
+        code.extend_from_slice(&(200u64 << 32).to_le_bytes()); // subject = slot 200 (empty)
+        code.push(3); // PC 10: Ecall
+        code.push(0); // PC 11: Trap
+        let mut bitmask = vec![0u8; code.len()];
+        bitmask[0] = 1; // LoadImm64
+        bitmask[10] = 1; // Ecall
+        bitmask[11] = 1; // Trap
+        let blob = make_blob_with(&code, &bitmask, &[]);
+
+        let mut kernel = InvocationKernel::new(&blob, &[], 100_000).unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+        let result = kernel.run();
+        assert!(matches!(result, KernelResult::Panic));
+        assert_eq!(
+            kernel.vm_arena.vm(kernel.active_vm).pc,
+            11,
+            "Jar mode dispatches the ecall and panics at the following Trap"
+        );
+
+        let mut kernel = InvocationKernel::new_with_backend_and_mode(
+            &blob,
+            &[],
+            100_000,
+            crate::backend::PvmBackend::Default,
+            crate::IsaMode::Conformance,
+        )
+        .unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+        let result = kernel.run();
+        assert!(matches!(result, KernelResult::Panic));
+        assert_eq!(
+            kernel.vm_arena.vm(kernel.active_vm).pc,
+            10,
+            "Conformance mode panics at the Ecall opcode itself"
+        );
     }
 
     fn make_simple_blob(memory_pages: u32) -> Vec<u8> {
