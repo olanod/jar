@@ -6,8 +6,37 @@
 //! against `spec/tests/vectors/codec/`.
 
 use grey_crypto::gp072_codec as gp;
+use grey_types::config::Config;
 
 const DIR: &str = "../../../spec/tests/vectors/codec";
+
+fn config_for(variant: &str) -> Config {
+    if variant == "gp072_tiny" {
+        Config::tiny()
+    } else {
+        Config::full()
+    }
+}
+
+/// Round-trip both variants where decode needs the variant's Config.
+fn roundtrip_both_cfg<T>(
+    stem: &str,
+    decode: impl Fn(&mut gp::Reader, &Config) -> Result<T, gp::DecodeError> + Copy,
+    encode: impl Fn(&T) -> Vec<u8> + Copy,
+) {
+    for variant in ["gp072_tiny", "gp072_full"] {
+        let cfg = config_for(variant);
+        let path = format!("{DIR}/{stem}.{variant}.bin");
+        let bin = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
+        let value = gp::decode_all(&bin, |r| decode(r, &cfg))
+            .unwrap_or_else(|e| panic!("{path}: decode failed: {e:?}"));
+        assert_eq!(
+            encode(&value),
+            bin,
+            "{path}: re-encode does not match the reference bytes"
+        );
+    }
+}
 
 /// Decode `bin` with `decode`, re-encode with `encode`, assert byte-equality.
 fn roundtrip<T>(
@@ -84,4 +113,49 @@ fn work_result_roundtrip() {
             b
         });
     }
+}
+
+#[test]
+fn tickets_extrinsic_roundtrip() {
+    roundtrip_both("tickets_extrinsic", gp::decode_tickets, |t| {
+        let mut b = Vec::new();
+        gp::encode_tickets(t, &mut b);
+        b
+    });
+}
+
+#[test]
+fn preimages_extrinsic_roundtrip() {
+    roundtrip_both("preimages_extrinsic", gp::decode_preimages, |p| {
+        let mut b = Vec::new();
+        gp::encode_preimages(p, &mut b);
+        b
+    });
+}
+
+#[test]
+fn guarantees_extrinsic_roundtrip() {
+    roundtrip_both("guarantees_extrinsic", gp::decode_guarantees, |g| {
+        let mut b = Vec::new();
+        gp::encode_guarantees(g, &mut b);
+        b
+    });
+}
+
+#[test]
+fn assurances_extrinsic_roundtrip() {
+    roundtrip_both_cfg("assurances_extrinsic", gp::decode_assurances, |a| {
+        let mut b = Vec::new();
+        gp::encode_assurances(a, &mut b);
+        b
+    });
+}
+
+#[test]
+fn disputes_extrinsic_roundtrip() {
+    roundtrip_both_cfg("disputes_extrinsic", gp::decode_disputes, |d| {
+        let mut b = Vec::new();
+        gp::encode_disputes(d, &mut b);
+        b
+    });
 }

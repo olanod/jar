@@ -1,19 +1,30 @@
-//! Graypaper (gp072) wire-format encoders for the WorkReport family.
+//! Graypaper (gp072) wire-format codec (GP Appendix C).
 //!
 //! grey's primary codec (`scale`) implements the jar1 wire format: fixed-width
-//! `u32` count/length prefixes. The graypaper 0.7.2 codec (GP Appendix C) uses
-//! a variable-length natural encoding (`encodeNat`, GP C.1) for counts,
-//! lengths, and several numeric fields, and omits jar1-only fields. This module
-//! provides just enough of the GP encoder to compute the GP `report_hash` that
-//! gp072 guarantee signatures are taken over. Field layouts mirror
-//! `spec/Jar/Codec.lean` (encodeWorkReport / encodeWorkDigest / encodeAvailSpec
-//! / encodeRefinementContext / encodeWorkResult).
+//! `u32` count/length prefixes. The graypaper 0.7.2 codec uses a variable-length
+//! natural encoding (`encodeNat`, GP C.1) for counts, lengths, and several
+//! numeric fields, raw `ceil(C/8)` assurance bitfields, no-count-prefix verdict
+//! judgments, and it omits jar1-only fields. This module provides encode+decode
+//! for the types covered by `spec/tests/vectors/codec/`, mirroring
+//! `spec/Jar/Codec.lean`; it computes the GP `report_hash` gp072 guarantee
+//! signatures are taken over, and round-trips the shared codec vectors.
+//!
+//! Some layouts are param-dependent (assurance bitfield = `ceil(core_count/8)`,
+//! verdict judgment count = validator supermajority), so those functions take a
+//! [`Config`].
 
-use grey_types::Hash;
+use grey_types::config::Config;
+use grey_types::header::{
+    Assurance, Culprit, DisputesExtrinsic, Fault, Guarantee, Judgment, TicketProof, Verdict,
+};
 use grey_types::work::{
     AvailabilitySpec, ImportSegment, RefinementContext, WorkDigest, WorkItem, WorkPackage,
     WorkReport, WorkResult,
 };
+use grey_types::{Ed25519PublicKey, Ed25519Signature, Hash};
+
+/// Fixed length of a Bandersnatch ring-VRF ticket proof (bytes).
+const RING_VRF_PROOF_LEN: usize = 784;
 
 /// A GP-codec decode failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,10 +90,45 @@ impl<'a> Reader<'a> {
     }
 
     pub fn hash(&mut self) -> Result<Hash, DecodeError> {
-        let bytes = self.take(32)?;
-        let mut h = [0u8; 32];
-        h.copy_from_slice(bytes);
-        Ok(Hash(h))
+        Ok(Hash(self.array32()?))
+    }
+
+    fn array32(&mut self) -> Result<[u8; 32], DecodeError> {
+        let mut a = [0u8; 32];
+        a.copy_from_slice(self.take(32)?);
+        Ok(a)
+    }
+
+    fn ed25519_sig(&mut self) -> Result<Ed25519Signature, DecodeError> {
+        let mut a = [0u8; 64];
+        a.copy_from_slice(self.take(64)?);
+        Ok(Ed25519Signature(a))
+    }
+
+    fn ed25519_key(&mut self) -> Result<Ed25519PublicKey, DecodeError> {
+        Ok(Ed25519PublicKey(self.array32()?))
+    }
+
+    fn bool(&mut self) -> Result<bool, DecodeError> {
+        Ok(self.u8()? != 0)
+    }
+
+    /// Raw fixed-length byte blob (no prefix).
+    fn raw(&mut self, n: usize) -> Result<Vec<u8>, DecodeError> {
+        Ok(self.take(n)?.to_vec())
+    }
+
+    /// A fixed-count array (no count prefix), `n` elements.
+    fn fixed_array<T>(
+        &mut self,
+        n: usize,
+        mut each: impl FnMut(&mut Self) -> Result<T, DecodeError>,
+    ) -> Result<Vec<T>, DecodeError> {
+        let mut out = Vec::with_capacity(n);
+        for _ in 0..n {
+            out.push(each(self)?);
+        }
+        Ok(out)
     }
 
     /// A varnat-length-prefixed byte blob.
@@ -379,6 +425,175 @@ pub fn decode_work_package(r: &mut Reader) -> Result<WorkPackage, DecodeError> {
         authorizer_config,
         items,
     })
+}
+
+// --- Extrinsic sub-types (GP §C.4) ------------------------------------------
+
+/// TicketProof: `attempt(u8) ⌢ proof(784 raw)`.
+pub fn encode_ticket_proof(t: &TicketProof, buf: &mut Vec<u8>) {
+    buf.push(t.attempt);
+    buf.extend_from_slice(&t.proof);
+}
+
+pub fn decode_ticket_proof(r: &mut Reader) -> Result<TicketProof, DecodeError> {
+    Ok(TicketProof {
+        attempt: r.u8()?,
+        proof: r.raw(RING_VRF_PROOF_LEN)?,
+    })
+}
+
+/// PreimagesExtrinsic: count-prefixed `(service_id(fixed4), length-prefixed blob)`.
+pub fn encode_preimages(ps: &[(u32, Vec<u8>)], buf: &mut Vec<u8>) {
+    encode_count_prefixed(ps, buf, |(sid, blob), b| {
+        encode_fixed(4, *sid as u64, b);
+        encode_length_prefixed(blob, b);
+    });
+}
+
+pub fn decode_preimages(r: &mut Reader) -> Result<Vec<(u32, Vec<u8>)>, DecodeError> {
+    r.count_prefixed(|r| Ok((r.fixed(4)? as u32, r.length_prefixed()?)))
+}
+
+/// Guarantee: `WorkReport ⌢ timeslot(fixed4) ⌢ count-prefixed (validator_index(fixed2), sig(64))`.
+pub fn encode_guarantee(g: &Guarantee, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&encode_work_report(&g.report));
+    encode_fixed(4, g.timeslot as u64, buf);
+    encode_count_prefixed(&g.credentials, buf, |(vi, sig), b| {
+        encode_fixed(2, *vi as u64, b);
+        b.extend_from_slice(&sig.0);
+    });
+}
+
+pub fn decode_guarantee(r: &mut Reader) -> Result<Guarantee, DecodeError> {
+    Ok(Guarantee {
+        report: decode_work_report(r)?,
+        timeslot: r.fixed(4)? as u32,
+        credentials: r.count_prefixed(|r| Ok((r.fixed(2)? as u16, r.ed25519_sig()?)))?,
+    })
+}
+
+/// Assurance: `anchor(32) ⌢ bitfield(ceil(C/8) raw) ⌢ validator_index(fixed2) ⌢ sig(64)`.
+pub fn encode_assurance(a: &Assurance, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&a.anchor.0);
+    buf.extend_from_slice(&a.bitfield);
+    encode_fixed(2, a.validator_index as u64, buf);
+    buf.extend_from_slice(&a.signature.0);
+}
+
+pub fn decode_assurance(r: &mut Reader, cfg: &Config) -> Result<Assurance, DecodeError> {
+    Ok(Assurance {
+        anchor: r.hash()?,
+        bitfield: r.raw(cfg.avail_bitfield_bytes())?,
+        validator_index: r.fixed(2)? as u16,
+        signature: r.ed25519_sig()?,
+    })
+}
+
+/// Judgment: `is_valid(u8) ⌢ validator_index(fixed2) ⌢ sig(64)`.
+fn encode_judgment(j: &Judgment, buf: &mut Vec<u8>) {
+    buf.push(j.is_valid as u8);
+    encode_fixed(2, j.validator_index as u64, buf);
+    buf.extend_from_slice(&j.signature.0);
+}
+
+fn decode_judgment(r: &mut Reader) -> Result<Judgment, DecodeError> {
+    Ok(Judgment {
+        is_valid: r.bool()?,
+        validator_index: r.fixed(2)? as u16,
+        signature: r.ed25519_sig()?,
+    })
+}
+
+/// Verdict: `report_hash(32) ⌢ age(fixed4) ⌢ judgments(fixed-count array)`. The
+/// judgment count is not on the wire — it is the validator supermajority.
+fn encode_verdict(v: &Verdict, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&v.report_hash.0);
+    encode_fixed(4, v.age as u64, buf);
+    for j in &v.judgments {
+        encode_judgment(j, buf);
+    }
+}
+
+fn decode_verdict(r: &mut Reader, cfg: &Config) -> Result<Verdict, DecodeError> {
+    Ok(Verdict {
+        report_hash: r.hash()?,
+        age: r.fixed(4)? as u32,
+        judgments: r.fixed_array(cfg.super_majority() as usize, decode_judgment)?,
+    })
+}
+
+/// Culprit: `report_hash(32) ⌢ validator_key(32) ⌢ sig(64)`.
+fn encode_culprit(c: &Culprit, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&c.report_hash.0);
+    buf.extend_from_slice(&c.validator_key.0);
+    buf.extend_from_slice(&c.signature.0);
+}
+
+fn decode_culprit(r: &mut Reader) -> Result<Culprit, DecodeError> {
+    Ok(Culprit {
+        report_hash: r.hash()?,
+        validator_key: r.ed25519_key()?,
+        signature: r.ed25519_sig()?,
+    })
+}
+
+/// Fault: `report_hash(32) ⌢ is_valid(u8) ⌢ validator_key(32) ⌢ sig(64)`.
+fn encode_fault(f: &Fault, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(&f.report_hash.0);
+    buf.push(f.is_valid as u8);
+    buf.extend_from_slice(&f.validator_key.0);
+    buf.extend_from_slice(&f.signature.0);
+}
+
+fn decode_fault(r: &mut Reader) -> Result<Fault, DecodeError> {
+    Ok(Fault {
+        report_hash: r.hash()?,
+        is_valid: r.bool()?,
+        validator_key: r.ed25519_key()?,
+        signature: r.ed25519_sig()?,
+    })
+}
+
+/// DisputesExtrinsic: count-prefixed verdicts ⌢ culprits ⌢ faults.
+pub fn encode_disputes(d: &DisputesExtrinsic, buf: &mut Vec<u8>) {
+    encode_count_prefixed(&d.verdicts, buf, encode_verdict);
+    encode_count_prefixed(&d.culprits, buf, encode_culprit);
+    encode_count_prefixed(&d.faults, buf, encode_fault);
+}
+
+pub fn decode_disputes(r: &mut Reader, cfg: &Config) -> Result<DisputesExtrinsic, DecodeError> {
+    Ok(DisputesExtrinsic {
+        verdicts: r.count_prefixed(|r| decode_verdict(r, cfg))?,
+        culprits: r.count_prefixed(decode_culprit)?,
+        faults: r.count_prefixed(decode_fault)?,
+    })
+}
+
+/// TicketsExtrinsic: count-prefixed array of TicketProof.
+pub fn encode_tickets(tickets: &[TicketProof], buf: &mut Vec<u8>) {
+    encode_count_prefixed(tickets, buf, encode_ticket_proof);
+}
+
+pub fn decode_tickets(r: &mut Reader) -> Result<Vec<TicketProof>, DecodeError> {
+    r.count_prefixed(decode_ticket_proof)
+}
+
+/// GuaranteesExtrinsic: count-prefixed array of Guarantee.
+pub fn encode_guarantees(gs: &[Guarantee], buf: &mut Vec<u8>) {
+    encode_count_prefixed(gs, buf, encode_guarantee);
+}
+
+pub fn decode_guarantees(r: &mut Reader) -> Result<Vec<Guarantee>, DecodeError> {
+    r.count_prefixed(decode_guarantee)
+}
+
+/// AssurancesExtrinsic: count-prefixed array of Assurance.
+pub fn encode_assurances(a: &[Assurance], buf: &mut Vec<u8>) {
+    encode_count_prefixed(a, buf, encode_assurance);
+}
+
+pub fn decode_assurances(r: &mut Reader, cfg: &Config) -> Result<Vec<Assurance>, DecodeError> {
+    r.count_prefixed(|r| decode_assurance(r, cfg))
 }
 
 /// Decode a full byte slice with `decode`, requiring all bytes to be consumed.
