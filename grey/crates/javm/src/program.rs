@@ -202,7 +202,7 @@ pub fn parse_blob(blob: &[u8]) -> Option<ParsedBlob<'_>> {
 }
 
 /// Parsed code sub-blob (within a CODE cap's data section).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParsedCodeBlob {
     pub jump_table: Vec<u32>,
     pub code: Vec<u8>,
@@ -261,7 +261,7 @@ pub fn parse_code_blob(data: &[u8]) -> Option<ParsedCodeBlob> {
 }
 
 /// Unpack a packed bitmask (1 bit per byte) into one byte per code position.
-fn unpack_bitmask(packed: &[u8], code_len: usize) -> Vec<u8> {
+pub(crate) fn unpack_bitmask(packed: &[u8], code_len: usize) -> Vec<u8> {
     let mut bitmask = vec![0u8; code_len];
     for i in 0..code_len {
         bitmask[i] = (packed[i / 8] >> (i % 8)) & 1;

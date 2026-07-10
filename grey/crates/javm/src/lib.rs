@@ -21,6 +21,7 @@ pub mod interpreter;
 #[cfg(feature = "std")]
 pub mod kernel;
 pub mod program;
+pub mod spi;
 pub mod vm_pool;
 // Real JIT recompiler on Linux x86-64.
 #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
