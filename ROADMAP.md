@@ -131,18 +131,32 @@ Gates are named after what turns green, not after effort spent.
 Phase 2 is complete: all five named STF subsystems and all codec vectors are
 green on `gp072_tiny` + `gp072_full`.
 
-**Phase 3 — blob format + PVM-level conformance (L)**
+**Phase 3 — blob format + PVM-level conformance (L)** — _in progress_
 - **GP SPI loader** in javm (the standard-program blob format + Y-function
   memory layout + metadata-prefix stripping) as a parallel init path; the
   `JAR\x02` capability manifest stays behind the magic sniff for jar1
-  compatibility during transition.
+  compatibility during transition. **DONE.** `javm::spi` parses the
+  standard-program blob (metadata strip → E₃/E₂ header → ro/rw → compact
+  deblob), computes the GP flat-memory layout + register ABI (GP eq A.42–A.43),
+  and `InvocationKernel::new_standard` loads it by translating to an equivalent
+  manifest and running under `IsaMode::Conformance`. Validated byte-for-byte
+  against a real service preimage, and end-to-end on both the interpreter and
+  recompiler backends (ro readable at Z_Z, stack writable, φ registers per GP).
+  `spi::is_jar_manifest` provides the magic sniff for the eventual dispatch in
+  the accumulate path.
 - Per-instruction gas mode (the model the 0.7.2 vectors pin) alongside the
-  block-gas models.
+  block-gas models. _Next; self-contained._
 - Import the community JAM PVM test-vector suite (instruction-level
   pre/post register/memory/gas/fault cases); use polkavm-linker (already a
-  build-pvm dep) to cross-check with independently-built blobs.
+  build-pvm dep) to cross-check with independently-built blobs. _Blocked on
+  sourcing: the canonical `w3f/jamtestvectors` has no `pvm/` directory; the
+  community `tomusdrw/jamtestvectors-pvm` mirror is unlicensed. Needs a
+  decision — vendor from an unlicensed source, wait for a licensed one, or
+  synthesize + cross-check with polkavm-linker instead._
 - Gate: PVM vectors green on interpreter AND recompiler; gp072 accumulate
-  vectors executable through grey's own PVM.
+  vectors executable through grey's own PVM. _(The last clause also depends on
+  Phase 4 host-call convergence for a real service to run to completion; the
+  SPI loading mechanics are in place.)_
 
 **Phase 4 — hostcall convergence (L)**
 - Raw `ecalli`-id dispatch for consensus execution (drop the cap-table
