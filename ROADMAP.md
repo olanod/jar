@@ -100,7 +100,7 @@ Gates are named after what turns green, not after effort spent.
   suites green on both backends, spec `make test` across all 3 variants,
   harness serial scenario green.
 
-**Phase 2 — the ratchet switched on (gate MET; codec .bin remaining)**
+**Phase 2 — the ratchet switched on (DONE)**
 - ✅ Parameterized grey's vector loaders on variant (`load_jar_test_variant`
   + `discover_all_variant_test!` + `config_for_variant`); turned on gp072
   for all named subsystems: erasure (already green via its own crate),
@@ -117,11 +117,19 @@ Gates are named after what turns green, not after effort spent.
   coverage of signature verify, the ok outputs, and every post-signature
   error. The 42 passing signatures are cryptographic proof the GP encoder
   is byte-exact vs the Lean oracle.
-- **Remaining:** wire the 60 gp072 codec `.bin` vectors. This needs the GP
-  (varnat) codec extended from the WorkReport family to the other 10 vector
-  types (block, header, extrinsics, disputes, tickets) plus a decode side
-  for round-trip conformance — a focused buildout on the encoder foundation
-  now in place. Shares the GP-codec lineage with Phase 3's GP SPI loader.
+- ✅ Codec `.bin` vectors wired. `grey_crypto::gp072_codec` grew into a full
+  GP (varnat) encode+decode codec, and a round-trip conformance test
+  (`decode .bin` → re-encode → assert byte-equal) covers all 15 vector types
+  on both gp072 variants (30 round-trips): work report/result/item/package,
+  refine context, the five sub-extrinsics, headers, and block. Param-dependent
+  layouts come from the Config (assurance bitfield = `ceil(C/8)`, verdict
+  judgments = supermajority, epoch-marker validators = V, tickets marker = E).
+  These were the canonical JAM vectors — the round-trip pinned down several
+  layouts where the Lean helpers had diverged. This GP codec is the
+  serialization foundation Phase 3's GP SPI loader builds on.
+
+Phase 2 is complete: all five named STF subsystems and all codec vectors are
+green on `gp072_tiny` + `gp072_full`.
 
 **Phase 3 — blob format + PVM-level conformance (L)**
 - **GP SPI loader** in javm (the standard-program blob format + Y-function
