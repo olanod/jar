@@ -55,7 +55,7 @@ fuzz_target!(|data: &[u8]| {
     // Compare results
     match (&interp_result, &recomp_result) {
         (Ok((iv, ig)), Ok((rv, rg))) => {
-            assert_eq!(iv, rv, "exit value mismatch: interp={iv} recomp={rv}");
+            assert_eq!(iv, rv, "register file mismatch: interp={iv:?} recomp={rv:?}");
             assert_eq!(ig, rg, "gas mismatch: interp={ig} recomp={rg}");
         }
         // Both erroring (panic/oog/pagefault) is fine — just check they agree
@@ -78,7 +78,11 @@ enum PvmError {
     InitFailed,
 }
 
-fn run_backend(blob: &[u8], gas: u64, backend: javm::PvmBackend) -> Result<(u64, u64), PvmError> {
+fn run_backend(
+    blob: &[u8],
+    gas: u64,
+    backend: javm::PvmBackend,
+) -> Result<([u64; 13], u64), PvmError> {
     let mut kernel = match javm::kernel::InvocationKernel::new_with_backend(blob, &[], gas, backend)
     {
         Ok(k) => k,
@@ -87,8 +91,12 @@ fn run_backend(blob: &[u8], gas: u64, backend: javm::PvmBackend) -> Result<(u64,
 
     loop {
         match kernel.run() {
-            javm::kernel::KernelResult::Halt(v) => {
-                return Ok((v, gas - kernel.active_gas()));
+            javm::kernel::KernelResult::Halt => {
+                // GP halt convention: output lives in registers/memory, so
+                // compare the full register file at halt.
+                let vm = kernel.vm_arena.vm(kernel.active_vm);
+                let regs: [u64; 13] = core::array::from_fn(|i| vm.reg(i));
+                return Ok((regs, gas - kernel.active_gas()));
             }
             javm::kernel::KernelResult::Panic => return Err(PvmError::Panic),
             javm::kernel::KernelResult::OutOfGas => return Err(PvmError::OutOfGas),

@@ -640,13 +640,23 @@ fn run_accumulate_pvm(
         let result = pvm.kernel_run();
 
         match result {
-            KernelResult::Halt(exit_value) => {
+            KernelResult::Halt => {
                 let gas_used = initial_gas - pvm.gas();
-                tracing::info!(exit_value, gas_used, service_id, "accumulate PVM halted");
+                tracing::info!(gas_used, service_id, "accumulate PVM halted");
 
-                // Output hash is set via the OUTPUT protocol cap during execution
-                // (stored in regular.output by the OUTPUT handler).
-                // exit_value (φ[7]) is unused for output in the capability model.
+                // GP Ψ_M (eq A.36): on halt, o = μ'[ω_7..+ω_8]; when |o| = 32
+                // it is the accumulation output hash and overrides any hash
+                // yielded via the OUTPUT protocol cap during execution.
+                if pvm.reg(8) == 32
+                    && let Ok(out_ptr) = u32::try_from(pvm.reg(7))
+                    && let Some(bytes) = pvm
+                        .kernel()
+                        .and_then(|k| k.read_data_cap_window(out_ptr, 32))
+                {
+                    let mut hash = [0u8; 32];
+                    hash.copy_from_slice(&bytes);
+                    regular.output = Some(grey_types::Hash(hash));
+                }
 
                 return (regular, gas_used);
             }

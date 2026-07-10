@@ -74,14 +74,15 @@ fn error_refine_result(item: &WorkItem, result: WorkResult, gas_used: Gas) -> Re
     }
 }
 
-/// Read output from the kernel's active VM.
-fn read_kernel_output(pvm: &PvmInstance) -> Vec<u8> {
-    let packed = pvm.reg(7);
-    let ptr = (packed >> 32) as u32;
-    let len = (packed & 0xFFFFFFFF) as u32;
-    pvm.kernel()
-        .map(|k| k.read_data_cap_window(ptr, len).unwrap_or_default())
-        .unwrap_or_default()
+/// Read output from the halted VM per GP: `o = μ[ω_7 .. ω_7+ω_8]`.
+///
+/// Returns None when the range is not readable (GP treats an unreadable
+/// output range as a panic ☇).
+fn read_kernel_output(pvm: &PvmInstance) -> Option<Vec<u8>> {
+    let ptr = pvm.reg(7);
+    let len = pvm.reg(8);
+    let (ptr, len) = (u32::try_from(ptr).ok()?, u32::try_from(len).ok()?);
+    pvm.kernel()?.read_data_cap_window(ptr, len)
 }
 
 /// Run the Is-Authorized invocation Ψ_I (GP eq B.1-B.2).
@@ -103,9 +104,14 @@ pub fn invoke_is_authorized(
 
     loop {
         match pvm.kernel_run() {
-            KernelResult::Halt(_) => {
+            KernelResult::Halt => {
                 let gas_used = initial_gas - pvm.gas();
-                let output = read_kernel_output(&pvm);
+                let Some(output) = read_kernel_output(&pvm) else {
+                    // GP: unreadable output range at halt is a panic ☇.
+                    return Err(RefineError::AuthorizationFailed(
+                        "unreadable output range at halt".into(),
+                    ));
+                };
                 return Ok((output, gas_used));
             }
             KernelResult::Panic => {
@@ -163,9 +169,12 @@ pub fn invoke_refine(
 
     loop {
         match pvm.kernel_run() {
-            KernelResult::Halt(_) => {
+            KernelResult::Halt => {
                 let gas_used = initial_gas - pvm.gas();
-                let output = read_kernel_output(&pvm);
+                let Some(output) = read_kernel_output(&pvm) else {
+                    // GP: unreadable output range at halt is a panic ☇.
+                    return error_refine_result(item, WorkResult::Panic, gas_used);
+                };
                 let exports_count = exported_segments.len() as u16;
                 let result = if item.exports_count != exports_count && item.exports_count > 0 {
                     WorkResult::BadExports

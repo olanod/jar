@@ -355,7 +355,9 @@ impl Interpreter {
     /// Handle dynamic jump (eq A.18).
     fn djump(&self, a: u64) -> (Option<ExitReason>, u32) {
         const ZA: u64 = 2; // Jump alignment factor
-        // No halt address check — programs terminate via REPLY (ecalli 0xFF).
+        if a == crate::PVM_HALT_ADDR {
+            return (Some(ExitReason::Halt), self.pc);
+        }
         if a == 0 || a > self.jump_table.len() as u64 * ZA || !a.is_multiple_of(ZA) {
             return (Some(ExitReason::Panic), self.pc);
         }

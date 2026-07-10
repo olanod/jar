@@ -68,7 +68,9 @@ HANDLE's target VM is accessible (non-RUNNING, non-WAITING).
 CALL on a HANDLE or CALLABLE suspends the caller (RUNNING to WAITING\_FOR\_REPLY),
 transfers gas to the callee, and starts the callee (IDLE to RUNNING). Arguments
 pass via phi\[7..10\]. REPLY pops the call frame, returns unused gas, and resumes
-the caller.
+the caller. A root-level REPLY (empty call stack) is a panic: the root VM
+terminates via the GP halt convention (djump to the halt address 2^32 − 2^16),
+not via REPLY.
 
 {docstring handleVmFaultWith}
 

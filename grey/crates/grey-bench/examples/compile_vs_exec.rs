@@ -31,7 +31,7 @@ fn main() {
         let t1 = Instant::now();
         loop {
             match kernel.run() {
-                javm::kernel::KernelResult::Halt(_) => break,
+                javm::kernel::KernelResult::Halt => break,
                 javm::kernel::KernelResult::ProtocolCall { .. } => continue,
                 other => panic!("grey: {:?}", other),
             }

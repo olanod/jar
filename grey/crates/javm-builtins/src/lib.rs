@@ -59,10 +59,24 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 
 // -- Entry point macro --------------------------------------------------------
 
+/// Output window of a JAVM entry function: address + length of the output
+/// bytes, left in ω_7/ω_8 (a0/a1) at halt per the GP invocation ABI.
+///
+/// Returned as a two-register aggregate (a0 = ptr, a1 = len under lp64e).
+#[repr(C)]
+pub struct EntryOutput {
+    pub ptr: u64,
+    pub len: u64,
+}
+
 /// Generate a `_start` entry point for JAVM and PolkaVM targets.
 ///
-/// On JAVM: `_start` calls the named function, then terminates via
-/// `ecalli(0x00)` (REPLY to kernel via IPC slot 0), followed by `unimp` (trap if resumed).
+/// On JAVM: `_start` stashes the halt address the kernel installed in `ra`
+/// (ω_0 = 2^32 − 2^16), calls the named function, and returns to it — a
+/// dynamic jump to the halt address is the GP halt (∎). The entry function
+/// takes `(input_ptr, input_len)` (a0/a1 = ω_7/ω_8) and returns
+/// [`EntryOutput`], leaving the output window in a0/a1 for the host to read
+/// as `μ[ω_7..+ω_8]`.
 /// On PolkaVM: `_start` is `unimp` (polkavm uses exported functions directly).
 /// On host: expands to nothing.
 ///
@@ -76,11 +90,9 @@ macro_rules! javm_entry {
             "_start:",
             // GP register ABI: a0=φ[7]=args address, a1=φ[8]=args length —
             // passed straight through to the entry function.
+            "mv s0, ra", // stash the halt address (call clobbers ra)
             concat!("call ", stringify!($fn_name)),
-            // REPLY to kernel via IPC slot 0
-            "li t0, 0",
-            "ecall",
-            "unimp", // trap if somehow resumed after REPLY
+            "jr s0", // djump to the halt address = halt (∎)
         );
         #[cfg(target_env = "polkavm")]
         core::arch::global_asm!(".global _start", "_start:", "unimp",);

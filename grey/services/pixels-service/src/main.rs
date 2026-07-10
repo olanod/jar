@@ -42,30 +42,28 @@ mod service {
     // Two GP entry points, selected by the transpiler's jump prologue by
     // instruction counter (no φ[7] phase selector): `_start` at IC 0 (refine)
     // and `accumulate` at IC 5. The host owns SP, so there is no in-blob
-    // preamble.
+    // preamble, and the kernel installs the halt address (ω_0 = 2^32 − 2^16)
+    // in ra — returning to it is the GP halt (∎).
     //
-    // Refine is the identity: REPLY immediately. Accumulate runs the pixel
-    // apply, then REPLYs.
+    // Refine is the identity: a0/a1 (ω_7/ω_8) still hold the args window at
+    // halt, so the host reads the input back as output. Accumulate runs the
+    // pixel apply, clears the output window, and halts.
     core::arch::global_asm!(
         ".global _start",
         ".type _start, @function",
         "_start:",
         // refine (IC 0) = identity: echo the input args as the output.
-        // Output window convention: φ[7] = (args_ptr << 32) | args_len, with
-        // φ[7]=args_ptr and φ[8]=args_len on entry (GP register ABI).
-        "slli a0, a0, 32", // args_ptr << 32
-        "or a0, a0, a1",   // | args_len
-        "li t0, 0",        // ecalli(0) = REPLY (IPC slot 0)
-        "ecall",
-        "unimp",
+        "ret", // djump to the halt address = halt (∎)
         ".global accumulate",
         ".type accumulate, @function",
         "accumulate:",
-        // accumulate (IC 5): apply the pixel, then REPLY
+        // accumulate (IC 5): apply the pixel, then halt with no output
+        // window (state is communicated via STORAGE_W, not μ[ω_7..+ω_8]).
+        "mv s0, ra", // stash the halt address (jal clobbers ra)
         "jal ra, accumulate_impl",
-        "li t0, 0",
-        "ecall",
-        "unimp",
+        "li a0, 0", // ω_7 = 0: no output
+        "li a1, 0", // ω_8 = 0
+        "jr s0",    // djump to the halt address = halt (∎)
     );
 
     #[no_mangle]

@@ -523,7 +523,9 @@ mod tests {
     #[test]
     fn test_vm_initial_registers() {
         let vm = VmInstance::new(0, 5, CapTable::new(), 1_000_000);
-        assert_eq!(vm.registers[0], 0); // no halt address, all regs start at 0
+        // All regs start at 0. The kernel installs the halt address in ω_0
+        // on the root VM at init; CREATEd child VMs keep ω_0 = 0.
+        assert_eq!(vm.registers[0], 0);
         for i in 1..13 {
             assert_eq!(vm.registers[i], 0);
         }

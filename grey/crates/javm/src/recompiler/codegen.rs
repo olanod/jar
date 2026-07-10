@@ -2424,14 +2424,10 @@ impl Compiler {
         }
         self.asm.movzx_32_64(SCRATCH, SCRATCH); // truncate to 32-bit
 
-        // No halt address check — programs terminate via REPLY (ecalli 0xFF).
-
-        // For dynamic jumps, we save state and return to the host to handle
-        // (the host will validate and dispatch). This is simpler than inlining
-        // the full jump table lookup. Exit with a special "dynamic jump" that
-        // stores the target address.
-        // We use EXIT_PANIC as default and let the caller handle djump.
-        // Actually, let's inline it for performance:
+        // Halt address (GP eq A.18): djump to 2^32 − 2^16 is a normal halt.
+        let djump_halt = self.asm.new_label();
+        self.asm.cmp_ri32(SCRATCH, crate::PVM_HALT_ADDR as i32);
+        self.asm.jcc_label(Cc::E, djump_halt);
 
         // Check alignment: addr must be even and non-zero
         // addr == 0 → panic
@@ -2479,6 +2475,9 @@ impl Compiler {
         self.asm.bind_label(djump_panic);
         self.asm.pop(Reg::RAX); // restore φ[11] before panicking
         self.asm.jmp_label(self.panic_label);
+
+        self.asm.bind_label(djump_halt);
+        self.emit_exit(EXIT_HALT, 0);
     }
 
     /// Emit setcc for three-register comparisons: rd = (ra CMP rb) ? 1 : 0.

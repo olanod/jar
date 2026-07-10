@@ -24,9 +24,9 @@ fn run_kernel(backend: javm::PvmBackend, input: &[u8], test_id: u32) -> KernelRu
     let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
 
     let result = kernel.run();
-    let packed = kernel.vm_arena.vm(kernel.active_vm).reg(7);
-    let ptr = (packed >> 32) as u32;
-    let len = (packed & 0xFFFFFFFF) as u32;
+    // GP output convention at halt: ω_7 = address, ω_8 = length.
+    let ptr = kernel.vm_arena.vm(kernel.active_vm).reg(7) as u32;
+    let len = kernel.vm_arena.vm(kernel.active_vm).reg(8) as u32;
     let gas_used = gas - kernel.active_gas();
 
     let label = match backend {
@@ -36,7 +36,7 @@ fn run_kernel(backend: javm::PvmBackend, input: &[u8], test_id: u32) -> KernelRu
     };
 
     match result {
-        KernelResult::Halt(_) => {}
+        KernelResult::Halt => {}
         KernelResult::Panic => panic!("test {test_id}: {label} panicked"),
         KernelResult::OutOfGas => panic!("test {test_id}: {label} OOG"),
         KernelResult::PageFault(addr) => {

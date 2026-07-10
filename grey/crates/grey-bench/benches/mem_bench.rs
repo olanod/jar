@@ -65,7 +65,9 @@ fn bench_mem_seq(c: &mut Criterion) {
                 |mut kernel| {
                     loop {
                         match kernel.run() {
-                            javm::kernel::KernelResult::Halt(v) => break v,
+                            javm::kernel::KernelResult::Halt => {
+                                break kernel.vm_arena.vm(kernel.active_vm).reg(7);
+                            }
                             javm::kernel::KernelResult::ProtocolCall { .. } => continue,
                             other => panic!("unexpected: {:?}", other),
                         }
@@ -93,7 +95,9 @@ fn bench_mem_rand(c: &mut Criterion) {
                 |mut kernel| {
                     loop {
                         match kernel.run() {
-                            javm::kernel::KernelResult::Halt(v) => break v,
+                            javm::kernel::KernelResult::Halt => {
+                                break kernel.vm_arena.vm(kernel.active_vm).reg(7);
+                            }
                             javm::kernel::KernelResult::ProtocolCall { .. } => continue,
                             other => panic!("unexpected: {:?}", other),
                         }

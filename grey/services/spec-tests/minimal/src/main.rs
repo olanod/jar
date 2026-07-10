@@ -11,21 +11,19 @@ mod service {
     use core::arch::global_asm;
 
     // Two GP entry points, selected by the transpiler's jump prologue:
-    // `_start` (IC 0 = refine) and `accumulate` (IC 5). Both are no-ops that
-    // REPLY immediately.
+    // `_start` (IC 0 = refine) and `accumulate` (IC 5). Both halt immediately
+    // by returning to the halt address the kernel installed in ra (ω_0 =
+    // 2^32 − 2^16); a0/a1 (ω_7/ω_8) still hold the args window, so refine
+    // echoes its input as output.
     global_asm!(
         ".global _start",
         ".type _start, @function",
         "_start:",
-        "li t0, 0", // ecalli(0) = REPLY (IPC slot 0)
-        "ecall",
-        "unimp", // trap if resumed
+        "ret", // djump to the halt address = halt (∎)
         ".global accumulate",
         ".type accumulate, @function",
         "accumulate:",
-        "li t0, 0", // ecalli(0) = REPLY (IPC slot 0)
-        "ecall",
-        "unimp", // trap if resumed
+        "ret", // djump to the halt address = halt (∎)
     );
 
     #[panic_handler]

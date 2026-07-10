@@ -66,6 +66,12 @@ pub type Gas = u64;
 /// ZP = 2^12 = 4096: PVM memory page size.
 pub const PVM_PAGE_SIZE: u32 = 1 << 12;
 
+/// The dynamic-jump halt address: 2^32 − 2^16 (GP eq A.18).
+///
+/// A djump to this address is a normal halt (∎). The kernel initializes the
+/// root VM's ω\[0\] (RA) to it, so `ret` from an entry point halts the VM.
+pub const PVM_HALT_ADDR: u64 = (1 << 32) - (1 << 16);
+
 /// ZI = 2^24: Standard PVM program initialization input data size.
 pub const PVM_INIT_INPUT_SIZE: u32 = 1 << 24;
 

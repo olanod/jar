@@ -13,7 +13,9 @@ Service entry points that the protocol invokes via the JAVM (GP §11, Appendix B
 In jar1, service code runs inside the capability kernel. Protocol capabilities
 (GAS, FETCH, STORAGE\_R, etc.) replace direct host-call numbers — the kernel
 dispatches `ecalli` to the appropriate protocol cap, which exits to the host.
-REPLY returns results to the calling VM rather than writing to a halt address.
+Nested REPLY returns results to the calling VM; the root VM terminates via the
+GP halt convention — a djump to the halt address 2^32 − 2^16 (installed in
+ω\[0\] at initialization), with the output read from μ\[φ7..+φ8\].
 See the *Capability Kernel* chapter for the execution model.
 
 # Storage Affordability
@@ -51,7 +53,7 @@ from a work package.
 
 Deferred transfers are integrated as accumulation inputs
 (`AccumulationInput.transfer`) rather than through a separate on-transfer
-entry point, matching current graypaper (Ψ_T removed).
+entry point, matching current graypaper (Ψ\_T removed).
 
 # Auditing
 

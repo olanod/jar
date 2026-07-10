@@ -343,8 +343,12 @@ private def encodeAccountInfo (acct : ServiceAccount) : ByteArray :=
     ++ Codec.encodeFixedNat 4 acct.parentServiceId      -- a_p
 
 /-- Dispatch a host call during accumulation (jar1 numbering).
-    Match arms: REPLY=0, GAS=1, FETCH=2, ..., QUOTA=28.
-    GP §12, Appendix B. Returns updated invocation result and context. -/
+    Match arms: GAS=1, FETCH=2, ..., QUOTA=28 — the protocol cap slots.
+    Id 0 is the kernel IPC slot (REPLY), handled inside the capability
+    kernel and never dispatched here; like any unknown id it yields WHAT.
+    Termination is via the GP halt convention (djump to 2^32 - 2^16),
+    not a host call. GP §12, Appendix B.
+    Returns updated invocation result and context. -/
 def handleHostCall (callId : JAVM.Reg) (gas : Gas) (regs : JAVM.Registers)
     (mem : JAVM.Memory) (ctx : AccContext) : JAVM.InvocationResult × AccContext :=
   let rawCallNum := callId.toNat
@@ -367,11 +371,6 @@ def handleHostCall (callId : JAVM.Reg) (gas : Gas) (regs : JAVM.Registers)
   let gas' := if gas.toNat >= hostCallGas then gas - UInt64.ofNat hostCallGas else 0
   let (result, ctx') : JAVM.InvocationResult × AccContext :=
   match callNum with
-  -- ===== REPLY (0): program termination via ecalli(0x00) =====
-  | 0 =>
-    ({ exitReason := .halt, exitValue := if 7 < regs.size then regs[7]! else 0,
-       gas := Int64.ofUInt64 gas', registers := regs, memory := mem }, ctx)
-
   -- ===== gas (1): Return remaining gas in reg[7] =====
   | 1 =>
     let regs' := setR7 regs gas'

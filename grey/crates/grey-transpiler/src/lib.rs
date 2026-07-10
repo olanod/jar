@@ -312,7 +312,7 @@ pub fn peephole_fuse_load_imm_alu(
                     && fits_i32
                     && load_rd == alu_rd
                 {
-                    let is_shift = matches!(alu_op, 207 | 208 | 209);
+                    let is_shift = matches!(alu_op, 207..=209);
                     let usable = if is_shift {
                         matches_rb
                     } else {

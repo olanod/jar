@@ -127,7 +127,6 @@ impl TranslationContext {
         Ok(())
     }
 
-
     /// Translate one or more 32-bit RISC-V instructions starting at `offset`.
     /// Returns the number of bytes consumed (always 4).
     pub(crate) fn translate_instruction(
@@ -984,7 +983,8 @@ impl TranslationContext {
                 // swap the operands. Leave them to the register path.
                 && (funct7, funct3) != (0x20, 0) // SUB
                 && (funct7, funct3) != (0, 2) // SLT
-                && (funct7, funct3) != (0, 3) // SLTU
+                && (funct7, funct3) != (0, 3)
+            // SLTU
             {
                 (Some(rs2), true)
             } else {
@@ -2126,7 +2126,10 @@ mod tests {
         //   rs2 = x11 (a1)
         //   funct3 = 2 (SLT), funct7 = 0
         let mut ctx = TranslationContext::new(true);
-        let result = ctx.translate_op(/* funct3 */ 2, /* funct7 */ 0, /* rd */ 10, /* rs1 */ 0, /* rs2 */ 11, /* addr */ 0);
+        let result = ctx.translate_op(
+            /* funct3 */ 2, /* funct7 */ 0, /* rd */ 10, /* rs1 */ 0,
+            /* rs2 */ 11, /* addr */ 0,
+        );
         assert!(
             result.is_ok(),
             "SLT rd=x10, rs1=x0, rs2=x11 should translate: {result:?}",
@@ -2154,7 +2157,9 @@ mod tests {
         // Must emit `load_imm a2, 0` → [51, 9] (a2 → PVM reg 9; zero imm omitted).
         for (funct3, funct7, what) in [(1u32, 0u32, "SLLI"), (5, 0, "SRLI"), (5, 0x20, "SRAI")] {
             let mut ctx = TranslationContext::new(true);
-            let r = ctx.translate_op_imm(funct3, funct7, /* rd */ 12, /* rs1 */ 0, /* imm */ 3);
+            let r = ctx.translate_op_imm(
+                funct3, funct7, /* rd */ 12, /* rs1 */ 0, /* imm */ 3,
+            );
             assert!(r.is_ok(), "{what} rd=a2, rs1=x0 should translate: {r:?}");
             assert_eq!(
                 ctx.code.as_slice(),
@@ -2171,11 +2176,19 @@ mod tests {
         // ADDIW a2, x0, 7 = sext32(7) → load_imm a2, 7 = [51, 9, 7].
         let mut ctx = TranslationContext::new(true);
         ctx.translate_op_imm_32(0, 0, 12, 0, 7).unwrap();
-        assert_eq!(ctx.code.as_slice(), &[51u8, 9u8, 7u8], "addiw a2,x0,7 = load_imm 7");
+        assert_eq!(
+            ctx.code.as_slice(),
+            &[51u8, 9u8, 7u8],
+            "addiw a2,x0,7 = load_imm 7"
+        );
         // SLLIW a2, x0, 3 = 0 → load_imm a2, 0 = [51, 9].
         let mut ctx = TranslationContext::new(true);
         ctx.translate_op_imm_32(1, 0, 12, 0, 3).unwrap();
-        assert_eq!(ctx.code.as_slice(), &[51u8, 9u8], "slliw a2,x0,3 = load_imm 0");
+        assert_eq!(
+            ctx.code.as_slice(),
+            &[51u8, 9u8],
+            "slliw a2,x0,3 = load_imm 0"
+        );
     }
 
     #[test]
@@ -2194,8 +2207,10 @@ mod tests {
             let load_imm = ctx.code.clone();
             ctx.pending_load_imm = Some((10, 8160, undo));
             // SLT(U) a0, a0, a4 (rd=rs1=a0=x10, rs2=a4=x14): must stay `8160 < a4`.
-            ctx.translate_op(funct3, 0, /*rd*/ 10, /*rs1*/ 10, /*rs2*/ 14, /*addr*/ 4)
-                .unwrap();
+            ctx.translate_op(
+                funct3, 0, /*rd*/ 10, /*rs1*/ 10, /*rs2*/ 14, /*addr*/ 4,
+            )
+            .unwrap();
             // The load_imm must survive (NOT be truncated into an operand-swapped
             // set_lt_*_imm) and a register-form compare appended after it.
             assert_eq!(

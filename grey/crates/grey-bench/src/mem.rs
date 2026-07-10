@@ -145,6 +145,17 @@ fn jump(c: &mut Vec<u8>, m: &mut Vec<u8>, offset: i32) {
     }
 }
 
+fn jump_ind(c: &mut Vec<u8>, m: &mut Vec<u8>, ra: u8, imm: i32) {
+    c.push(50); // JumpInd
+    m.push(1);
+    c.push(ra);
+    m.push(0);
+    for b in imm.to_le_bytes() {
+        c.push(b);
+        m.push(0);
+    }
+}
+
 fn branch_lt_u(c: &mut Vec<u8>, m: &mut Vec<u8>, ra: u8, rb: u8, offset: i32) {
     c.push(172); // BranchLtU (TwoRegOneOffset)
     m.push(1);
@@ -162,15 +173,6 @@ fn branch_ne(c: &mut Vec<u8>, m: &mut Vec<u8>, ra: u8, rb: u8, offset: i32) {
     c.push(ra | (rb << 4));
     m.push(0);
     for b in offset.to_le_bytes() {
-        c.push(b);
-        m.push(0);
-    }
-}
-
-fn ecalli(c: &mut Vec<u8>, m: &mut Vec<u8>, imm: u32) {
-    c.push(10); // Ecalli
-    m.push(1);
-    for b in imm.to_le_bytes() {
         c.push(b);
         m.push(0);
     }
@@ -279,7 +281,7 @@ pub fn grey_mem_seq_blob(size_bytes: u64) -> Vec<u8> {
     );
 
     // Return checksum
-    ecalli(&mut c, &mut m, 0x00); // REPLY (IPC slot 0)
+    jump_ind(&mut c, &mut m, RA, 0); // djump to the halt address (RA) = halt
 
     build_blob(c, m, 1, heap_pages)
 }
@@ -359,7 +361,7 @@ pub fn grey_mem_rand_blob(size_bytes: u64) -> Vec<u8> {
     );
 
     // Return checksum
-    ecalli(&mut c, &mut m, 0x00); // REPLY (IPC slot 0)
+    jump_ind(&mut c, &mut m, RA, 0); // djump to the halt address (RA) = halt
 
     build_blob(c, m, 1, heap_pages)
 }

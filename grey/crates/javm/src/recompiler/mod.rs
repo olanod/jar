@@ -642,10 +642,10 @@ pub struct RecompiledPvm {
     native_code: NativeCode,
     /// JIT context — lives inside the flat_memory mmap region, NOT heap-allocated.
     ctx: *mut JitContext,
-    /// Bitmask.
-    bitmask: Vec<u8>,
-    /// Jump table.
-    jump_table: Vec<u32>,
+    /// Bitmask (owned; JIT code reads it at runtime through `ctx.bb_starts`).
+    _bitmask: Vec<u8>,
+    /// Jump table (owned; JIT code reads it at runtime through `ctx.jt_ptr`).
+    _jump_table: Vec<u32>,
     /// Initial gas.
     _initial_gas: Gas,
     /// Dispatch table: PVM PC → native code offset (-1 = invalid).
@@ -832,8 +832,8 @@ impl RecompiledPvm {
         let mut result = Self {
             native_code,
             ctx: ctx_raw,
-            bitmask,
-            jump_table,
+            _bitmask: bitmask,
+            _jump_table: jump_table,
             _initial_gas: gas,
             dispatch_table,
             debug,
@@ -864,82 +864,57 @@ impl RecompiledPvm {
     /// modify registers/memory as needed, then call run() again (entry_pc is set
     /// automatically for re-entry).
     pub fn run(&mut self) -> ExitReason {
-        loop {
-            if self.debug {
-                tracing::debug!(
-                    entry_pc = self.ctx().entry_pc,
-                    gas = self.ctx().gas,
-                    heap_base = format_args!("0x{:08x}", self.ctx().heap_base),
-                    heap_top = format_args!("0x{:08x}", self.ctx().heap_top),
-                    regs = ?&self.ctx().regs,
-                    "recompiler::run() entry"
-                );
-                self.ctx_mut().exit_reason = 0xDEAD;
-            }
-
-            // Execute native code — set up signal state for SIGSEGV handler
-            if let Some(ref mut ss) = self.signal_state {
-                signal::SIGNAL_STATE.with(|cell| cell.set(&mut **ss as *mut _));
-            }
-
-            let entry = self.native_code.entry();
-            // SAFETY: entry points to valid JIT-compiled x86-64 code; self.ctx is a valid
-            // JitContext pointer. The native code follows the sysv64 calling convention.
-            unsafe {
-                entry(self.ctx);
-            }
-
-            signal::SIGNAL_STATE.with(|cell| cell.set(std::ptr::null_mut()));
-
-            if self.debug {
-                tracing::debug!(
-                    exit_reason = self.ctx().exit_reason,
-                    exit_arg = self.ctx().exit_arg,
-                    gas = self.ctx().gas,
-                    pc = self.ctx().pc,
-                    regs = ?&self.ctx().regs,
-                    "recompiler::run() exit"
-                );
-            }
-
-            // Read exit reason from context.
-            // Hot path (case 4 = HostCall) is kept minimal. Cold paths
-            // (OOG fallback, gas correction) are in separate methods to
-            // avoid bloating the function and hurting instruction cache.
-            match self.ctx().exit_reason {
-                4 => {
-                    self.ctx_mut().entry_pc = self.ctx().pc;
-                    return ExitReason::HostCall(self.ctx().exit_arg);
-                }
-                0 => return self.handle_halt_exit(),
-                1 => return self.handle_panic_exit(),
-                2 => return self.handle_oog_exit(),
-                3 => return self.handle_page_fault_exit(),
-                5 => {
-                    // Dynamic jump — resolve and re-enter
-                    let idx = self.ctx().exit_arg;
-                    if let Some(target) = self.resolve_djump(idx) {
-                        self.ctx_mut().entry_pc = target;
-                        continue;
-                    } else {
-                        return ExitReason::Panic;
-                    }
-                }
-                _ => return ExitReason::Panic,
-            }
+        if self.debug {
+            tracing::debug!(
+                entry_pc = self.ctx().entry_pc,
+                gas = self.ctx().gas,
+                heap_base = format_args!("0x{:08x}", self.ctx().heap_base),
+                heap_top = format_args!("0x{:08x}", self.ctx().heap_top),
+                regs = ?&self.ctx().regs,
+                "recompiler::run() entry"
+            );
+            self.ctx_mut().exit_reason = 0xDEAD;
         }
-    }
 
-    /// Resolve a dynamic jump target from jump table index.
-    fn resolve_djump(&self, idx: u32) -> Option<u32> {
-        if idx as usize >= self.jump_table.len() {
-            return None;
+        // Execute native code — set up signal state for SIGSEGV handler
+        if let Some(ref mut ss) = self.signal_state {
+            signal::SIGNAL_STATE.with(|cell| cell.set(&mut **ss as *mut _));
         }
-        let target = self.jump_table[idx as usize];
-        if (target as usize) < self.bitmask.len() && self.bitmask[target as usize] == 1 {
-            Some(target)
-        } else {
-            None
+
+        let entry = self.native_code.entry();
+        // SAFETY: entry points to valid JIT-compiled x86-64 code; self.ctx is a valid
+        // JitContext pointer. The native code follows the sysv64 calling convention.
+        unsafe {
+            entry(self.ctx);
+        }
+
+        signal::SIGNAL_STATE.with(|cell| cell.set(std::ptr::null_mut()));
+
+        if self.debug {
+            tracing::debug!(
+                exit_reason = self.ctx().exit_reason,
+                exit_arg = self.ctx().exit_arg,
+                gas = self.ctx().gas,
+                pc = self.ctx().pc,
+                regs = ?&self.ctx().regs,
+                "recompiler::run() exit"
+            );
+        }
+
+        // Read exit reason from context.
+        // Hot path (case 4 = HostCall) is kept minimal. Cold paths
+        // (OOG fallback, gas correction) are in separate methods to
+        // avoid bloating the function and hurting instruction cache.
+        match self.ctx().exit_reason {
+            4 => {
+                self.ctx_mut().entry_pc = self.ctx().pc;
+                ExitReason::HostCall(self.ctx().exit_arg)
+            }
+            0 => self.handle_halt_exit(),
+            1 => self.handle_panic_exit(),
+            2 => self.handle_oog_exit(),
+            3 => self.handle_page_fault_exit(),
+            _ => ExitReason::Panic,
         }
     }
 
@@ -1504,19 +1479,16 @@ mod tests {
 
         let code = vec![
             // shlo_l_imm_64 φ[3] = φ[1] << 2: ra=3, rb=1
-            151, 0x13, 2, 0, 0, 0,
-            // add_64 φ[0] = φ[0] + φ[3]: ra=0, rb=3, rd=0
-            200, 0x30, 0,
-            // store_ind_u32 [φ[0] + 0] ← φ[2]: ra=2 (val), rb=0 (base)
-            122, 0x02, 0, 0, 0, 0,
-            // ecalli 0
+            151, 0x13, 2, 0, 0, 0, // add_64 φ[0] = φ[0] + φ[3]: ra=0, rb=3, rd=0
+            200, 0x30, 0, // store_ind_u32 [φ[0] + 0] ← φ[2]: ra=2 (val), rb=0 (base)
+            122, 0x02, 0, 0, 0, 0, // ecalli 0
             10, 0,
         ];
         let bitmask = vec![
             1, 0, 0, 0, 0, 0, // shlo_l_imm_64
-            1, 0, 0,           // add_64
+            1, 0, 0, // add_64
             1, 0, 0, 0, 0, 0, // store_ind_u32
-            1, 0,              // ecalli
+            1, 0, // ecalli
         ];
         let mut registers = [0u64; 13];
         registers[0] = 32;
@@ -1645,14 +1617,31 @@ mod tests {
     /// count land in φ[12]=RCX (and, for rd==rb, force shift_src=SCRATCH).
     fn run_shift_3reg(opcode: u8, ra: u8, rb: u8, rd: u8, val_a: u64, val_b: u64) -> u64 {
         let code = vec![
-            20, ra,
-            val_a as u8, (val_a >> 8) as u8, (val_a >> 16) as u8, (val_a >> 24) as u8,
-            (val_a >> 32) as u8, (val_a >> 40) as u8, (val_a >> 48) as u8, (val_a >> 56) as u8,
-            20, rb,
-            val_b as u8, (val_b >> 8) as u8, (val_b >> 16) as u8, (val_b >> 24) as u8,
-            (val_b >> 32) as u8, (val_b >> 40) as u8, (val_b >> 48) as u8, (val_b >> 56) as u8,
-            opcode, (rb << 4) | ra, rd,
-            10, 0,
+            20,
+            ra,
+            val_a as u8,
+            (val_a >> 8) as u8,
+            (val_a >> 16) as u8,
+            (val_a >> 24) as u8,
+            (val_a >> 32) as u8,
+            (val_a >> 40) as u8,
+            (val_a >> 48) as u8,
+            (val_a >> 56) as u8,
+            20,
+            rb,
+            val_b as u8,
+            (val_b >> 8) as u8,
+            (val_b >> 16) as u8,
+            (val_b >> 24) as u8,
+            (val_b >> 32) as u8,
+            (val_b >> 40) as u8,
+            (val_b >> 48) as u8,
+            (val_b >> 56) as u8,
+            opcode,
+            (rb << 4) | ra,
+            rd,
+            10,
+            0,
         ];
         let bitmask = vec![
             1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0,
@@ -1683,13 +1672,25 @@ mod tests {
         let sx32 = |v: u32| v as i32 as i64 as u64;
         // dst==RCX, count from a normal reg (φ1).
         assert_eq!(run_shift_3reg(197, 0, 1, 12, 1, 31), sx32(1u32 << 31));
-        assert_eq!(run_shift_3reg(198, 0, 1, 12, 0xFFFF_FFFF, 4), sx32(0xFFFF_FFFFu32 >> 4));
-        assert_eq!(run_shift_3reg(199, 0, 1, 12, 0x8000_0000, 4), sx32((0x8000_0000u32 as i32 >> 4) as u32));
+        assert_eq!(
+            run_shift_3reg(198, 0, 1, 12, 0xFFFF_FFFF, 4),
+            sx32(0xFFFF_FFFFu32 >> 4)
+        );
+        assert_eq!(
+            run_shift_3reg(199, 0, 1, 12, 0x8000_0000, 4),
+            sx32((0x8000_0000u32 as i32 >> 4) as u32)
+        );
         // dst==RCX AND rd==rb → shift_src=SCRATCH (the case the first fix missed).
         assert_eq!(run_shift_3reg(197, 0, 12, 12, 1, 31), sx32(1u32 << 31));
         assert_eq!(run_shift_3reg(197, 0, 12, 12, 0xFF, 3), sx32(0xFFu32 << 3));
-        assert_eq!(run_shift_3reg(198, 0, 12, 12, 0xFFFF_FFFF, 4), sx32(0xFFFF_FFFFu32 >> 4));
-        assert_eq!(run_shift_3reg(199, 0, 12, 12, 0x8000_0000, 4), sx32((0x8000_0000u32 as i32 >> 4) as u32));
+        assert_eq!(
+            run_shift_3reg(198, 0, 12, 12, 0xFFFF_FFFF, 4),
+            sx32(0xFFFF_FFFFu32 >> 4)
+        );
+        assert_eq!(
+            run_shift_3reg(199, 0, 12, 12, 0x8000_0000, 4),
+            sx32((0x8000_0000u32 as i32 >> 4) as u32)
+        );
         // Sanity: same ops with a non-RCX destination are unaffected.
         assert_eq!(run_shift_3reg(197, 0, 1, 2, 0xFF, 3), sx32(0xFFu32 << 3));
     }

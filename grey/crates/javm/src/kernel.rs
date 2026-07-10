@@ -6,8 +6,12 @@
 //! (grey-state's refine/accumulate logic).
 //!
 //! ecalli dispatch:
-//! - 0x000..0x0FF: CALL cap\[N\] (0xFF = REPLY)
-//! - 0x2XX..0xCXX: management ops (MAP, UNMAP, SPLIT, DROP, MOVE, COPY, etc.)
+//! - 0x00..0x7F: CALL cap\[N\] (0x00 = the IPC slot = REPLY to the caller)
+//! - imm > 127: panic
+//!
+//! Program termination follows the GP halt convention: a djump to
+//! [`crate::PVM_HALT_ADDR`] (installed in the root VM's ω_0 at init) halts
+//! the VM. REPLY is strictly the inter-VM return half of CALL.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -90,8 +94,9 @@ const RESULT_HUH: u64 = u64::MAX - 8; // invalid operation
 /// Result from running the kernel until it needs host interaction.
 #[derive(Debug)]
 pub enum KernelResult {
-    /// Root VM halted normally. Contains φ\[7\] value.
-    Halt(u64),
+    /// Root VM halted normally (djump to [`crate::PVM_HALT_ADDR`]).
+    /// Read output via registers/memory accessors (active_reg, read_data_cap_window).
+    Halt,
     /// Root VM panicked.
     Panic,
     /// Root VM ran out of gas.
@@ -288,7 +293,7 @@ impl InvocationKernel {
             cap_table.set(254, Cap::Untyped(Arc::clone(&kernel.untyped)));
         }
 
-        // Write arguments into args cap (cap_index=0xFF = IPC slot)
+        // Write arguments into args cap (cap_index = IPC slot 0)
         let mut args_base: u64 = 0;
         let args_len: u64 = _args.len() as u64;
         if !_args.is_empty() {
@@ -313,6 +318,7 @@ impl InvocationKernel {
             cap_table,
             remaining_gas,
         );
+        vm0.set_reg(0, crate::PVM_HALT_ADDR); // φ[0] = RA (halt address: `ret` halts)
         vm0.set_reg(1, parsed.header.stack_top as u64); // φ[1] = SP (stack top)
         vm0.set_reg(7, args_base); // φ[7] = args address
         vm0.set_reg(8, args_len); // φ[8] = args length
@@ -872,14 +878,17 @@ impl InvocationKernel {
         DispatchResult::Continue
     }
 
-    /// Handle REPLY (ecalli(0xFF) = CALL on IPC slot).
+    /// Handle REPLY (ecalli(0) = CALL on the IPC slot): return to the caller.
+    ///
+    /// REPLY is strictly the inter-VM return half of CALL. A root-VM REPLY
+    /// has no caller to return to and panics — programs terminate via the GP
+    /// halt convention (djump to [`crate::PVM_HALT_ADDR`]), not via REPLY.
     fn handle_reply(&mut self) -> DispatchResult {
         let frame = match self.call_stack.pop() {
             Some(f) => f,
             None => {
-                // No caller — root VM replying = halt
-                let result = self.active_reg(7);
-                return DispatchResult::RootHalt(result);
+                // No caller — REPLY-as-termination is retired.
+                return DispatchResult::RootPanic;
             }
         };
 
@@ -2153,7 +2162,7 @@ impl InvocationKernel {
                             }
                             return KernelResult::ProtocolCall { slot };
                         }
-                        DispatchResult::RootHalt(v) => return KernelResult::Halt(v),
+                        DispatchResult::RootHalt => return KernelResult::Halt,
                         DispatchResult::RootPanic => return KernelResult::Panic,
                         DispatchResult::RootOutOfGas => return KernelResult::OutOfGas,
                         DispatchResult::RootPageFault(a) => return KernelResult::PageFault(a),
@@ -2161,10 +2170,9 @@ impl InvocationKernel {
                     }
                 }
                 0 => {
-                    // Halt
-                    let value = self.vm_arena.vm(self.active_vm).reg(7);
-                    match self.handle_vm_halt(value) {
-                        DispatchResult::RootHalt(v) => return KernelResult::Halt(v),
+                    // Halt (djump to the halt address)
+                    match self.handle_vm_halt() {
+                        DispatchResult::RootHalt => return KernelResult::Halt,
                         DispatchResult::Continue => continue,
                         _ => return KernelResult::Panic,
                     }
@@ -2201,25 +2209,6 @@ impl InvocationKernel {
                         _ => return KernelResult::Panic,
                     }
                 }
-                5 => {
-                    // Dynamic jump — resolve and re-enter
-                    let idx = exit_arg;
-                    let cc = &self.code_caps[code_cap_id];
-                    if (idx as usize) < cc.jump_table.len() {
-                        let target = cc.jump_table[idx as usize];
-                        if (target as usize) < cc.bitmask.len() && cc.bitmask[target as usize] == 1
-                        {
-                            self.vm_arena.vm_mut(self.active_vm).pc = target;
-                            continue;
-                        }
-                    }
-                    // Invalid jump → panic
-                    match self.handle_vm_fault(FaultType::Panic) {
-                        DispatchResult::RootPanic => return KernelResult::Panic,
-                        DispatchResult::Continue => continue,
-                        _ => return KernelResult::Panic,
-                    }
-                }
                 6 => {
                     // Ecall — management ops / dynamic CALL.
                     // Read φ[11]=op, φ[12]=subject|object from active VM.
@@ -2231,7 +2220,7 @@ impl InvocationKernel {
                         DispatchResult::ProtocolCall { slot } => {
                             return KernelResult::ProtocolCall { slot };
                         }
-                        DispatchResult::RootHalt(v) => return KernelResult::Halt(v),
+                        DispatchResult::RootHalt => return KernelResult::Halt,
                         DispatchResult::RootPanic => return KernelResult::Panic,
                         DispatchResult::RootOutOfGas => return KernelResult::OutOfGas,
                         DispatchResult::RootPageFault(a) => return KernelResult::PageFault(a),
@@ -2275,14 +2264,60 @@ impl InvocationKernel {
         }
     }
 
+    /// Resolve the access level of address range `[addr, addr+len)` in the
+    /// active VM's address space: the weakest access over the range, or None
+    /// if any page in it is unmapped. Empty ranges resolve to RW.
+    fn range_access(&self, addr: u32, len: u32) -> Option<Access> {
+        if len == 0 {
+            return Some(Access::RW);
+        }
+        let end = addr.checked_add(len - 1)?;
+        let first_page = addr / crate::PVM_PAGE_SIZE;
+        let last_page = end / crate::PVM_PAGE_SIZE;
+
+        // Collect mapped DATA caps once; cap tables hold only a handful.
+        let vm = &self.vm_arena.vm(self.active_vm);
+        let mut caps: Vec<(u32, &crate::cap::DataCap)> = Vec::new();
+        for slot in 0..=255u8 {
+            if let Some(Cap::Data(d)) = vm.cap_table.get(slot)
+                && let Some(base_page) = d.base_offset
+            {
+                caps.push((base_page, d));
+            }
+        }
+
+        let mut access = Access::RW;
+        'pages: for page in first_page..=last_page {
+            for &(base_page, d) in &caps {
+                if page >= base_page
+                    && page < base_page + d.page_count
+                    && d.is_page_mapped(page - base_page)
+                {
+                    if d.access == Some(Access::RO) {
+                        access = Access::RO;
+                    }
+                    continue 'pages;
+                }
+            }
+            return None;
+        }
+        Some(access)
+    }
+
     /// Read bytes directly from the active VM's window by address.
     /// Used for reading output from guest programs that return ptr+len in registers.
+    ///
+    /// The range is validated against the VM's mapped pages first: addr/len
+    /// are guest-supplied and may point at unmapped (PROT_NONE) pages, which
+    /// would fault the host process rather than the guest.
     pub fn read_data_cap_window(&self, addr: u32, len: u32) -> Option<Vec<u8>> {
+        self.range_access(addr, len)?;
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
             let wb = self.active_window_base();
             let mut buf = vec![0u8; len as usize];
-            // SAFETY: addr is within the window's 4GB mmap region.
+            // SAFETY: the range is fully covered by mapped pages (validated
+            // above), so the copy stays inside the window's mapped regions.
             unsafe {
                 std::ptr::copy_nonoverlapping(
                     wb.add(addr as usize),
@@ -2295,28 +2330,43 @@ impl InvocationKernel {
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         {
             // On non-Linux the window is not backed by physical pages.
-            // Find the DataCap covering addr and read from the backing store.
+            // Copy page-by-page from each covering DataCap's backing store.
+            let mut buf = Vec::with_capacity(len as usize);
             let vm = &self.vm_arena.vm(self.active_vm);
-            let addr_page = addr / crate::PVM_PAGE_SIZE;
-            let offset_in_page = (addr % crate::PVM_PAGE_SIZE) as usize;
-            for slot in 0..=255u8 {
-                if let Some(Cap::Data(d)) = vm.cap_table.get(slot)
-                    && let Some(base_page) = d.base_offset
-                    && d.has_any_mapped()
-                    && addr_page >= base_page
-                    && addr_page < base_page + d.page_count
-                {
-                    let page_in_cap = (addr_page - base_page) as usize;
-                    let byte_off = (d.backing_offset as usize + page_in_cap)
-                        * crate::PVM_PAGE_SIZE as usize
-                        + offset_in_page;
-                    return self
-                        .backing
-                        .read_bytes_at(byte_off, len as usize)
-                        .map(|s| s.to_vec());
+            let mut cursor = addr;
+            let mut remaining = len as usize;
+            while remaining > 0 {
+                let addr_page = cursor / crate::PVM_PAGE_SIZE;
+                let offset_in_page = (cursor % crate::PVM_PAGE_SIZE) as usize;
+                let chunk = remaining.min(crate::PVM_PAGE_SIZE as usize - offset_in_page);
+                let mut copied = false;
+                for slot in 0..=255u8 {
+                    if let Some(Cap::Data(d)) = vm.cap_table.get(slot)
+                        && let Some(base_page) = d.base_offset
+                        && addr_page >= base_page
+                        && addr_page < base_page + d.page_count
+                        && d.is_page_mapped(addr_page - base_page)
+                    {
+                        let page_in_cap = (addr_page - base_page) as usize;
+                        let byte_off = (d.backing_offset as usize + page_in_cap)
+                            * crate::PVM_PAGE_SIZE as usize
+                            + offset_in_page;
+                        buf.extend_from_slice(self.backing.read_bytes_at(byte_off, chunk)?);
+                        copied = true;
+                        break;
+                    }
                 }
+                if !copied {
+                    return None;
+                }
+                remaining -= chunk;
+                if remaining == 0 {
+                    break;
+                }
+                // More pages remain, so cursor + chunk stays below 2^32.
+                cursor += chunk as u32;
             }
-            None
+            Some(buf)
         }
     }
 
@@ -2365,10 +2415,20 @@ impl InvocationKernel {
     /// writes through it. Returns `false` if `addr..addr+len` does not fall
     /// within any mapped DATA cap in the active VM.
     pub fn write_data_cap_window(&mut self, addr: u32, data: &[u8]) -> bool {
+        // The full range must be mapped RW: addr is typically guest-supplied,
+        // and a raw window write into an unmapped or read-only page would
+        // fault the host process rather than the guest.
+        let Ok(len) = u32::try_from(data.len()) else {
+            return false;
+        };
+        if self.range_access(addr, len) != Some(Access::RW) {
+            return false;
+        }
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
             let wb = self.active_window_base();
-            // SAFETY: addr is within the window's 4GB mmap region.
+            // SAFETY: the range is fully covered by RW-mapped pages
+            // (validated above).
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), wb.add(addr as usize), data.len());
             }
@@ -2377,77 +2437,63 @@ impl InvocationKernel {
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         {
             // On non-Linux the window is not backed by physical pages.
-            // Find the DataCap covering addr and write through the backing store.
-            let addr_page = addr / crate::PVM_PAGE_SIZE;
-            let offset_in_page = (addr % crate::PVM_PAGE_SIZE) as usize;
-            let cap_info = {
-                let vm = &self.vm_arena.vm(self.active_vm);
-                let mut found = None;
-                for slot in 0..=255u8 {
-                    if let Some(Cap::Data(d)) = vm.cap_table.get(slot)
-                        && let Some(base_page) = d.base_offset
-                        && d.has_any_mapped()
-                        && addr_page >= base_page
-                        && addr_page < base_page + d.page_count
-                    {
-                        found = Some((base_page, d.backing_offset));
-                        break;
+            // Write page-by-page through each covering DataCap's backing store.
+            let mut cursor = addr;
+            let mut written = 0usize;
+            while written < data.len() {
+                let addr_page = cursor / crate::PVM_PAGE_SIZE;
+                let offset_in_page = (cursor % crate::PVM_PAGE_SIZE) as usize;
+                let chunk =
+                    (data.len() - written).min(crate::PVM_PAGE_SIZE as usize - offset_in_page);
+                let cap_info = {
+                    let vm = &self.vm_arena.vm(self.active_vm);
+                    let mut found = None;
+                    for slot in 0..=255u8 {
+                        if let Some(Cap::Data(d)) = vm.cap_table.get(slot)
+                            && let Some(base_page) = d.base_offset
+                            && addr_page >= base_page
+                            && addr_page < base_page + d.page_count
+                            && d.is_page_mapped(addr_page - base_page)
+                        {
+                            found = Some((base_page, d.backing_offset));
+                            break;
+                        }
                     }
+                    found
+                };
+                let Some((base_page, backing_offset)) = cap_info else {
+                    return false;
+                };
+                let page_in_cap = (addr_page - base_page) as usize;
+                let byte_off = (backing_offset as usize + page_in_cap)
+                    * crate::PVM_PAGE_SIZE as usize
+                    + offset_in_page;
+                self.backing
+                    .write_bytes_at(byte_off, &data[written..written + chunk]);
+                written += chunk;
+                if written == data.len() {
+                    break;
                 }
-                found
-            };
-            let (base_page, backing_offset) = match cap_info {
-                Some(info) => info,
-                None => return false,
-            };
-            let page_in_cap = (addr_page - base_page) as usize;
-            let byte_off = (backing_offset as usize + page_in_cap) * crate::PVM_PAGE_SIZE as usize
-                + offset_in_page;
-            self.backing.write_bytes_at(byte_off, data);
+                // More pages remain, so cursor + chunk stays below 2^32.
+                cursor += chunk as u32;
+            }
             true
         }
     }
 
-    /// Handle a callee halt (exit from VM execution).
-    pub fn handle_vm_halt(&mut self, exit_value: u64) -> DispatchResult {
-        let callee_id = self.active_vm;
-        let _ = self.vm_arena.vm_mut(callee_id).transition(VmState::Halted);
-
-        match self.call_stack.pop() {
-            Some(frame) => {
-                let caller_id = frame.caller_vm_id;
-
-                // Return unused gas
-                let unused_gas = self.vm_arena.vm(callee_id).gas();
-                let cg = self.vm_arena.vm(caller_id).gas();
-                self.vm_arena.vm_mut(caller_id).set_gas(cg + unused_gas);
-
-                // Return IPC cap
-                if let Some(caller_slot) = frame.ipc_cap_idx
-                    && let Some(mut cap) = self.vm_arena.vm_mut(callee_id).cap_table.take(IPC_SLOT)
-                {
-                    if let Some((bp, acc)) = frame.ipc_was_mapped
-                        && let Cap::Data(d) = &mut cap
-                    {
-                        d.map(bp, acc);
-                    }
-                    self.vm_arena
-                        .vm_mut(caller_id)
-                        .cap_table
-                        .set(caller_slot, cap);
-                }
-
-                // Return result
-                self.vm_arena.vm_mut(caller_id).set_reg(7, exit_value);
-
-                let _ = self.vm_arena.vm_mut(caller_id).transition(VmState::Running);
-                self.active_vm = caller_id;
-                DispatchResult::Continue
-            }
-            None => {
-                // Root VM halted
-                DispatchResult::RootHalt(exit_value)
-            }
+    /// Handle a VM halt (djump to [`crate::PVM_HALT_ADDR`]).
+    ///
+    /// A root-VM halt is the normal termination of the invocation; the host
+    /// reads any output from registers/memory afterwards. A halt in a CALLed
+    /// VM bypassed the CALL/REPLY return protocol and is delivered to the
+    /// caller as a runtime fault (status 2), matching the Lean kernel.
+    pub fn handle_vm_halt(&mut self) -> DispatchResult {
+        if self.call_stack.is_empty() {
+            let callee_id = self.active_vm;
+            let _ = self.vm_arena.vm_mut(callee_id).transition(VmState::Halted);
+            DispatchResult::RootHalt
+        } else {
+            self.handle_vm_fault(FaultType::Panic)
         }
     }
 
@@ -2504,7 +2550,7 @@ pub enum DispatchResult {
     /// A protocol cap was called — host should handle.
     ProtocolCall { slot: u8 },
     /// Root VM halted normally.
-    RootHalt(u64),
+    RootHalt,
     /// Root VM panicked.
     RootPanic,
     /// Root VM ran out of gas.

@@ -880,12 +880,10 @@ mod tests {
         let mut kernel =
             javm::kernel::InvocationKernel::new(&blob, args, 1_000_000).expect("should initialize");
         let result = kernel.run();
-        // The sample service executes and
-        // should either halt or panic (depending on the dispatch stub).
-        // either halt or panic (depending on the dispatch stub).
+        // The refine path halts via djump to the halt address.
         match result {
-            javm::kernel::KernelResult::Halt(_) | javm::kernel::KernelResult::Panic => {}
-            other => panic!("Expected Halt or Panic, got {:?}", other),
+            javm::kernel::KernelResult::Halt => {}
+            other => panic!("Expected Halt, got {:?}", other),
         }
     }
 }

@@ -350,8 +350,12 @@ def initCap (blob : ByteArray) (args : ByteArray)
   -- blob carries no SP preamble). Arguments follow the GP register ABI:
   -- φ[7]=args address, φ[8]=args length. Entry dispatch is by instruction
   -- counter (IC 0 = refine, IC 5 = accumulate), not a φ[7] selector.
-  -- Termination is still via REPLY (ecalli 0xFF), so ω[0] is left 0.
+  -- Termination follows the GP halt convention: ω[0] holds the halt address
+  -- 2^32 - 2^16, so a djump/ret to it halts the root VM; the host then reads
+  -- the output from μ[ω_7..+ω_8]. (Child VMs created by the kernel keep
+  -- ω[0] = 0 — a child halt is reported to its caller, not to the host.)
   let regs := Array.replicate PVM_REGISTERS (0 : RegisterValue)
+  let regs := regs.set! 0 (UInt64.ofNat (2^32 - 2^16))        -- ω[0]: RA (halt address)
   let regs := regs.set! 1 (UInt64.ofNat hdr.stackTop)
   let regs := regs.set! 7 (UInt64.ofNat argsBase)
   let regs := regs.set! 8 (UInt64.ofNat args.size)

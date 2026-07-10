@@ -143,7 +143,9 @@ fn bench_standard(c: &mut Criterion, name: &str, grey_blob: &[u8], pvm_blob: &[u
             |mut kernel| {
                 loop {
                     match kernel.run() {
-                        javm::kernel::KernelResult::Halt(v) => break v,
+                        javm::kernel::KernelResult::Halt => {
+                            break kernel.vm_arena.vm(kernel.active_vm).reg(7);
+                        }
                         javm::kernel::KernelResult::ProtocolCall { .. } => continue,
                         other => panic!("unexpected: {:?}", other),
                     }
@@ -278,7 +280,9 @@ fn bench_ecrecover(c: &mut Criterion) {
             |mut kernel| {
                 loop {
                     match kernel.run() {
-                        javm::kernel::KernelResult::Halt(v) => break v,
+                        javm::kernel::KernelResult::Halt => {
+                            break kernel.vm_arena.vm(kernel.active_vm).reg(7);
+                        }
                         javm::kernel::KernelResult::Panic => break 0,
                         javm::kernel::KernelResult::ProtocolCall { .. } => continue,
                         other => panic!("unexpected: {:?}", other),

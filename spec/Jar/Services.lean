@@ -97,10 +97,6 @@ private def handleRefineHostCall
     let gas' := gas - hostGasCost
     let regs' := regs -- will be modified per host call
     match callId with
-    | 255 =>
-      -- REPLY: program termination via ecalli(0xFF)
-      ({ exitReason := .halt, exitValue := if 7 < regs.size then regs[7]! else 0,
-         gas := Int64.ofUInt64 gas', registers := regs, memory := mem }, ctx)
     | 0 =>
       -- gas(): return remaining gas in φ[7]
       let regs' := regs.set! 7 gas'
@@ -159,6 +155,8 @@ private def handleRefineHostCall
 
 /-- Ψ_R : Refine invocation. GP §14.
     Executes a work-item's refinement code in the PVM with host call dispatch.
+    On halt (djump to the GP halt address 2^32 - 2^16), the output is
+    o = μ[φ_7..+φ_8]; an unreadable output range is a panic (GP ☇).
     Returns (result, gas_used, exported_segments). -/
 def refine
     (serviceCode : ByteArray)
@@ -187,7 +185,7 @@ def refine
       let outLen := if 8 < result.registers.size then result.registers[8]! else 0
       match JAVM.readByteArray result.memory outAddr outLen.toNat with
       | .ok output => (.ok output, gasUsed)
-      | _ => (.ok ByteArray.empty, gasUsed)
+      | _ => (.err .panic, gasUsed)  -- GP ☇: unreadable output range → panic
     | .panic => (.err .panic, gasUsed)
     | .outOfGas => (.err .outOfGas, gasLimit)
     | _ => (.err .panic, gasUsed)

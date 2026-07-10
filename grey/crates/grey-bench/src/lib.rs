@@ -30,7 +30,11 @@ pub fn run_kernel_with_backend(blob: &[u8], gas: u64, backend: javm::PvmBackend)
         .expect("kernel init failed");
     loop {
         match kernel.run() {
-            javm::kernel::KernelResult::Halt(v) => return (v, gas - kernel.active_gas()),
+            javm::kernel::KernelResult::Halt => {
+                // Result convention at halt: scalar in ω_7 (a0).
+                let v = kernel.vm_arena.vm(kernel.active_vm).reg(7);
+                return (v, gas - kernel.active_gas());
+            }
             javm::kernel::KernelResult::Panic => {
                 let vm = &kernel.vm_arena.vm(kernel.active_vm);
                 panic!("kernel panicked at PC={} gas={}", vm.pc, vm.gas());
@@ -104,8 +108,8 @@ pub fn grey_fib_blob(n: u64) -> Vec<u8> {
     emit_branch_lt_u(&mut asm, Reg::T2, Reg::S1, rel_offset as i32);
 
     asm.move_reg(Reg::A0, Reg::T1);
-    // Terminate via REPLY (IPC slot 0)
-    asm.ecalli(0x00);
+    // Halt: djump to the halt address the kernel installed in RA (ω_0).
+    asm.jump_ind(Reg::RA, 0);
 
     asm.build()
 }
@@ -135,7 +139,8 @@ pub fn grey_hostcall_blob(n: u64) -> Vec<u8> {
     emit_branch_lt_u(&mut asm, Reg::T0, Reg::S1, rel_offset as i32);
 
     asm.move_reg(Reg::A0, Reg::T0);
-    asm.ecalli(0x00); // REPLY (IPC slot 0)
+    // Halt: djump to the halt address the kernel installed in RA (ω_0).
+    asm.jump_ind(Reg::RA, 0);
 
     asm.build()
 }
@@ -243,9 +248,11 @@ pub fn grey_sort_blob(n: u32) -> Vec<u8> {
             m.push(0);
         }
     }
-    fn ecalli(c: &mut Vec<u8>, m: &mut Vec<u8>, imm: u32) {
-        c.push(10); // ecalli opcode
+    fn jump_ind(c: &mut Vec<u8>, m: &mut Vec<u8>, ra: u8, imm: i32) {
+        c.push(50); // JumpInd
         m.push(1);
+        c.push(ra);
+        m.push(0);
         for b in imm.to_le_bytes() {
             c.push(b);
             m.push(0);
@@ -384,7 +391,7 @@ pub fn grey_sort_blob(n: u32) -> Vec<u8> {
 
     // === DONE ===
     load_ind_u32(&mut c, &mut m, A0, S0, 0); // result = arr[0] (should be 1)
-    ecalli(&mut c, &mut m, 0x00); // REPLY (IPC slot 0)
+    jump_ind(&mut c, &mut m, 0, 0); // djump to the halt address (RA/ω_0) = halt
 
     // === Patch forward jumps ===
     // 1. inner_entry jump → inner_test
@@ -775,16 +782,40 @@ pub fn grey_fib_recur_blob() -> Vec<u8> {
     // PC 93: fallthrough (1 byte) — terminator so PC 94 is a gas block start
     push_inst(&mut code, &mut bitmask, 1);
 
-    // PC 94: ecalli(0x00) (5 bytes) — REPLY(A0) (IPC slot 0)
+    // Return epilogue at PC 94 (branch target from PC 0). The same code runs
+    // as the root VM and as CALLed children: children have RA (ω_0) = 0 and
+    // return to their parent via REPLY; the root has RA = the halt address
+    // installed by the kernel and halts by jumping to it.
+    // PC 94: branch_ne_imm RA, 0, +16 (10 bytes) — root → halt at PC 110
+    push_inst(&mut code, &mut bitmask, 82);
+    push_data(&mut code, &mut bitmask, (Reg::RA as u8) | (4 << 4));
+    for &b in &0i32.to_le_bytes() {
+        push_data(&mut code, &mut bitmask, b);
+    }
+    for &b in &16i32.to_le_bytes() {
+        push_data(&mut code, &mut bitmask, b);
+    }
+
+    // PC 104: ecalli(0x00) (5 bytes) — child: REPLY(A0) to the caller
     push_inst(&mut code, &mut bitmask, 10);
     for &b in &0x00u32.to_le_bytes() {
         push_data(&mut code, &mut bitmask, b);
     }
 
-    // PC 99: trap (1 byte) — sentinel for recompiler (never reached)
+    // PC 109: trap (1 byte) — sentinel (never resumed after REPLY)
     push_inst(&mut code, &mut bitmask, 0);
 
-    assert_eq!(code.len(), 100, "fib_recur code should be 100 bytes");
+    // PC 110: jump_ind RA, 0 (6 bytes) — root: djump to the halt address
+    push_inst(&mut code, &mut bitmask, 50);
+    push_data(&mut code, &mut bitmask, Reg::RA as u8);
+    for &b in &0i32.to_le_bytes() {
+        push_data(&mut code, &mut bitmask, b);
+    }
+
+    // PC 116: trap (1 byte) — sentinel for the recompiler (never reached)
+    push_inst(&mut code, &mut bitmask, 0);
+
+    assert_eq!(code.len(), 117, "fib_recur code should be 117 bytes");
 
     // Build code sub-blob: jump_len(4) + entry_size(1) + code_len(4) + code + packed_bitmask
     let mut code_data = Vec::new();
@@ -816,7 +847,7 @@ pub fn grey_fib_recur_blob() -> Vec<u8> {
 }
 
 /// Run the fib_recur benchmark with a specific backend.
-/// Sets φ\[7\]=N after kernel init, runs until REPLY.
+/// Sets φ\[7\]=N after kernel init, runs until the root VM halts.
 pub fn run_fib_recur_with_backend(
     blob: &[u8],
     n: u64,
@@ -832,7 +863,9 @@ pub fn run_fib_recur_with_backend(
     let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
 
     match kernel.run() {
-        KernelResult::Halt(v) => {
+        KernelResult::Halt => {
+            // Result convention at halt: scalar in ω_7 (a0).
+            let v = kernel.vm_arena.vm(kernel.active_vm).reg(7);
             let gas_used = gas - kernel.active_gas();
             let vm_count = kernel.vm_arena.len();
             (v, gas_used, vm_count)
@@ -1047,8 +1080,8 @@ mod tests_sort {
             .expect("blob should be loadable");
         let result = kernel.run();
         match result {
-            javm::kernel::KernelResult::Halt(_) | javm::kernel::KernelResult::Panic => {}
-            other => panic!("refine should halt or panic; got {:?}", other),
+            javm::kernel::KernelResult::Halt => {}
+            other => panic!("refine should halt; got {:?}", other),
         }
     }
 
@@ -1062,10 +1095,8 @@ mod tests_sort {
         kernel.vm_arena.vm_mut(kernel.active_vm).set_reg(7, 1);
         let result = kernel.run();
         match result {
-            javm::kernel::KernelResult::Halt(_)
-            | javm::kernel::KernelResult::Panic
-            | javm::kernel::KernelResult::ProtocolCall { .. } => {}
-            other => panic!("expected halt/panic/protocol call, got {:?}", other),
+            javm::kernel::KernelResult::Halt | javm::kernel::KernelResult::ProtocolCall { .. } => {}
+            other => panic!("expected halt or protocol call, got {:?}", other),
         }
     }
 }

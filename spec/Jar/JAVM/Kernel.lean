@@ -266,11 +266,16 @@ private def resumeCaller (state : KernelState) (calleeIdx callerIdx : Nat)
         8 0 }
   { state with activeVm := callerIdx }
 
+/-- REPLY (`ecalli 0` = CALL on the IPC slot): return from a nested CALL.
+    Non-root: pops the call frame, returns unused gas, passes φ[7] to the
+    caller with φ[8]=0 (REPLY success), and resumes the caller
+    (WAITING_FOR_REPLY → RUNNING).
+    Root (empty call stack): panic. REPLY is not a termination mechanism —
+    the root VM terminates via the GP halt convention (djump to the halt
+    address 2^32 - 2^16 installed in ω[0]; output is read from μ[φ_7..+φ_8]). -/
 def handleReply (state : KernelState) : KernelState × DispatchResult :=
   match state.callStack.back? with
-  | none =>
-    let result := state.getActiveReg 7
-    (state, .rootHalt result.toNat)
+  | none => (state, .rootPanic)
   | some frame =>
     let calleeIdx := state.activeVm
     let callerIdx := frame.callerVmId
