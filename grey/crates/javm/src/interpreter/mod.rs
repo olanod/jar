@@ -3,11 +3,14 @@
 //! Implements the single-step state transition Ψ₁ and the full PVM Ψ.
 //! Used as a backend alongside the JIT recompiler.
 
+pub mod memory;
+
 use alloc::{vec, vec::Vec};
 
 use crate::args::{self, Args};
 use crate::instruction::Opcode;
 use crate::{ExitReason, Gas, PVM_REGISTER_COUNT};
+pub use memory::Memory;
 
 /// Pre-decoded instruction for the fast interpreter path.
 ///
@@ -43,7 +46,8 @@ pub struct DecodedInst {
 const _: () = assert!(core::mem::size_of::<DecodedInst>() == 40);
 
 /// PVM instance state (eq A.6).
-/// Page access levels for [`Interpreter::page_perms`].
+/// Page access levels for the per-page permission map
+/// (see [`Interpreter::set_page_perms`]).
 pub const PERM_NONE: u8 = 0;
 pub const PERM_RO: u8 = 1;
 pub const PERM_RW: u8 = 2;
@@ -54,19 +58,11 @@ pub struct Interpreter {
     pub gas: Gas,
     /// φ: 13 general-purpose 64-bit registers.
     pub registers: [u64; PVM_REGISTER_COUNT],
-    /// µ: Memory state (flat linear buffer). Always a whole number of
-    /// 4 KiB pages; `page_perms` has exactly one entry per page.
-    pub flat_mem: Vec<u8>,
-    /// Per-page access: [`PERM_NONE`] (unmapped), [`PERM_RO`], or [`PERM_RW`].
-    /// Mirrors the recompiler's hardware page protection (PROT_NONE /
-    /// PROT_READ / PROT_READ|WRITE): reads need at least RO, writes need RW,
-    /// and any access touching an unmapped page faults.
-    page_perms: Vec<u8>,
-    /// True when every page in `page_perms` is [`PERM_RW`]. In that (common)
-    /// case a mapped-page bounds check subsumes the permission check, so the
-    /// accessors skip the per-page table load — recovering the flat-buffer
-    /// speed for programs with no read-only or unmapped pages.
-    perms_uniform_rw: bool,
+    /// µ: Memory state. Always a whole number of 4 KiB pages with exactly
+    /// one permission entry per page. [`Memory::Flat`] (the kernel,
+    /// recompiler, and 64-bit default) or [`Memory::Sparse`] (32-bit
+    /// embedders); the two are semantically indistinguishable.
+    mem: Memory,
     /// ı: Instruction counter (program counter), indexes into code bytes.
     pub pc: u32,
     /// c: Instruction bytecode.
@@ -89,6 +85,10 @@ pub struct Interpreter {
     pub(crate) basic_block_starts: Vec<bool>,
     /// ISA profile: Conformance rejects opcode 3 (Ecall) at execution.
     pub isa_mode: crate::IsaMode,
+    /// Gas model the VM charges under. Private because the pre-decoded
+    /// stream caches per-instruction gas labels derived from it — install
+    /// via [`Self::set_gas_model`], which re-derives them.
+    gas_model: crate::GasModel,
     /// Gas cost for each gas block (indexed by block start PC).
     /// Only entries at gas block starts are meaningful. Gas blocks are
     /// {PC=0} ∪ {post-terminator PCs}, NOT branch targets.
@@ -107,22 +107,41 @@ pub struct Interpreter {
 }
 
 impl Interpreter {
-    /// Create a new PVM from parsed program components.
+    /// Create a new PVM from parsed program components, with flat memory
+    /// over `flat_mem` (zero-padded to whole pages).
     pub fn new(
         code: Vec<u8>,
         bitmask: Vec<u8>,
         jump_table: Vec<u32>,
         registers: [u64; PVM_REGISTER_COUNT],
-        mut flat_mem: Vec<u8>,
+        flat_mem: Vec<u8>,
         gas: Gas,
         mem_cycles: u8,
     ) -> Self {
-        // Whole-page memory with RW-everywhere default permissions; the
-        // kernel installs the real per-page map via `set_page_perms`.
-        let pages = flat_mem.len().div_ceil(crate::PVM_PAGE_SIZE as usize);
-        flat_mem.resize(pages * crate::PVM_PAGE_SIZE as usize, 0);
-        let page_perms = vec![PERM_RW; pages];
-        let perms_uniform_rw = true;
+        Self::with_memory(
+            code,
+            bitmask,
+            jump_table,
+            registers,
+            Memory::flat(flat_mem),
+            gas,
+            mem_cycles,
+        )
+    }
+
+    /// Create a new PVM with an explicit memory representation
+    /// ([`Memory::flat`] or [`Memory::sparse`]). Memory starts with
+    /// RW-everywhere default permissions; the embedder installs the real
+    /// per-page map via [`Self::set_page_perms`].
+    pub fn with_memory(
+        code: Vec<u8>,
+        bitmask: Vec<u8>,
+        jump_table: Vec<u32>,
+        registers: [u64; PVM_REGISTER_COUNT],
+        mem: Memory,
+        gas: Gas,
+        mem_cycles: u8,
+    ) -> Self {
         // Basic blocks and gas blocks share the same boundaries:
         // {0} ∪ post-terminator.
         let basic_block_starts = compute_basic_block_starts(&code, &bitmask);
@@ -138,9 +157,7 @@ impl Interpreter {
         Self {
             gas,
             registers,
-            flat_mem,
-            page_perms,
-            perms_uniform_rw,
+            mem,
             pc: 0,
             code,
             bitmask,
@@ -151,6 +168,7 @@ impl Interpreter {
             mem_cycles,
             basic_block_starts,
             isa_mode: crate::IsaMode::default(),
+            gas_model: crate::GasModel::default(),
             block_gas_costs,
             need_gas_charge: true,
             tracing_enabled: false,
@@ -199,6 +217,42 @@ impl Interpreter {
         self.pc = pc;
     }
 
+    /// Install the gas model, re-deriving the cached per-instruction gas
+    /// labels the fast path charges from (`DecodedInst::bb_gas_cost`).
+    ///
+    /// Under [`crate::GasModel::PerInstruction`] every decoded instruction
+    /// — including the synthetic panic stubs at invalid opcode positions
+    /// and the end-of-code sentinel trap — is labelled with a flat cost of
+    /// 1, so the fast loop's existing charge-then-execute step reproduces
+    /// the Lean oracle (`Jar.JAVM.run`): out-of-gas is checked before the
+    /// instruction runs, and the exiting instruction is itself charged.
+    /// Under [`crate::GasModel::BlockSinglePass`] the labels revert to the
+    /// block costs at gas-block starts (0 elsewhere).
+    pub fn set_gas_model(&mut self, model: crate::GasModel) {
+        self.gas_model = model;
+        for inst in &mut self.decoded_insts {
+            inst.bb_gas_cost = match model {
+                crate::GasModel::PerInstruction => 1,
+                crate::GasModel::BlockSinglePass => {
+                    let pc = inst.pc as usize;
+                    if pc < self.basic_block_starts.len() && self.basic_block_starts[pc] {
+                        self.block_gas_costs[pc]
+                    } else if pc >= self.code.len() {
+                        // The end-of-code sentinel trap charges 1.
+                        1
+                    } else {
+                        0
+                    }
+                }
+            };
+        }
+    }
+
+    /// The gas model the VM charges under.
+    pub fn gas_model(&self) -> crate::GasModel {
+        self.gas_model
+    }
+
     /// Create a simple PVM for testing (code only, trivial bitmask).
     pub fn new_simple(
         code: Vec<u8>,
@@ -221,213 +275,80 @@ impl Interpreter {
     }
 
     /// Install the per-page permission map. `perms` must have exactly one
-    /// entry per 4 KiB page of `flat_mem` — the accessors rely on the page
-    /// bounds check doubling as the byte-range check.
+    /// entry per 4 KiB page of guest memory — the accessors rely on the
+    /// page bounds check doubling as the byte-range check.
     pub fn set_page_perms(&mut self, perms: Vec<u8>) {
-        assert_eq!(
-            perms.len() * crate::PVM_PAGE_SIZE as usize,
-            self.flat_mem.len(),
-            "page_perms must cover flat_mem exactly"
-        );
-        self.perms_uniform_rw = perms.iter().all(|&p| p == PERM_RW);
-        self.page_perms = perms;
+        self.mem.set_page_perms(perms);
     }
 
-    // --- Flat memory accessors ---
+    /// The guest memory.
+    pub fn memory(&self) -> &Memory {
+        &self.mem
+    }
+
+    /// Take ownership of the guest memory, leaving an empty flat buffer.
+    pub fn take_memory(&mut self) -> Memory {
+        core::mem::take(&mut self.mem)
+    }
+
+    /// The flat backing buffer. The kernel and recompiler paths construct
+    /// the interpreter with flat memory only; panics under [`Memory::Sparse`].
+    pub fn flat_mem(&self) -> &[u8] {
+        self.mem
+            .as_flat()
+            .expect("flat_mem() requires the flat memory representation")
+    }
+
+    // --- Memory accessors ---
     //
-    // Direct pointer access gated by the per-page permission table. The hot
-    // path is a single page-index shift, one bounds check, one byte load, and
-    // one compare on top of the unaligned MOV; the page-index bounds check
-    // doubles as the byte-range check because `flat_mem` is exactly
-    // `page_perms.len()` pages long. A wide access that straddles a page
-    // boundary (`off + n > 4096`, rare) checks the second page behind a cold
-    // branch. Reads need at least PERM_RO on every touched page, writes need
-    // PERM_RW; failures report the offending page base (GP page faults are
+    // Thin dispatch onto the active representation (see `memory` module).
+    // For flat memory the hot path is unchanged from the historical
+    // flat-buffer accessors: a single page-index shift, one bounds check,
+    // one byte load, and one compare on top of the unaligned MOV. Reads
+    // need at least PERM_RO on every touched page, writes need PERM_RW;
+    // failures report the offending page base (GP page faults are
     // page-granular, matching the Lean oracle and the JIT's SIGSEGV path).
-
-    /// True when the last byte of `[a, a+n)` is on a mapped page (bounds
-    /// check). Under uniform-RW memory this subsumes both readable/writable.
-    #[inline(always)]
-    fn in_bounds(&self, a: usize, n: usize) -> bool {
-        (a + n - 1) >> 12 < self.page_perms.len()
-    }
-
-    /// True when `[a, a+n)` is entirely on readable pages.
-    #[inline(always)]
-    fn readable(&self, a: usize, n: usize) -> bool {
-        if self.perms_uniform_rw {
-            return self.in_bounds(a, n);
-        }
-        let page = a >> 12;
-        if page >= self.page_perms.len() {
-            return false;
-        }
-        // SAFETY: page < page_perms.len().
-        if unsafe { *self.page_perms.get_unchecked(page) } == PERM_NONE {
-            return false;
-        }
-        if (a & 0xFFF) + n > crate::PVM_PAGE_SIZE as usize {
-            let last = page + 1;
-            // SAFETY: bounds-checked before the load.
-            return last < self.page_perms.len()
-                && unsafe { *self.page_perms.get_unchecked(last) } != PERM_NONE;
-        }
-        true
-    }
-
-    /// True when `[a, a+n)` is entirely on writable pages.
-    #[inline(always)]
-    fn writable(&self, a: usize, n: usize) -> bool {
-        if self.perms_uniform_rw {
-            return self.in_bounds(a, n);
-        }
-        let page = a >> 12;
-        if page >= self.page_perms.len() {
-            return false;
-        }
-        // SAFETY: page < page_perms.len().
-        if unsafe { *self.page_perms.get_unchecked(page) } != PERM_RW {
-            return false;
-        }
-        if (a & 0xFFF) + n > crate::PVM_PAGE_SIZE as usize {
-            let last = page + 1;
-            // SAFETY: bounds-checked before the load.
-            return last < self.page_perms.len()
-                && unsafe { *self.page_perms.get_unchecked(last) } == PERM_RW;
-        }
-        true
-    }
-
-    /// Page base of the first page in `[a, a+n)` that fails the access
-    /// check. Only called after a failed access (cold path).
-    #[cold]
-    fn fault_page(&self, a: usize, n: usize, write: bool) -> u32 {
-        let ok = |p: usize| {
-            p < self.page_perms.len()
-                && if write {
-                    self.page_perms[p] == PERM_RW
-                } else {
-                    self.page_perms[p] != PERM_NONE
-                }
-        };
-        let first = a >> 12;
-        let page = if ok(first) { (a + n - 1) >> 12 } else { first };
-        ((page as u64) << 12) as u32
-    }
 
     /// Read a byte; `Err` carries the faulting page base.
     #[inline(always)]
     pub fn read_u8(&self, addr: u32) -> Result<u8, u32> {
-        let a = addr as usize;
-        if self.readable(a, 1) {
-            // SAFETY: readable() bounds-checks the page, and flat_mem covers
-            // every page in page_perms.
-            Ok(unsafe { *self.flat_mem.get_unchecked(a) })
-        } else {
-            Err(self.fault_page(a, 1, false))
-        }
+        self.mem.read_u8(addr)
     }
 
     #[inline(always)]
     fn read_u16_le(&self, addr: u32) -> Result<u16, u32> {
-        let a = addr as usize;
-        if self.readable(a, 2) {
-            // SAFETY: see read_u8; read_unaligned handles unaligned addresses.
-            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u16>().read_unaligned() })
-        } else {
-            Err(self.fault_page(a, 2, false))
-        }
+        self.mem.read_u16_le(addr)
     }
 
     #[inline(always)]
     fn read_u32_le(&self, addr: u32) -> Result<u32, u32> {
-        let a = addr as usize;
-        if self.readable(a, 4) {
-            // SAFETY: see read_u8.
-            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u32>().read_unaligned() })
-        } else {
-            Err(self.fault_page(a, 4, false))
-        }
+        self.mem.read_u32_le(addr)
     }
 
     #[inline(always)]
     fn read_u64_le(&self, addr: u32) -> Result<u64, u32> {
-        let a = addr as usize;
-        if self.readable(a, 8) {
-            // SAFETY: see read_u8.
-            Ok(unsafe { self.flat_mem.as_ptr().add(a).cast::<u64>().read_unaligned() })
-        } else {
-            Err(self.fault_page(a, 8, false))
-        }
+        self.mem.read_u64_le(addr)
     }
 
     /// Write a byte; `Err` carries the faulting page base.
     #[inline(always)]
     pub fn write_u8(&mut self, addr: u32, val: u8) -> Result<(), u32> {
-        let a = addr as usize;
-        if self.writable(a, 1) {
-            // SAFETY: writable() bounds-checks the page.
-            unsafe {
-                *self.flat_mem.get_unchecked_mut(a) = val;
-            }
-            Ok(())
-        } else {
-            Err(self.fault_page(a, 1, true))
-        }
+        self.mem.write_u8(addr, val)
     }
 
     #[inline(always)]
     fn write_u16_le(&mut self, addr: u32, val: u16) -> Result<(), u32> {
-        let a = addr as usize;
-        if self.writable(a, 2) {
-            // SAFETY: see write_u8.
-            unsafe {
-                self.flat_mem
-                    .as_mut_ptr()
-                    .add(a)
-                    .cast::<u16>()
-                    .write_unaligned(val);
-            }
-            Ok(())
-        } else {
-            Err(self.fault_page(a, 2, true))
-        }
+        self.mem.write_u16_le(addr, val)
     }
 
     #[inline(always)]
     fn write_u32_le(&mut self, addr: u32, val: u32) -> Result<(), u32> {
-        let a = addr as usize;
-        if self.writable(a, 4) {
-            // SAFETY: see write_u8.
-            unsafe {
-                self.flat_mem
-                    .as_mut_ptr()
-                    .add(a)
-                    .cast::<u32>()
-                    .write_unaligned(val);
-            }
-            Ok(())
-        } else {
-            Err(self.fault_page(a, 4, true))
-        }
+        self.mem.write_u32_le(addr, val)
     }
 
     #[inline(always)]
     fn write_u64_le(&mut self, addr: u32, val: u64) -> Result<(), u32> {
-        let a = addr as usize;
-        if self.writable(a, 8) {
-            // SAFETY: see write_u8.
-            unsafe {
-                self.flat_mem
-                    .as_mut_ptr()
-                    .add(a)
-                    .cast::<u64>()
-                    .write_unaligned(val);
-            }
-            Ok(())
-        } else {
-            Err(self.fault_page(a, 8, true))
-        }
+        self.mem.write_u64_le(addr, val)
     }
 
     /// Compute skip(i) — distance to next instruction minus one (eq A.3).
@@ -523,6 +444,19 @@ impl Interpreter {
 
         let pc = self.pc as usize;
 
+        // Per-instruction metering (GP 0.7.2): 1 gas per instruction,
+        // checked BEFORE opcode validation — a VM with 0 gas exits OutOfGas
+        // even at an invalid instruction position, and the instruction that
+        // exits (halt/trap/panic/fault/hostcall) is itself charged. Mirrors
+        // the Lean oracle `Jar.JAVM.run`, which checks gas ahead of
+        // `executeStep`.
+        if self.gas_model == crate::GasModel::PerInstruction {
+            if self.gas == 0 {
+                return Some(ExitReason::OutOfGas);
+            }
+            self.gas -= 1;
+        }
+
         // Fetch and validate opcode (eq A.19)
         let opcode_byte = self.zeta(pc);
         let bitmask_valid = pc < self.bitmask.len() && self.bitmask[pc] == 1;
@@ -544,7 +478,7 @@ impl Interpreter {
         // Gas is charged at gas block entries: initial entry (PC=0) and after
         // terminators. Branch/jump targets are NOT gas block starts per spec
         // (Lean Interpreter.lean:130, GP PR #508).
-        if self.need_gas_charge {
+        if self.gas_model == crate::GasModel::BlockSinglePass && self.need_gas_charge {
             let block_cost = self.block_gas_costs[pc] as u64;
             if self.gas < block_cost {
                 return Some(ExitReason::OutOfGas);
@@ -1665,8 +1599,12 @@ impl Interpreter {
 
     /// Run the machine until it exits (eq A.1).
     ///
-    /// Uses pre-decoded instructions for speed (avoids per-instruction decode overhead).
-    /// Gas is charged per-instruction (1 gas each, matching the stepping path exactly).
+    /// Uses pre-decoded instructions for speed (avoids per-instruction
+    /// decode overhead). Gas charges come from the pre-derived
+    /// `DecodedInst::bb_gas_cost` labels: block costs at gas-block entries
+    /// under [`crate::GasModel::BlockSinglePass`], a flat 1 on every
+    /// instruction under [`crate::GasModel::PerInstruction`] (see
+    /// [`Self::set_gas_model`]).
     /// Returns (exit_reason, gas_used).
     pub fn run(&mut self) -> (ExitReason, Gas) {
         // Macros for repetitive load/store dispatch arms. Each macro
@@ -1707,7 +1645,13 @@ impl Interpreter {
         };
 
         if idx == u32::MAX {
-            // Invalid starting PC
+            // Invalid starting PC. Under per-instruction gas the
+            // out-of-gas check precedes execution (Lean: `run` checks gas
+            // before `executeStep` panics), so an exhausted VM exits
+            // OutOfGas even here; otherwise the failed step costs 1.
+            if self.gas_model == crate::GasModel::PerInstruction && self.gas == 0 {
+                return (ExitReason::OutOfGas, 0);
+            }
             self.gas = self.gas.saturating_sub(1);
             return (ExitReason::Panic, initial_gas - self.gas);
         }
@@ -1718,7 +1662,9 @@ impl Interpreter {
             // and incremented only via validated next_pc / jump targets.
             let inst = *unsafe { self.decoded_insts.get_unchecked(idx as usize) };
 
-            // Per-gas-block charging (JAR v0.8.0): only at PC=0 and post-terminator starts
+            // Gas charge from the pre-derived label: block cost at gas-block
+            // entries (JAR v0.8.0), or a flat 1 on every instruction under
+            // GasModel::PerInstruction (GP 0.7.2) — see set_gas_model().
             if inst.bb_gas_cost > 0 {
                 if self.gas < inst.bb_gas_cost as u64 {
                     self.pc = inst.pc;
@@ -2577,7 +2523,7 @@ pub fn skip_for_bitmask(bitmask: &[u8], pc: usize) -> usize {
     // Most instructions are 1-6 bytes, so the first word usually suffices.
     if start + 8 <= bm_len {
         // SAFETY: start + 8 <= bm_len ensures the 8-byte read is within the slice.
-        let word = unsafe { std::ptr::read_unaligned(bitmask.as_ptr().add(start) as *const u64) };
+        let word = unsafe { core::ptr::read_unaligned(bitmask.as_ptr().add(start) as *const u64) };
         // Each byte is 0 or 1. A byte with value 1 means "instruction start".
         // We want the position of the first non-zero byte.
         if word != 0 {
@@ -3438,6 +3384,51 @@ mod tests {
         );
     }
 
+    /// Perf smoke for the flat-memory hot path: a 4-instruction loop with
+    /// two 8-byte memory operations per iteration. Ignored by default; run
+    /// with `cargo test -p javm --release -- --ignored perf_smoke --nocapture`
+    /// and compare the reported ns/inst before and after touching the
+    /// memory accessors (commit f024c184 context: flat throughput matters).
+    #[cfg(feature = "std")]
+    #[test]
+    #[ignore = "perf smoke: run explicitly in release mode"]
+    fn perf_smoke_flat_memory_loop() {
+        let iters: u64 = 4_000_000;
+        // pc 0: add_imm_64  φ2 = φ2 + 1                (3 bytes)
+        // pc 3: store_ind_u64 [φ3+0], φ2               (2 bytes)
+        // pc 5: load_ind_u64  φ4, [φ3+0]               (2 bytes)
+        // pc 7: branch_ne_imm φ2, iters, → pc 0        (7 bytes)
+        // pc 14: trap
+        let mut code = vec![149, 2 + 16 * 2, 1];
+        code.extend_from_slice(&[123, 2 + 16 * 3]);
+        code.extend_from_slice(&[130, 4 + 16 * 3]);
+        code.push(82);
+        code.push(2 + 16 * 4); // ra = 2, lx = 4
+        code.extend_from_slice(&(iters as u32).to_le_bytes());
+        code.push((-7i8) as u8); // offset → pc 0
+        code.push(0);
+        let bitmask = vec![1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1];
+
+        let mut vm = Interpreter::new(
+            code,
+            bitmask,
+            vec![],
+            [0; 13],
+            vec![0u8; 4096],
+            u64::MAX / 2,
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        );
+        let start = std::time::Instant::now();
+        let (exit, gas_used) = vm.run();
+        let elapsed = start.elapsed();
+        assert_eq!(exit, ExitReason::Trap);
+        let insts = 4 * iters + 1;
+        std::println!(
+            "flat perf smoke: {insts} insts in {elapsed:?} ({:.2} ns/inst, gas {gas_used})",
+            elapsed.as_nanos() as f64 / insts as f64
+        );
+    }
+
     #[test]
     fn test_branch_to_mid_block_target_panics() {
         // GP eq A.17: a taken branch whose target is not a basic-block start
@@ -3463,5 +3454,193 @@ mod tests {
         // Executing through the Jump at PC 5 (target PC 3) must panic.
         let exit = vm.run();
         assert_eq!(exit.0, ExitReason::Panic, "jump to mid-block must panic");
+    }
+
+    // --- GasModel::PerInstruction (GP 0.7.2) ---
+    //
+    // The oracle is the Lean spec's per-instruction branch
+    // (spec/Jar/JAVM/Interpreter.lean, `run`): check gas before executing,
+    // charge a flat 1, and charge the exiting instruction too. These tests
+    // pin the Rust interpreter to that model on both execution paths.
+
+    /// Build a per-instruction-gas VM over explicit code/bitmask.
+    fn pi_vm(code: Vec<u8>, bitmask: Vec<u8>, gas: Gas) -> Interpreter {
+        let mut vm = Interpreter::new(
+            code,
+            bitmask,
+            vec![],
+            [0; 13],
+            Vec::new(),
+            gas,
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        );
+        vm.set_gas_model(crate::GasModel::PerInstruction);
+        vm
+    }
+
+    #[test]
+    fn per_instruction_charges_flat_one_per_instruction() {
+        // fallthrough; move_reg φ0←φ1; trap — 3 instructions, 3 gas.
+        let code = vec![1, 100, 0x10, 0];
+        let bitmask = vec![1, 1, 0, 1];
+        let mut vm = pi_vm(code, bitmask, 1000);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::Trap);
+        assert_eq!(gas_used, 3, "3 instructions cost exactly 3 gas");
+    }
+
+    #[test]
+    fn per_instruction_step_and_run_agree_on_a_loop() {
+        // pc 0: load_imm φ2 = 3; pc 3: fallthrough; pc 4: add_imm_64 φ2 += -1;
+        // pc 7: branch_ne_imm φ2 ≠ 0 → pc 4 (a post-terminator block start);
+        // pc 10: trap. Executes 2 + 3·2 + 1 = 9 instructions.
+        let code = vec![51, 2, 3, 1, 149, 0x22, 0xFF, 82, 2, 0xFD, 0];
+        let bitmask = vec![1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1];
+
+        let mut vm_run = pi_vm(code.clone(), bitmask.clone(), 1000);
+        let (exit, gas_used) = vm_run.run();
+        assert_eq!(exit, ExitReason::Trap);
+        assert_eq!(gas_used, 9, "9 executed instructions cost 9 gas");
+        assert_eq!(vm_run.registers[2], 0);
+
+        let mut vm_step = pi_vm(code, bitmask, 1000);
+        let exit_step = loop {
+            if let Some(e) = vm_step.step() {
+                break e;
+            }
+        };
+        assert_eq!(exit_step, ExitReason::Trap);
+        assert_eq!(1000 - vm_step.gas, 9, "step() charges identically");
+        assert_eq!(vm_step.registers, vm_run.registers);
+    }
+
+    #[test]
+    fn per_instruction_out_of_gas_precedes_execution() {
+        // Lean: `if gas <= 0 then outOfGas` runs before executeStep, so a
+        // budget of 5 executes exactly 5 fallthroughs and the 6th
+        // instruction never runs; remaining gas is untouched (0).
+        let mut vm = pi_vm(vec![1; 100], vec![1; 100], 5);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::OutOfGas);
+        assert_eq!(gas_used, 5);
+        assert_eq!(vm.gas, 0, "OOG leaves the remaining gas untouched");
+
+        // A zero budget is out of gas before anything executes at all.
+        let mut vm = pi_vm(vec![0], vec![1], 0);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::OutOfGas);
+        assert_eq!(gas_used, 0, "nothing executed, nothing charged");
+
+        // Same on the stepping path.
+        let mut vm = pi_vm(vec![0], vec![1], 0);
+        assert_eq!(vm.step(), Some(ExitReason::OutOfGas));
+        assert_eq!(vm.gas, 0);
+    }
+
+    #[test]
+    fn per_instruction_charges_the_exiting_instruction() {
+        // The ecalli that exits with HostCall is itself charged (Lean
+        // carries gas' = gas - 1 into every exit result).
+        let mut vm = pi_vm(vec![10, 7], vec![1, 0], 5);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::HostCall(7));
+        assert_eq!(gas_used, 1);
+
+        // So is a faulting store: store_imm_u8 to unmapped 0x5000.
+        // TwoImm encoding: opcode 30, ζ[1]=lx=2, imm_x = 0x5000, imm_y = 0.
+        let code = vec![30, 2, 0x00, 0x50];
+        let mut vm = pi_vm(code, vec![1, 0, 0, 0], 5);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::PageFault(0x5000));
+        assert_eq!(gas_used, 1, "the faulting instruction is charged");
+    }
+
+    #[test]
+    fn per_instruction_fall_off_end_is_a_charged_trap() {
+        // GP: the bitmask beyond the code is all set and ζ zero-extends, so
+        // sequential flow past the last instruction executes opcode 0 (trap)
+        // and is charged for it (Lean bitmaskGet/zeta; the fast path's
+        // end-of-code sentinel).
+        let mut vm = pi_vm(vec![1], vec![1], 10);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::Trap);
+        assert_eq!(gas_used, 2, "fallthrough (1) + implicit trailing trap (1)");
+    }
+
+    #[test]
+    fn per_instruction_invalid_positions_charge_after_the_gas_check() {
+        // An invalid opcode at an instruction start panics but is charged
+        // (Lean: executeStep panics after the decrement)…
+        let mut vm = pi_vm(vec![77], vec![1], 5);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::Panic);
+        assert_eq!(gas_used, 1);
+
+        // …unless the VM is already out of gas: the gas check precedes
+        // opcode validation, so OOG wins over the panic.
+        let mut vm = pi_vm(vec![77], vec![1], 0);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::OutOfGas);
+        assert_eq!(gas_used, 0);
+
+        // A mid-instruction starting PC behaves the same way: panic for 1
+        // gas when funded, OOG when not.
+        let code = vec![51, 0, 42, 0, 0, 0, 0];
+        let bitmask = vec![1, 0, 0, 0, 0, 0, 1];
+        let mut vm = pi_vm(code.clone(), bitmask.clone(), 5);
+        vm.set_pc(2);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::Panic);
+        assert_eq!(gas_used, 1);
+
+        let mut vm = pi_vm(code, bitmask, 0);
+        vm.set_pc(2);
+        let (exit, gas_used) = vm.run();
+        assert_eq!(exit, ExitReason::OutOfGas);
+        assert_eq!(gas_used, 0);
+    }
+
+    #[test]
+    fn set_gas_model_relabels_and_restores_block_costs() {
+        // The pre-decoded gas labels are keyed on the model: switching to
+        // per-instruction and back must reproduce the block model's charges
+        // exactly (the frozen jar1 behaviour).
+        let code = vec![51, 2, 3, 1, 149, 0x22, 0xFF, 82, 2, 0xFD, 0];
+        let bitmask = vec![1u8, 0, 0, 1, 1, 0, 0, 1, 0, 0, 1];
+
+        let mut pristine = Interpreter::new(
+            code.clone(),
+            bitmask.clone(),
+            vec![],
+            [0; 13],
+            Vec::new(),
+            1000,
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        );
+        let (block_exit, block_gas) = pristine.run();
+
+        let mut toggled = Interpreter::new(
+            code,
+            bitmask,
+            vec![],
+            [0; 13],
+            Vec::new(),
+            1000,
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        );
+        toggled.set_gas_model(crate::GasModel::PerInstruction);
+        assert_eq!(toggled.gas_model(), crate::GasModel::PerInstruction);
+        toggled.set_gas_model(crate::GasModel::BlockSinglePass);
+        let (toggle_exit, toggle_gas) = toggled.run();
+
+        assert_eq!(block_exit, toggle_exit);
+        assert_eq!(
+            block_gas, toggle_gas,
+            "restoring the block model restores its exact charges"
+        );
+        assert_ne!(
+            block_gas, 9,
+            "the two models are genuinely different cost functions"
+        );
     }
 }

@@ -21,6 +21,7 @@ pub mod interpreter;
 #[cfg(feature = "std")]
 pub mod kernel;
 pub mod program;
+pub mod refine;
 pub mod spi;
 pub mod vm_pool;
 // Real JIT recompiler on Linux x86-64.
@@ -83,6 +84,36 @@ pub enum IsaMode {
     /// Graypaper-strict: opcode 3 is not a valid instruction and panics
     /// when executed (GP conformance; the cap kernel is a jar extension).
     Conformance,
+}
+
+/// Gas metering model the VM charges under (the gas analogue of [`IsaMode`]).
+///
+/// Mirrors the Lean spec's `Jar.Types.Config.GasModel` knob: the `gp072_*`
+/// variants pin `.perInstruction` (GP 0.7.2), `jar1` pins
+/// `.basicBlockSinglePass` (JAR v0.8.0). Only the interpreter implements
+/// both; the recompiler and the capability kernel always execute the block
+/// model — per-instruction charging is a conformance tool, not the
+/// performance path.
+///
+/// The interpreter's pre-decoded instruction stream caches per-instruction
+/// gas labels, so the model is installed via
+/// [`Interpreter::set_gas_model`], which re-derives the cached labels —
+/// never by mutating a field directly. Cached
+/// [`backend::InterpreterProgram`]s (CODE caps / the kernel's `CodeCache`)
+/// always carry block-model labels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum GasModel {
+    /// JAR v0.8.0: a per-basic-block cost from the single-pass pipeline
+    /// model, charged once on gas-block entry ({0} ∪ post-terminator).
+    #[default]
+    BlockSinglePass,
+    /// GP 0.7.2: a flat 1 gas per instruction. The out-of-gas check
+    /// precedes execution (a VM with 0 gas exits `OutOfGas` before doing
+    /// anything, even at an invalid instruction position), and the exiting
+    /// instruction — halt, trap, panic, fault, or host call — is itself
+    /// charged. Mirrors the Lean oracle `Jar.JAVM.run` (per-instruction
+    /// branch) exactly.
+    PerInstruction,
 }
 
 /// ZI = 2^24: Standard PVM program initialization input data size.

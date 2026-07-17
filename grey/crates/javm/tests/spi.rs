@@ -51,3 +51,67 @@ fn parses_real_service_preimage() {
     assert!(layout.rw.base > layout.ro.base);
     assert_eq!(layout.registers[0], javm::PVM_HALT_ADDR);
 }
+
+/// The real service can be *started* under the kernel-free refine harness:
+/// it runs deterministically up to its first hostcall (`ecalli 1`), which
+/// surfaces as an undispatched `HostCall` exit for the embedder to handle.
+#[test]
+fn refine_harness_starts_real_service_preimage() {
+    let blob = service_preimage();
+    let inv = javm::refine::execute(&blob, &[], 10_000_000).expect("service preimage loads");
+    assert_eq!(
+        inv.exit,
+        javm::ExitReason::HostCall(1),
+        "the service's first act at the refine entry is hostcall 1"
+    );
+    // ro (2) + rw+heap (3) + stack (2) pages charge init gas; the prologue
+    // consumed execution gas on top of that.
+    let init_gas = 7 * javm::GAS_PER_PAGE;
+    assert!(
+        inv.gas_used > init_gas,
+        "gas accounting: init charge plus execution (used {})",
+        inv.gas_used
+    );
+    assert_eq!(inv.output(), None, "no output without a halt");
+}
+
+/// The flat and sparse memory representations are indistinguishable on the
+/// real gp072 service: same first-hostcall exit, the same pinned gas
+/// (10 702), the same register file, and the same logical memory around
+/// every mapped region. This is the shape a 32-bit embedder (which
+/// `MemoryModel::Auto` puts on the sparse path) executes.
+#[test]
+fn refine_flat_and_sparse_agree_on_real_service_preimage() {
+    use javm::refine::MemoryModel;
+
+    let blob = service_preimage();
+    let f = javm::refine::execute_with(&blob, &[], 10_000_000, MemoryModel::Flat).expect("flat");
+    let s =
+        javm::refine::execute_with(&blob, &[], 10_000_000, MemoryModel::Sparse).expect("sparse");
+
+    assert_eq!(f.exit, javm::ExitReason::HostCall(1));
+    assert_eq!(s.exit, f.exit, "exit agrees");
+    assert_eq!(f.gas_used, 10_702, "pinned gas for the service prologue");
+    assert_eq!(s.gas_used, f.gas_used, "gas agrees");
+    assert_eq!(s.registers, f.registers, "registers agree");
+    assert_eq!(s.memory().span(), f.memory().span(), "spans agree");
+
+    // Compare the logical image over every mapped region plus a page of
+    // surrounding gap, via reads (representation-independent).
+    let prog = parse_standard_program(&blob).expect("parses");
+    let layout = prog.layout(&[]).expect("lays out");
+    let span = f.memory().span();
+    let page = 4096u64;
+    for r in [layout.ro, layout.rw, layout.stack, layout.args] {
+        if r.size == 0 {
+            continue;
+        }
+        let start = r.base.saturating_sub(page);
+        let end = (r.base + r.size + page).min(span);
+        let mut bf = vec![0u8; (end - start) as usize];
+        let mut bs = bf.clone();
+        f.memory().read_bytes(start as u32, &mut bf);
+        s.memory().read_bytes(start as u32, &mut bs);
+        assert_eq!(bf, bs, "logical image diverges near {start:#x}");
+    }
+}

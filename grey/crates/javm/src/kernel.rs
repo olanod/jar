@@ -2124,15 +2124,16 @@ impl InvocationKernel {
                         let addr =
                             (base_page as usize + i as usize) * crate::PVM_PAGE_SIZE as usize;
                         let len = crate::PVM_PAGE_SIZE as usize;
-                        if addr + len > interp.flat_mem.len() {
+                        let flat_mem = interp.flat_mem();
+                        if addr + len > flat_mem.len() {
                             continue;
                         }
                         // SAFETY: wb is the active window base; the page is
                         // mapped RW (checked above) and addr+len is within
-                        // interp.flat_mem.
+                        // the interpreter's flat memory.
                         unsafe {
                             std::ptr::copy_nonoverlapping(
-                                interp.flat_mem.as_ptr().add(addr),
+                                flat_mem.as_ptr().add(addr),
                                 wb.add(addr),
                                 len,
                             );
@@ -2164,7 +2165,7 @@ impl InvocationKernel {
                         }
                         let addr =
                             (base_page as usize + i as usize) * crate::PVM_PAGE_SIZE as usize;
-                        if addr + crate::PVM_PAGE_SIZE as usize > interp.flat_mem.len() {
+                        if addr + crate::PVM_PAGE_SIZE as usize > interp.flat_mem().len() {
                             continue;
                         }
                         pages.push((addr, d.backing_offset + i));
@@ -2175,7 +2176,7 @@ impl InvocationKernel {
             for (addr, backing_page) in writebacks {
                 let len = crate::PVM_PAGE_SIZE as usize;
                 self.backing
-                    .write_page_slice(backing_page, &interp.flat_mem[addr..addr + len]);
+                    .write_page_slice(backing_page, &interp.flat_mem()[addr..addr + len]);
             }
         }
 
