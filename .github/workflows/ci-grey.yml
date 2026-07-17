@@ -88,6 +88,24 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
           SKIP_GUEST_BUILD: 1
 
+  no-std:
+    name: no_std check (javm, wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check javm (no_std, wasm32)
+        run: >
+          cargo check --locked -p javm
+          --no-default-features
+          --target wasm32-unknown-unknown
+
   test:
     name: Tests
     runs-on: ubuntu-latest

@@ -8,6 +8,7 @@
 //! - CALLABLE: VM entry point — copyable (CALL only)
 
 use alloc::sync::Arc;
+use alloc::{vec, vec::Vec};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 /// Memory access mode, set at MAP time (not at RETYPE).
