@@ -693,6 +693,32 @@ impl RecompiledPvm {
         data_layout: Option<DataLayout>,
         mem_cycles: u8,
     ) -> Result<Self, String> {
+        Self::new_with_mode(
+            code,
+            bitmask,
+            jump_table,
+            registers,
+            gas,
+            data_layout,
+            mem_cycles,
+            crate::IsaMode::Jar,
+        )
+    }
+
+    /// [`Self::new`] with an explicit ISA profile.
+    /// [`crate::IsaMode::Conformance`] compiles opcode 3 (`Ecall`) as a
+    /// panic, matching the interpreter's graypaper-strict behaviour.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_mode(
+        code: &[u8],
+        bitmask: Vec<u8>,
+        jump_table: Vec<u32>,
+        registers: [u64; PVM_REGISTER_COUNT],
+        gas: Gas,
+        data_layout: Option<DataLayout>,
+        mem_cycles: u8,
+        isa_mode: crate::IsaMode,
+    ) -> Result<Self, String> {
         let debug = {
             use std::sync::atomic::{AtomicU8, Ordering};
             static CACHED: AtomicU8 = AtomicU8::new(0); // 0=unchecked, 1=false, 2=true
@@ -794,7 +820,7 @@ impl RecompiledPvm {
             code.len(),
             true, // use mmap-backed assembler
             mem_cycles,
-            crate::IsaMode::Jar,
+            isa_mode,
         );
         let compile_result = compiler.compile(code, &bitmask);
         let _t_compile = _t2.elapsed();
@@ -1071,6 +1097,65 @@ impl RecompiledPvm {
             }
         }
         true
+    }
+
+    /// Install a per-page permission map over the guest memory (the
+    /// conformance-vector / test-harness surface; the kernel path manages
+    /// permissions through its backing-store code windows instead).
+    ///
+    /// `perms` holds one entry per 4 KiB page starting at address 0, using
+    /// the interpreter's encoding (`PERM_NONE` / `PERM_RO` / `PERM_RW`);
+    /// every page beyond the slice becomes inaccessible. Both enforcement
+    /// layers are updated so faults classify identically to the
+    /// interpreter: the software permission table (read/write helper calls
+    /// and fault classification) and the hardware protection of the mmap'd
+    /// guest pages (inline JIT accesses fault via the SIGSEGV handler,
+    /// which reports the faulting page base).
+    ///
+    /// Call after seeding memory contents (`write_bytes` requires the
+    /// construction-time RW permissions).
+    pub fn set_page_perms(&mut self, perms: &[u8]) {
+        let Some(fm) = self.flat_memory.as_ref() else {
+            return;
+        };
+        let perm_at = |page: usize| -> u8 { if page < perms.len() { perms[page] } else { 0 } };
+        // Software permission table: one byte per page, inaccessible beyond
+        // the supplied map.
+        for page in 0..NUM_PAGES {
+            // SAFETY: page < NUM_PAGES; perms table is valid for NUM_PAGES.
+            unsafe {
+                *fm.perms.add(page) = perm_at(page);
+            }
+        }
+        // Hardware protection: mprotect each run of equal permission.
+        let prot = |p: u8| match p {
+            2.. => libc::PROT_READ | libc::PROT_WRITE,
+            1 => libc::PROT_READ,
+            0 => libc::PROT_NONE,
+        };
+        let mut page = 0usize;
+        while page < NUM_PAGES {
+            let p = perm_at(page);
+            let mut end = page + 1;
+            // Everything beyond the map is a single inaccessible run.
+            if page >= perms.len() {
+                end = NUM_PAGES;
+            } else {
+                while end < NUM_PAGES && perm_at(end) == p {
+                    end += 1;
+                }
+            }
+            // SAFETY: [page, end) is within the 4 GiB guest mmap; buf is
+            // page-aligned (mmap base + a page-multiple header).
+            unsafe {
+                libc::mprotect(
+                    fm.buf.add(page * 4096) as *mut libc::c_void,
+                    (end - page) * 4096,
+                    prot(p),
+                );
+            }
+            page = end;
+        }
     }
 
     /// Get the program counter (last known PC on exit).
