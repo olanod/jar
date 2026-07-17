@@ -6,7 +6,7 @@ use scale::Encode;
 const JAR_MAGIC: u32 = u32::from_le_bytes([b'J', b'A', b'R', 0x01]);
 
 /// Determine the minimum byte width needed to encode jump table entries.
-fn jump_table_entry_size(jump_table: &[u32]) -> u8 {
+pub(crate) fn jump_table_entry_size(jump_table: &[u32]) -> u8 {
     if jump_table.is_empty() {
         1
     } else {

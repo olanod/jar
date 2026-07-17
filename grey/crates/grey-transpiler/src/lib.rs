@@ -9,6 +9,7 @@ pub mod assembler;
 pub mod emitter;
 pub mod linker;
 pub mod riscv;
+pub mod spi;
 
 use thiserror::Error;
 
@@ -51,6 +52,15 @@ pub enum TranspileError {
 /// Single entrypoint (PC=0). Works for both standard and service programs.
 pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     linker::link_elf(elf_data)
+}
+
+/// Link a RISC-V rv64em ELF binary into a GP standard-program (SPI) blob —
+/// the format `javm::spi::parse_standard_program` consumes and
+/// `javm::refine::execute_with` runs. Same translation as [`link_elf`],
+/// re-containered; see [`linker::link_elf_spi`] for the field derivation and
+/// the guest link-address requirements.
+pub fn link_elf_spi(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    linker::link_elf_spi(elf_data)
 }
 
 /// Compute skip distance from bitmask: number of continuation bytes after position `pc`.

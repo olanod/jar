@@ -58,12 +58,16 @@ struct LinkedElf {
     is_64bit: bool,
     /// All code sections: (file_offset, vaddr, data)
     code_sections: Vec<(u64, u64, Vec<u8>)>,
-    /// RO data blob and its PVM base address
+    /// RO data blob and the vaddr its first byte is linked at
+    /// (`stack_size`, the page-floored lowest ro section address).
     ro_data: Vec<u8>,
-    _ro_base: u64,
-    /// RW data blob and its PVM base address
+    ro_base: u64,
+    /// RW data blob and the vaddr its first byte is linked at
+    /// (`min(rw_pvm_base, lowest rw section address)`).
     rw_data: Vec<u8>,
-    _rw_base: u64,
+    rw_base: u64,
+    /// Lowest rw section vaddr (== `rw_base` when there are no rw sections).
+    rw_min: u64,
     /// Stack size in bytes (= ro_base, so RO data is at the right PVM address)
     stack_size: u32,
     /// Heap pages
@@ -93,13 +97,174 @@ struct LinkedElf {
     accumulate_vaddr: Option<u64>,
 }
 
+/// The container-independent result of transpiling an ELF: the code in GP
+/// instruction encoding (plus bitmask and jump table) and the memory-section
+/// blobs at their linked base addresses. Both containers — the `JAR\x02`
+/// capability manifest ([`link_elf`]) and the GP standard program
+/// ([`link_elf_spi`]) — are serializations of exactly these fields.
+struct TranspiledElf {
+    code: Vec<u8>,
+    bitmask: Vec<u8>,
+    jump_table: Vec<u32>,
+    /// RO data blob; its first byte is linked at `ro_base`.
+    ro_data: Vec<u8>,
+    ro_base: u64,
+    /// RW data blob; its first byte is linked at `rw_base`.
+    rw_data: Vec<u8>,
+    rw_base: u64,
+    /// Lowest rw section vaddr (real data starts here; `[rw_base, rw_min)`
+    /// is zero padding).
+    rw_min: u64,
+    /// Stack byte capacity (= the page-floored lowest ro vaddr, min 16 KiB).
+    stack_size: u32,
+    /// Zeroed heap pages beyond `rw_data`.
+    heap_pages: u32,
+}
+
 /// Transpile an rv64em ELF into a JAR capability manifest PVM blob.
 pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    let t = transpile_elf(elf_data)?;
+    Ok(emitter::build_service_program(
+        &t.code,
+        &t.bitmask,
+        &t.jump_table,
+        &t.ro_data,
+        &t.rw_data,
+        t.stack_size / 4096,
+        t.heap_pages,
+        t.heap_pages,
+    ))
+}
+
+/// `Z_Z` — the GP initialization zone size (2¹⁶).
+const Z_Z: u64 = javm::PVM_ZONE_SIZE as u64;
+
+/// Round `x` up to a multiple of the zone size `Z_Z`.
+fn zone_round(x: u64) -> u64 {
+    x.div_ceil(Z_Z) * Z_Z
+}
+
+/// Transpile an rv64em ELF into a **GP standard-program (SPI) blob** — the
+/// format `javm::spi::parse_standard_program` consumes and
+/// `javm::refine::execute_with` runs. Same translation as [`link_elf`]
+/// (identical code, bitmask, and jump table; entry prologue at IC 0 =
+/// refine, IC 5 = accumulate-or-trap), re-containered per GP Appendix A.
+///
+/// Header-field derivation (manifest ↔ SPI mapping):
+///
+/// - **`s` (stack size, `E₃`)** = the linker's `stack_size` = the manifest's
+///   `stack_pages × 4096` (the page-floored lowest ro section vaddr, minimum
+///   16 KiB). The byte capacity is identical in both containers; only the
+///   placement differs — the manifest maps the stack at `[0, s)` with
+///   `φ1 = s`, while `StandardProgram::layout` maps `page_round(s)` bytes
+///   just below the argument zone with `φ1 = 0xFEFE_0000`. `φ1` is
+///   host-installed in both, so SP-relative guest code is placement-blind.
+/// - **`z` (heap pages, `E₂`)** = the manifest's `heap_pages`. The layout
+///   maps `page_round(|w| + z·4096)` read-write bytes, which equals the
+///   manifest's separate rw + heap caps page-for-page.
+/// - **`o` (read-only data)** = the ro blob **re-based to the GP ro base
+///   `Z_Z` = `0x1_0000`**: zero-prefix padding covers `[Z_Z, ro_base)`. An
+///   ELF whose ro sections are linked below `Z_Z` is rejected — its embedded
+///   absolute addresses could never resolve under the GP layout.
+/// - **`w` (read-write data)** = the rw blob **re-based to the GP rw base
+///   `2·Z_Z + zone_round(|o|)`** (leading zero padding stripped or added).
+///   An ELF whose rw/bss sections are linked below that base is rejected.
+///
+/// Consequently `parse_standard_program(blob)?.layout(args)` lands every
+/// data section at the vaddr it was linked at, so absolute data addresses
+/// embedded in the translated code resolve identically. A guest targeting
+/// this backend must therefore be linked against the GP map: `.rodata` at
+/// `0x1_0000`, `.data`/`.bss` at `2·Z_Z + zone_round(|o|)` (`0x3_0000` when
+/// `0 < |o| ≤ 64 KiB`, `0x2_0000` when there is no ro data). Code and stack
+/// placement need no linker cooperation (code addresses are translated;
+/// the stack is SP-relative).
+pub fn link_elf_spi(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    let t = transpile_elf(elf_data)?;
+
+    // Re-base the ro blob from its linked base to the GP ro base Z_Z.
+    let ro_data = if t.ro_data.is_empty() {
+        Vec::new()
+    } else if t.ro_base >= Z_Z {
+        let mut v = vec![0u8; (t.ro_base - Z_Z) as usize];
+        v.extend_from_slice(&t.ro_data);
+        v
+    } else {
+        return Err(TranspileError::InvalidSection(format!(
+            "SPI: read-only data linked at {:#x}, below the GP read-only base {Z_Z:#x}",
+            t.ro_base,
+        )));
+    };
+
+    // Re-base the rw blob to the GP rw base 2·Z_Z + zone_round(|o|).
+    let rw_spi_base = 2 * Z_Z + zone_round(ro_data.len() as u64);
+    let rw_data = if t.rw_data.is_empty() {
+        Vec::new()
+    } else if t.rw_min < rw_spi_base {
+        return Err(TranspileError::InvalidSection(format!(
+            "SPI: read-write data linked at {:#x}, below the GP read-write base {rw_spi_base:#x} \
+             (= 2 * Z_Z + zone_round(ro_size))",
+            t.rw_min,
+        )));
+    } else if t.rw_base >= rw_spi_base {
+        let mut v = vec![0u8; (t.rw_base - rw_spi_base) as usize];
+        v.extend_from_slice(&t.rw_data);
+        v
+    } else {
+        // rw_base < rw_spi_base <= rw_min: everything stripped is the blob's
+        // own leading zero padding, so the data keeps its linked vaddr.
+        t.rw_data[(rw_spi_base - t.rw_base) as usize..].to_vec()
+    };
+
+    // Wire-width guards: |o|, |w|, s are E₃-encoded; z is E₂-encoded.
+    for (what, len) in [("read-only", ro_data.len()), ("read-write", rw_data.len())] {
+        if len >= 1 << 24 {
+            return Err(TranspileError::InvalidSection(format!(
+                "SPI: {what} data spans {len:#x} bytes, exceeding the E3 field width",
+            )));
+        }
+    }
+    if t.stack_size >= 1 << 24 {
+        return Err(TranspileError::InvalidSection(format!(
+            "SPI: stack size {:#x} exceeds the E3 field width",
+            t.stack_size,
+        )));
+    }
+    let heap_pages = u16::try_from(t.heap_pages).map_err(|_| {
+        TranspileError::InvalidSection(format!(
+            "SPI: heap page count {} exceeds the E2 field width",
+            t.heap_pages,
+        ))
+    })?;
+
+    let blob = crate::spi::build_spi_blob(
+        &ro_data,
+        &rw_data,
+        heap_pages,
+        t.stack_size,
+        &t.code,
+        &t.bitmask,
+        &t.jump_table,
+    );
+
+    // Fail-early self-check: the blob must re-parse and its layout must fit
+    // the 32-bit guest address space (GP eq A.42's total-size guard).
+    let prog = javm::spi::parse_standard_program(&blob).ok_or_else(|| {
+        TranspileError::InvalidSection("SPI: emitted blob does not re-parse".into())
+    })?;
+    prog.layout(&[]).ok_or_else(|| {
+        TranspileError::InvalidSection(
+            "SPI: memory layout exceeds the 32-bit guest address space".into(),
+        )
+    })?;
+
+    Ok(blob)
+}
+
+/// The shared ELF → GP-encoded-program translation both containers build on.
+fn transpile_elf(elf_data: &[u8]) -> Result<TranspiledElf, TranspileError> {
     let elf = parse_linked_elf(elf_data)?;
     let mut ctx = TranslationContext::new(elf.is_64bit);
     ctx.code_ranges = elf.code_ranges.clone();
-
-    let stack_pages = elf.stack_size / 4096;
 
     // Emit the two-slot GP entry prologue. ICs are byte offsets into the code,
     // and a plain jump (opcode 40 + imm32) is exactly 5 bytes, so the two
@@ -145,16 +310,18 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
         &mut ctx.jump_table,
     );
 
-    Ok(emitter::build_service_program(
-        &ctx.code,
-        &ctx.bitmask,
-        &ctx.jump_table,
-        &ro_data,
-        &rw_data,
-        stack_pages,
-        elf.heap_pages,
-        elf.heap_pages,
-    ))
+    Ok(TranspiledElf {
+        code: ctx.code,
+        bitmask: ctx.bitmask,
+        jump_table: ctx.jump_table,
+        ro_data,
+        ro_base: elf.ro_base,
+        rw_data,
+        rw_base: elf.rw_base,
+        rw_min: elf.rw_min,
+        stack_size: elf.stack_size,
+        heap_pages: elf.heap_pages,
+    })
 }
 
 /// Parse ELF with full relocation info.
@@ -365,17 +532,20 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
     let ro_pages = ro_data.len().div_ceil(page_size as usize);
     let rw_pvm_base = stack_size + (ro_pages as u64 * page_size);
     let mut rw_data = Vec::new();
+    let mut rw_base = rw_pvm_base;
+    let mut rw_min = rw_pvm_base;
     if !rw_sections.is_empty() {
-        let rw_min = rw_sections.iter().map(|(a, _, _)| *a).min().unwrap();
+        rw_min = rw_sections.iter().map(|(a, _, _)| *a).min().unwrap();
         let rw_max = rw_sections
             .iter()
             .map(|(a, sz, _)| *a + *sz as u64)
             .max()
             .unwrap();
-        let rw_blob_size = (rw_max - rw_pvm_base.min(rw_min)) as usize;
+        rw_base = rw_pvm_base.min(rw_min);
+        let rw_blob_size = (rw_max - rw_base) as usize;
         rw_data = vec![0u8; rw_blob_size];
         for (addr, sz, d) in &rw_sections {
-            let off = (*addr - rw_pvm_base.min(rw_min)) as usize;
+            let off = (*addr - rw_base) as usize;
             if let Some(d) = d
                 && off + sz <= rw_data.len()
             {
@@ -486,9 +656,10 @@ fn parse_linked_elf(data: &[u8]) -> Result<LinkedElf, TranspileError> {
         is_64bit,
         code_sections,
         ro_data,
-        _ro_base: stack_size,
+        ro_base: stack_size,
         rw_data,
-        _rw_base: rw_pvm_base,
+        rw_base,
+        rw_min,
         stack_size: stack_size as u32,
         heap_pages,
         hi20_targets,
