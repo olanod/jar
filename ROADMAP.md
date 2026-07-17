@@ -145,18 +145,43 @@ green on `gp072_tiny` + `gp072_full`.
   `spi::is_jar_manifest` provides the magic sniff for the eventual dispatch in
   the accumulate path.
 - Per-instruction gas mode (the model the 0.7.2 vectors pin) alongside the
-  block-gas models. _Next; self-contained._
-- Import the community JAM PVM test-vector suite (instruction-level
-  pre/post register/memory/gas/fault cases); use polkavm-linker (already a
-  build-pvm dep) to cross-check with independently-built blobs. _Blocked on
-  sourcing: the canonical `w3f/jamtestvectors` has no `pvm/` directory; the
-  community `tomusdrw/jamtestvectors-pvm` mirror is unlicensed. Needs a
-  decision — vendor from an unlicensed source, wait for a licensed one, or
-  synthesize + cross-check with polkavm-linker instead._
-- Gate: PVM vectors green on interpreter AND recompiler; gp072 accumulate
-  vectors executable through grey's own PVM. _(The last clause also depends on
-  Phase 4 host-call convergence for a real service to run to completion; the
-  SPI loading mechanics are in place.)_
+  block-gas models. **DONE.** `javm::GasModel` selects the charging model in
+  the same place `IsaMode` selects conformance behaviour:
+  `BlockSinglePass` (default, jar1, byte-identical to before) or
+  `PerInstruction` — a flat 1 gas per instruction mirroring the Lean oracle
+  exactly (`Jar.JAVM.run` + `GasModel.perInstruction` in
+  `Jar/Types/Config.lean`): the OOG check precedes execution, the exiting
+  instruction is charged. Installed via `Interpreter::set_gas_model`, which
+  re-derives the predecoded gas labels (the labels are cache-keyed on the
+  model; cached `InterpreterProgram`s/CODE caps stay block-model).
+  Interpreter-only by design: the recompiler and kernel remain block-gas —
+  per-instruction charging is a conformance tool, not the perf path.
+- PVM instruction-level conformance vectors. **DONE — decision: synthesize
+  + cross-check** (the canonical `w3f/jamtestvectors` has no `pvm/`
+  directory; the unlicensed community mirror was NOT vendored — no
+  third-party vector data is copied). `spec/tests/vectors/pvm/` holds 124
+  self-contained gp072 cases (generator + loaders in
+  `grey/crates/javm/tests/pvm_vectors.rs`, re-blessed via
+  `JAVM_BLESS_PVM_VECTORS=1`): hand-assembled code+bitmask with hand-derived
+  pre/post register files, memory effects, per-instruction gas, and fault
+  classification across flow/load_imm/alu64/alu32/shift (SharR sign-fill,
+  alt operand order)/muldiv (div-0, signed overflow)/unary/load/store
+  (page-base faults, cross-page atomicity)/branch (taken/not-taken,
+  signedness, basic-block strictness)/djump (halt address, table, panic
+  set)/load_imm_jump_ind (pre-state base). Cross-check is differential
+  rather than polkavm-linker (the linker emits polkavm's container, not
+  raw code+bitmask — cross-checking through it would test the blob format,
+  not instruction semantics): every vector must hold on the interpreter
+  (per-instruction gas) AND the x86-64 recompiler, with block-gas
+  consumption asserted equal between the two backends per vector.
+  Out-of-gas vectors are interpreter-only (gas-model-specific); `sbrk`
+  (opcode 101) is deliberately absent — jar removed it from the ISA
+  (GP-main direction) while GP 0.7.2 still has it, a flagged divergence.
+- Gate: PVM vectors green on interpreter AND recompiler — **met** (124 on
+  the interpreter, 121 on the recompiler, in `cargo test -p javm`); gp072
+  accumulate vectors executable through grey's own PVM. _(The last clause
+  still depends on Phase 4 host-call convergence for a real service to run
+  to completion; the SPI loading mechanics are in place.)_
 
 **Phase 4 — hostcall convergence (L)**
 - Raw `ecalli`-id dispatch for consensus execution (drop the cap-table
