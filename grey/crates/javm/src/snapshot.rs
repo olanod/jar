@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 /// Current portable kernel snapshot wire version.
-pub const KERNEL_SNAPSHOT_VERSION: u16 = 1;
+pub const KERNEL_SNAPSHOT_VERSION: u16 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
 pub enum SnapshotIsaMode {
@@ -124,6 +124,11 @@ pub struct MemoryBlock {
 #[derive(Clone, Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
 pub struct KernelSnapshot {
     pub version: u16,
+    /// Blake2b-256 commitment to the canonical root program plus the ordered
+    /// dormant-program blobs and the HANDLE slots through which they are
+    /// owned. This binds immutable code and static capability layouts to the
+    /// continuation without embedding those reconstructible bytes.
+    pub invocation_layout_hash: [u8; 32],
     pub isa_mode: SnapshotIsaMode,
     pub memory_pages: u32,
     pub mem_cycles: u8,

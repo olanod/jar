@@ -56,6 +56,63 @@ impl Default for CodeCache {
     }
 }
 
+/// Canonical program installed as an idle VM before an invocation starts.
+///
+/// The root program receives an owning [`HandleCap`] in `handle_slot`. No
+/// protocol capabilities are synthesized for the dormant VM: the root must
+/// grant any authority it needs through ordinary capability operations.
+#[derive(Clone, Copy, Debug)]
+pub struct DormantProgram<'a> {
+    pub blob: &'a [u8],
+    pub handle_slot: u8,
+}
+
+fn invocation_layout_hash(root: &[u8], programs: &[DormantProgram<'_>]) -> [u8; 32] {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"JAR invocation layout v1");
+    bytes.extend_from_slice(&(programs.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(root.len() as u64).to_le_bytes());
+    bytes.extend_from_slice(root);
+    for program in programs {
+        bytes.push(program.handle_slot);
+        bytes.extend_from_slice(&(program.blob.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(program.blob);
+    }
+    grey_crypto::blake2b_256(&bytes).0
+}
+
+fn validate_manifest_memory(parsed: &ParsedBlob<'_>) -> Result<(), KernelError> {
+    let initial_pages = parsed
+        .caps
+        .iter()
+        .filter(|entry| entry.cap_type == CapEntryType::Data)
+        .try_fold(0u32, |total, entry| total.checked_add(entry.page_count))
+        .ok_or(KernelError::InvalidBlob)?;
+    if initial_pages > parsed.header.memory_pages {
+        return Err(KernelError::InvalidBlob);
+    }
+    Ok(())
+}
+
+fn validate_import_handle_slots(
+    root: &ParsedBlob<'_>,
+    programs: &[DormantProgram<'_>],
+) -> Result<(), KernelError> {
+    let mut occupied = BTreeSet::new();
+    occupied.insert(IPC_SLOT);
+    occupied.extend(1..=28u8);
+    occupied.extend(root.caps.iter().map(|entry| entry.cap_index));
+    if root.header.memory_pages > 0 {
+        occupied.insert(254);
+    }
+    for program in programs {
+        if !occupied.insert(program.handle_slot) {
+            return Err(KernelError::ImportHandleUnavailable(program.handle_slot));
+        }
+    }
+    Ok(())
+}
+
 /// Resolve a cap reference or return `DispatchResult::Continue` (WHAT already set).
 macro_rules! resolve {
     ($self:expr, $ref:expr) => {
@@ -141,6 +198,8 @@ pub struct InvocationKernel {
     pub backend: crate::backend::PvmBackend,
     /// ISA profile for CODE cap compilation and execution.
     pub isa_mode: crate::IsaMode,
+    /// Commitment to the canonical invocation program/layout inputs.
+    invocation_layout_hash: [u8; 32],
     /// Protocol call whose result has not yet been injected.
     pending_protocol_call: Option<PendingProtocolCall>,
     /// CODE cap ID for fast recompiler resume after ProtocolCall.
@@ -182,6 +241,7 @@ impl InvocationKernel {
             gas,
             crate::backend::PvmBackend::Default,
             crate::IsaMode::Jar,
+            &[],
             Some(cache),
         )
     }
@@ -193,7 +253,7 @@ impl InvocationKernel {
         gas: u64,
         backend: crate::backend::PvmBackend,
     ) -> Result<Self, KernelError> {
-        Self::new_inner(blob, _args, gas, backend, crate::IsaMode::Jar, None)
+        Self::new_inner(blob, _args, gas, backend, crate::IsaMode::Jar, &[], None)
     }
 
     /// Create a new kernel with a specific backend and ISA profile.
@@ -207,7 +267,31 @@ impl InvocationKernel {
         backend: crate::backend::PvmBackend,
         isa_mode: crate::IsaMode,
     ) -> Result<Self, KernelError> {
-        Self::new_inner(blob, args, gas, backend, isa_mode, None)
+        Self::new_inner(blob, args, gas, backend, isa_mode, &[], None)
+    }
+
+    /// Create an invocation with canonical programs preinstalled as idle VMs.
+    ///
+    /// This is invocation setup, not a host-call extension. Each imported VM
+    /// has exactly the static capability layout declared by its own manifest,
+    /// shares the invocation's bounded physical page pool, and is reachable
+    /// from the root only through the requested owner HANDLE.
+    pub fn new_with_dormant_programs(
+        blob: &[u8],
+        args: &[u8],
+        gas: u64,
+        programs: &[DormantProgram<'_>],
+        backend: crate::backend::PvmBackend,
+    ) -> Result<Self, KernelError> {
+        Self::new_inner(
+            blob,
+            args,
+            gas,
+            backend,
+            crate::IsaMode::Jar,
+            programs,
+            None,
+        )
     }
 
     /// Create a kernel from a GP **standard program** blob (the graypaper
@@ -238,6 +322,7 @@ impl InvocationKernel {
             gas,
             backend,
             crate::IsaMode::Conformance,
+            &[],
             None,
         )?;
         let vm = kernel.vm_arena.vm_mut(0);
@@ -253,15 +338,47 @@ impl InvocationKernel {
         gas: u64,
         backend: crate::backend::PvmBackend,
         isa_mode: crate::IsaMode,
+        dormant_programs: &[DormantProgram<'_>],
         mut code_cache: Option<&mut CodeCache>,
     ) -> Result<Self, KernelError> {
         let parsed = program::parse_blob(blob).ok_or(KernelError::InvalidBlob)?;
 
-        let backing =
-            BackingStore::new(parsed.header.memory_pages).ok_or(KernelError::MemoryError)?;
+        let parsed_dormant = dormant_programs
+            .iter()
+            .map(|program| program::parse_blob(program.blob).ok_or(KernelError::InvalidBlob))
+            .collect::<Result<Vec<_>, _>>()?;
+        validate_import_handle_slots(&parsed, dormant_programs)?;
+        validate_manifest_memory(&parsed)?;
+        for imported in &parsed_dormant {
+            validate_manifest_memory(imported)?;
+        }
 
-        let mem_cycles = crate::compute_mem_cycles(parsed.header.memory_pages);
-        let untyped = Arc::new(UntypedCap::new(parsed.header.memory_pages));
+        let memory_pages = parsed_dormant
+            .iter()
+            .try_fold(parsed.header.memory_pages, |total, imported| {
+                total.checked_add(imported.header.memory_pages)
+            })
+            .ok_or(KernelError::MemoryError)?;
+        let init_pages = core::iter::once(&parsed)
+            .chain(parsed_dormant.iter())
+            .flat_map(|program| program.caps.iter())
+            .filter(|entry| entry.cap_type == CapEntryType::Data)
+            .try_fold(0u64, |total, entry| {
+                total.checked_add(entry.page_count as u64)
+            })
+            .ok_or(KernelError::MemoryError)?;
+        let init_gas_cost = init_pages
+            .checked_mul(GAS_PER_PAGE)
+            .ok_or(KernelError::OutOfGas)?;
+        if gas < init_gas_cost {
+            return Err(KernelError::OutOfGas);
+        }
+        let remaining_gas = gas - init_gas_cost;
+
+        let backing = BackingStore::new(memory_pages).ok_or(KernelError::MemoryError)?;
+
+        let mem_cycles = crate::compute_mem_cycles(memory_pages);
+        let untyped = Arc::new(UntypedCap::new(memory_pages));
 
         #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
         let window_pool =
@@ -278,6 +395,7 @@ impl InvocationKernel {
             next_code_id: 0,
             backend,
             isa_mode,
+            invocation_layout_hash: invocation_layout_hash(blob, dormant_programs),
             pending_protocol_call: None,
             recompiler_resume_cap: None,
             #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
@@ -297,13 +415,11 @@ impl InvocationKernel {
         for id in 1..=28u8 {
             cap_table.set_original(id, Cap::Protocol(ProtocolCap { id }));
         }
-        let mut init_pages: u32 = 0;
         let mut data_caps_to_map: Vec<(u32, u32, u32, Access)> = Vec::new(); // (base_page, backing_offset, page_count, access)
 
         for entry in &parsed.caps {
             let cap = kernel.create_cap_from_manifest(entry, &parsed, &mut code_cache)?;
             if let Cap::Data(ref d) = cap {
-                init_pages += d.page_count;
                 // Record DATA caps that need mapping into the CODE window
                 if d.has_any_mapped()
                     && let (Some(base_page), Some(access)) = (d.base_offset, d.access)
@@ -313,13 +429,6 @@ impl InvocationKernel {
             }
             cap_table.set(entry.cap_index, cap);
         }
-
-        // Charge init gas
-        let init_gas_cost = init_pages as u64 * GAS_PER_PAGE;
-        if gas < init_gas_cost {
-            return Err(KernelError::OutOfGas);
-        }
-        let remaining_gas = gas - init_gas_cost;
 
         // Resolve the invoke CODE cap to find its code_caps index
         let invoke_code_id = match cap_table.get(parsed.header.invoke_cap) {
@@ -389,7 +498,36 @@ impl InvocationKernel {
         vm0.set_reg(1, parsed.header.stack_top as u64); // φ[1] = SP (stack top)
         vm0.set_reg(7, args_base); // φ[7] = args address
         vm0.set_reg(8, args_len); // φ[8] = args length
-        kernel.vm_arena.insert(vm0); // VM 0 gets VmId(0, 0)
+        kernel.vm_arena.insert(vm0).ok_or(KernelError::TooManyVms)?; // VM 0 gets VmId(0, 0)
+
+        // Dormant programs are complete VM instances, not CODE templates.
+        // Their manifest-defined DATA/stack layout is therefore reconstructed
+        // exactly and does not depend on CREATE's 64-bit capability-copy mask.
+        for (program, imported) in dormant_programs.iter().zip(parsed_dormant.iter()) {
+            let mut imported_table = CapTable::new();
+            for entry in &imported.caps {
+                let cap = kernel.create_cap_from_manifest(entry, imported, &mut code_cache)?;
+                imported_table.set(entry.cap_index, cap);
+            }
+            if imported.header.memory_pages > 0 {
+                imported_table.set(254, Cap::Untyped(Arc::clone(&kernel.untyped)));
+            }
+            let invoke_code_id = match imported_table.get(imported.header.invoke_cap) {
+                Some(Cap::Code(code)) => code.id,
+                _ => return Err(KernelError::InvalidBlob),
+            };
+            let mut vm = VmInstance::new(invoke_code_id, 0, imported_table, 0);
+            vm.set_reg(0, crate::PVM_HALT_ADDR);
+            vm.set_reg(1, imported.header.stack_top as u64);
+            let vm_id = kernel.vm_arena.insert(vm).ok_or(KernelError::TooManyVms)?;
+            kernel.vm_arena.vm_mut(0).cap_table.set(
+                program.handle_slot,
+                Cap::Handle(HandleCap {
+                    vm_id,
+                    max_gas: None,
+                }),
+            );
+        }
 
         Ok(kernel)
     }
@@ -630,6 +768,7 @@ impl InvocationKernel {
 
         Ok(KernelSnapshot {
             version: KERNEL_SNAPSHOT_VERSION,
+            invocation_layout_hash: self.invocation_layout_hash,
             isa_mode: snapshot_isa_mode(self.isa_mode),
             memory_pages: self.backing.total_pages(),
             mem_cycles: self.mem_cycles,
@@ -655,14 +794,36 @@ impl InvocationKernel {
         backend: crate::backend::PvmBackend,
         cache: Option<&mut CodeCache>,
     ) -> Result<Self, SnapshotError> {
+        Self::restore_inner(blob, &[], snapshot, backend, cache)
+    }
+
+    /// Restore a portable snapshot against the complete canonical invocation
+    /// layout used by [`Self::new_with_dormant_programs`].
+    pub fn restore_with_dormant_programs(
+        blob: &[u8],
+        programs: &[DormantProgram<'_>],
+        snapshot: &KernelSnapshot,
+        backend: crate::backend::PvmBackend,
+    ) -> Result<Self, SnapshotError> {
+        Self::restore_inner(blob, programs, snapshot, backend, None)
+    }
+
+    fn restore_inner(
+        blob: &[u8],
+        programs: &[DormantProgram<'_>],
+        snapshot: &KernelSnapshot,
+        backend: crate::backend::PvmBackend,
+        cache: Option<&mut CodeCache>,
+    ) -> Result<Self, SnapshotError> {
         if snapshot.version != KERNEL_SNAPSHOT_VERSION {
             return Err(SnapshotError::UnsupportedVersion(snapshot.version));
         }
         let isa_mode = restore_isa_mode(snapshot.isa_mode);
-        let mut kernel = Self::new_inner(blob, &[], u64::MAX, backend, isa_mode, cache)
+        let mut kernel = Self::new_inner(blob, &[], u64::MAX, backend, isa_mode, programs, cache)
             .map_err(|_| SnapshotError::ProgramMismatch)?;
 
-        if kernel.backing.total_pages() != snapshot.memory_pages
+        if kernel.invocation_layout_hash != snapshot.invocation_layout_hash
+            || kernel.backing.total_pages() != snapshot.memory_pages
             || kernel.mem_cycles != snapshot.mem_cycles
             || kernel.code_caps.len() != snapshot.code_hashes.len()
             || kernel.next_code_id != snapshot.next_code_id
@@ -3253,6 +3414,10 @@ pub enum KernelError {
     TooManyCodeCaps,
     #[error("cap table full")]
     CapTableFull,
+    #[error("dormant-program HANDLE slot {0} is unavailable")]
+    ImportHandleUnavailable(u8),
+    #[error("exceeded max concurrent VMs")]
+    TooManyVms,
     #[error("JIT compilation failed")]
     CompileError,
 }
@@ -4175,6 +4340,199 @@ mod tests {
         bitmask[12] = 1;
         bitmask[15] = 1;
         make_blob_with(&code, &bitmask, &[])
+    }
+
+    fn call_dormant_then_halt_blob(handle_slot: u8) -> Vec<u8> {
+        // CALL the preinstalled HANDLE, then halt through the root RA after
+        // the dormant VM replies.
+        let mut code = vec![10, handle_slot];
+        code.extend_from_slice(&[50, 0, 0, 0, 0, 0]);
+        let mut bitmask = vec![0u8; code.len()];
+        bitmask[0] = 1;
+        bitmask[2] = 1;
+        make_blob_with(&code, &bitmask, &[])
+    }
+
+    fn snapshot_dormant_program_call(
+        root: &[u8],
+        actor: &[u8],
+        backend: crate::backend::PvmBackend,
+    ) -> KernelSnapshot {
+        let programs = [DormantProgram {
+            blob: actor,
+            handle_slot: 100,
+        }];
+        let mut kernel =
+            InvocationKernel::new_with_dormant_programs(root, &[], 1_000_000, &programs, backend)
+                .unwrap();
+
+        assert_eq!(kernel.vm_arena.len(), 2);
+        assert!(matches!(
+            kernel.vm_arena.vm(0).cap_table.get(100),
+            Some(Cap::Handle(_))
+        ));
+        assert!(!kernel.vm_arena.vm(0).cap_table.is_original(100));
+        for slot in 1..=28 {
+            assert!(kernel.vm_arena.vm(0).cap_table.is_original(slot));
+            assert!(kernel.vm_arena.vm(1).cap_table.get(slot).is_none());
+        }
+
+        // This capability is supplied explicitly by the invocation owner. It
+        // is not an original JAM protocol slot in the actor's CNode.
+        kernel
+            .vm_arena
+            .vm_mut(1)
+            .cap_table
+            .set(7, Cap::Protocol(ProtocolCap { id: 7 }));
+        assert!(!kernel.vm_arena.vm(1).cap_table.is_original(7));
+        kernel
+            .vm_arena
+            .vm_mut(0)
+            .transition(VmState::Running)
+            .unwrap();
+
+        assert!(matches!(
+            kernel.run(),
+            KernelResult::ProtocolCall { slot: 7 }
+        ));
+        assert_eq!(kernel.active_vm, 1);
+        assert_eq!(kernel.vm_arena.vm(0).state, VmState::WaitingForReply);
+        assert_eq!(kernel.vm_arena.vm(1).state, VmState::Running);
+        let snapshot = kernel.snapshot().unwrap();
+        assert_eq!(snapshot.call_stack.len(), 1);
+        snapshot
+    }
+
+    #[test]
+    fn dormant_program_snapshot_restore_is_exact_and_backend_portable() {
+        let root = call_dormant_then_halt_blob(100);
+        let actor = continuation_blob(true);
+        let interpreter = snapshot_dormant_program_call(
+            &root,
+            &actor,
+            crate::backend::PvmBackend::ForceInterpreter,
+        );
+        let recompiler = snapshot_dormant_program_call(
+            &root,
+            &actor,
+            crate::backend::PvmBackend::ForceRecompiler,
+        );
+        assert_eq!(interpreter.to_bytes(), recompiler.to_bytes());
+
+        let programs = [DormantProgram {
+            blob: &actor,
+            handle_slot: 100,
+        }];
+        for backend in [
+            crate::backend::PvmBackend::ForceInterpreter,
+            crate::backend::PvmBackend::ForceRecompiler,
+        ] {
+            let mut restored = InvocationKernel::restore_with_dormant_programs(
+                &root,
+                &programs,
+                &interpreter,
+                backend,
+            )
+            .unwrap();
+            assert_eq!(restored.snapshot().unwrap(), interpreter);
+            restored.resume_protocol_call(1, 0).unwrap();
+            assert!(matches!(restored.run(), KernelResult::Halt));
+            assert_eq!(restored.active_vm, 0);
+            assert_eq!(restored.active_reg(7), 42);
+            assert_eq!(restored.vm_arena.vm(1).state, VmState::Idle);
+        }
+    }
+
+    #[test]
+    fn dormant_program_restore_binds_bytes_order_and_handle_slots() {
+        let root = call_dormant_then_halt_blob(100);
+        let actor = continuation_blob(true);
+        let snapshot = snapshot_dormant_program_call(
+            &root,
+            &actor,
+            crate::backend::PvmBackend::ForceInterpreter,
+        );
+
+        let wrong_slot = [DormantProgram {
+            blob: &actor,
+            handle_slot: 101,
+        }];
+        assert!(matches!(
+            InvocationKernel::restore_with_dormant_programs(
+                &root,
+                &wrong_slot,
+                &snapshot,
+                crate::backend::PvmBackend::ForceInterpreter,
+            ),
+            Err(SnapshotError::ProgramMismatch)
+        ));
+
+        let wrong_actor = continuation_blob(false);
+        let wrong_bytes = [DormantProgram {
+            blob: &wrong_actor,
+            handle_slot: 100,
+        }];
+        assert!(matches!(
+            InvocationKernel::restore_with_dormant_programs(
+                &root,
+                &wrong_bytes,
+                &snapshot,
+                crate::backend::PvmBackend::ForceInterpreter,
+            ),
+            Err(SnapshotError::ProgramMismatch)
+        ));
+        assert!(matches!(
+            InvocationKernel::restore(
+                &root,
+                &snapshot,
+                crate::backend::PvmBackend::ForceInterpreter,
+                None
+            ),
+            Err(SnapshotError::ProgramMismatch)
+        ));
+    }
+
+    #[test]
+    fn dormant_program_handles_must_not_replace_root_authority() {
+        let root = call_dormant_then_halt_blob(100);
+        let actor = continuation_blob(true);
+        for occupied in [0, 7, 64, 65, 254] {
+            let programs = [DormantProgram {
+                blob: &actor,
+                handle_slot: occupied,
+            }];
+            assert!(matches!(
+                InvocationKernel::new_with_dormant_programs(
+                    &root,
+                    &[],
+                    1_000_000,
+                    &programs,
+                    crate::backend::PvmBackend::ForceInterpreter,
+                ),
+                Err(KernelError::ImportHandleUnavailable(slot)) if slot == occupied
+            ));
+        }
+
+        let duplicate = [
+            DormantProgram {
+                blob: &actor,
+                handle_slot: 100,
+            },
+            DormantProgram {
+                blob: &actor,
+                handle_slot: 100,
+            },
+        ];
+        assert!(matches!(
+            InvocationKernel::new_with_dormant_programs(
+                &root,
+                &[],
+                1_000_000,
+                &duplicate,
+                crate::backend::PvmBackend::ForceInterpreter,
+            ),
+            Err(KernelError::ImportHandleUnavailable(100))
+        ));
     }
 
     fn snapshot_root_at_protocol_call(
