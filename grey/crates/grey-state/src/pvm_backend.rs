@@ -69,7 +69,9 @@ impl PvmInstance {
 
     /// Resume kernel after a protocol call was handled by the host.
     pub fn kernel_resume(&mut self, result0: u64, result1: u64) {
-        self.kernel.resume_protocol_call(result0, result1);
+        self.kernel
+            .resume_protocol_call(result0, result1)
+            .expect("kernel must be suspended at a protocol call");
     }
 
     pub fn gas(&self) -> Gas {

@@ -4,6 +4,8 @@
 //! a cap table, register state, and a reference to its CODE cap.
 //! Only IDLE VMs can be CALLed — this prevents reentrancy by construction.
 
+#[cfg(feature = "std")]
+use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::PVM_REGISTER_COUNT;
@@ -327,6 +329,52 @@ impl VmArena {
     /// Check if empty.
     pub fn is_empty(&self) -> bool {
         self.live_count == 0
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn snapshot_slots(&self) -> impl Iterator<Item = (u16, Option<&VmInstance>)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.generation, entry.vm.as_ref()))
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn snapshot_free_list(&self) -> &[u16] {
+        &self.free_list
+    }
+
+    #[cfg(feature = "std")]
+    pub(crate) fn restore_slots(
+        slots: Vec<(u16, Option<VmInstance>)>,
+        free_list: Vec<u16>,
+    ) -> Option<Self> {
+        if slots.len() > MAX_VMS {
+            return None;
+        }
+        let mut vacant = vec![false; slots.len()];
+        for &index in &free_list {
+            let entry = vacant.get_mut(index as usize)?;
+            if *entry || slots[index as usize].1.is_some() {
+                return None;
+            }
+            *entry = true;
+        }
+        for (index, (_, vm)) in slots.iter().enumerate() {
+            if vm.is_none() != vacant[index] {
+                return None;
+            }
+        }
+        let live_count = slots.iter().filter(|(_, vm)| vm.is_some()).count();
+        let live_count = u16::try_from(live_count).ok()?;
+        let entries = slots
+            .into_iter()
+            .map(|(generation, vm)| ArenaEntry { vm, generation })
+            .collect();
+        Some(Self {
+            entries,
+            free_list,
+            live_count,
+        })
     }
 }
 

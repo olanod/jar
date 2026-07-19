@@ -14,6 +14,7 @@ std = ["libc", "memoffset", "grey-crypto"]
 grey-crypto = { workspace = true, optional = true }
 libc = { version = "0.2", optional = true }
 memoffset = { version = "0.9", optional = true }
+scale = { path = "../scale", default-features = false }
 # Non-workspace dep lines: the workspace pins enable default features (std),
 # and workspace-inherited features are additive. javm's always-compiled
 # modules must stay no_std-clean (thiserror 2 derives core::error::Error

@@ -22,6 +22,8 @@ pub mod interpreter;
 pub mod kernel;
 pub mod program;
 pub mod refine;
+#[cfg(feature = "std")]
+pub mod snapshot;
 pub mod spi;
 pub mod vm_pool;
 // Real JIT recompiler on Linux x86-64.

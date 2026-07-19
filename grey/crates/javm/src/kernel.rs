@@ -13,6 +13,7 @@
 //! [`crate::PVM_HALT_ADDR`] (installed in the root VM's ω_0 at init) halts
 //! the VM. REPLY is strictly the inter-VM return half of CALL.
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -66,9 +67,15 @@ macro_rules! resolve {
 }
 use crate::backing::BackingStore;
 use crate::cap::{
-    Access, CallableCap, Cap, CapTable, CodeCap, DataCap, HandleCap, IPC_SLOT, UntypedCap,
+    Access, CallableCap, Cap, CapTable, CodeCap, DataCap, HandleCap, IPC_SLOT, ProtocolCap,
+    UntypedCap,
 };
 use crate::program::{self, CapEntryType, CapManifestEntry, ParsedBlob};
+use crate::snapshot::{
+    CallFrameSnapshot, CapabilitySlotSnapshot, CapabilitySnapshot, KERNEL_SNAPSHOT_VERSION,
+    KernelSnapshot, MemoryBlock, MemoryPageRef, PendingProtocolCall, SnapshotAccess, SnapshotError,
+    SnapshotIsaMode, SnapshotVmState, VmArenaSnapshot, VmSlotSnapshot, VmSnapshot,
+};
 #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
 use crate::vm_pool::WindowPool;
 use crate::vm_pool::{CallFrame, MAX_CODE_CAPS, VmArena, VmId, VmInstance, VmState};
@@ -134,6 +141,8 @@ pub struct InvocationKernel {
     pub backend: crate::backend::PvmBackend,
     /// ISA profile for CODE cap compilation and execution.
     pub isa_mode: crate::IsaMode,
+    /// Protocol call whose result has not yet been injected.
+    pending_protocol_call: Option<PendingProtocolCall>,
     /// CODE cap ID for fast recompiler resume after ProtocolCall.
     /// When set, the next `run()` call uses `run_recompiler_resume()` instead
     /// of `run_recompiler_segment()`, avoiding a full JitContext rebuild.
@@ -269,6 +278,7 @@ impl InvocationKernel {
             next_code_id: 0,
             backend,
             isa_mode,
+            pending_protocol_call: None,
             recompiler_resume_cap: None,
             #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
             live_ctx: None,
@@ -549,6 +559,207 @@ impl InvocationKernel {
         Ok(kernel)
     }
 
+    /// Capture the complete invocation at a flushed protocol-call boundary.
+    ///
+    /// Native code and virtual-memory windows are deliberately excluded. A
+    /// restore recompiles the canonical blob and verifies every CODE sub-blob
+    /// hash before installing this machine state.
+    pub fn snapshot(&mut self) -> Result<KernelSnapshot, SnapshotError> {
+        let pending_call = self
+            .pending_protocol_call
+            .ok_or(SnapshotError::NotAtProtocolBoundary)?;
+
+        #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+        {
+            self.flush_live_ctx();
+            self.recompiler_resume_cap = None;
+            crate::recompiler::signal::SIGNAL_STATE.with(|cell| cell.set(core::ptr::null_mut()));
+        }
+
+        let active_vm = self
+            .vm_arena
+            .snapshot_slots()
+            .nth(self.active_vm as usize)
+            .and_then(|(_, vm)| vm)
+            .ok_or(SnapshotError::InvalidScheduler)?;
+        if pending_call.vm_index != self.active_vm
+            || pending_call.resume_pc != active_vm.pc
+            || pending_call.result_registers != [7, 8]
+        {
+            return Err(SnapshotError::InvalidScheduler);
+        }
+
+        let slots = self
+            .vm_arena
+            .snapshot_slots()
+            .map(|(generation, vm)| {
+                Ok(VmSlotSnapshot {
+                    generation,
+                    vm: vm.map(|vm| self.snapshot_vm(vm)).transpose()?,
+                })
+            })
+            .collect::<Result<Vec<_>, SnapshotError>>()?;
+
+        let mut blocks_by_hash = BTreeMap::<[u8; 32], Vec<u8>>::new();
+        let mut memory = Vec::new();
+        for page_index in 0..self.backing.total_pages() {
+            let bytes = self
+                .backing
+                .read_page(page_index)
+                .ok_or(SnapshotError::InvalidMemory)?;
+            if bytes.iter().all(|byte| *byte == 0) {
+                continue;
+            }
+            let block_hash = grey_crypto::blake2b_256(&bytes).0;
+            if let Some(existing) = blocks_by_hash.get(&block_hash) {
+                if existing != &bytes {
+                    return Err(SnapshotError::InvalidMemory);
+                }
+            } else {
+                blocks_by_hash.insert(block_hash, bytes);
+            }
+            memory.push(MemoryPageRef {
+                page_index,
+                block_hash,
+            });
+        }
+        let blocks = blocks_by_hash
+            .into_iter()
+            .map(|(hash, bytes)| MemoryBlock { hash, bytes })
+            .collect();
+
+        Ok(KernelSnapshot {
+            version: KERNEL_SNAPSHOT_VERSION,
+            isa_mode: snapshot_isa_mode(self.isa_mode),
+            memory_pages: self.backing.total_pages(),
+            mem_cycles: self.mem_cycles,
+            next_code_id: self.next_code_id,
+            code_hashes: self.code_caps.iter().map(|cap| cap.program_hash).collect(),
+            untyped_offset: self.untyped.allocated(),
+            active_vm: self.active_vm,
+            arena: VmArenaSnapshot {
+                slots,
+                free_list: self.vm_arena.snapshot_free_list().to_vec(),
+            },
+            call_stack: self.call_stack.iter().map(snapshot_call_frame).collect(),
+            memory,
+            blocks,
+            pending_call,
+        })
+    }
+
+    /// Restore a portable snapshot against canonical program bytes.
+    pub fn restore(
+        blob: &[u8],
+        snapshot: &KernelSnapshot,
+        backend: crate::backend::PvmBackend,
+        cache: Option<&mut CodeCache>,
+    ) -> Result<Self, SnapshotError> {
+        if snapshot.version != KERNEL_SNAPSHOT_VERSION {
+            return Err(SnapshotError::UnsupportedVersion(snapshot.version));
+        }
+        let isa_mode = restore_isa_mode(snapshot.isa_mode);
+        let mut kernel = Self::new_inner(blob, &[], u64::MAX, backend, isa_mode, cache)
+            .map_err(|_| SnapshotError::ProgramMismatch)?;
+
+        if kernel.backing.total_pages() != snapshot.memory_pages
+            || kernel.mem_cycles != snapshot.mem_cycles
+            || kernel.code_caps.len() != snapshot.code_hashes.len()
+            || kernel.next_code_id != snapshot.next_code_id
+            || snapshot.next_code_id as usize != snapshot.code_hashes.len()
+            || kernel
+                .code_caps
+                .iter()
+                .zip(&snapshot.code_hashes)
+                .any(|(cap, expected)| cap.program_hash != *expected)
+        {
+            return Err(SnapshotError::ProgramMismatch);
+        }
+
+        let untyped = Arc::new(
+            UntypedCap::restored(snapshot.memory_pages, snapshot.untyped_offset)
+                .ok_or(SnapshotError::InvalidCapability)?,
+        );
+
+        restore_memory(&mut kernel.backing, snapshot)?;
+
+        let mut slots = Vec::with_capacity(snapshot.arena.slots.len());
+        for slot in &snapshot.arena.slots {
+            let vm = slot
+                .vm
+                .as_ref()
+                .map(|vm| restore_vm(vm, &kernel.code_caps, &untyped, snapshot.memory_pages))
+                .transpose()?;
+            slots.push((slot.generation, vm));
+        }
+        if snapshot.active_vm as usize >= slots.len()
+            || slots[snapshot.active_vm as usize].1.is_none()
+        {
+            return Err(SnapshotError::InvalidScheduler);
+        }
+        kernel.vm_arena = VmArena::restore_slots(slots, snapshot.arena.free_list.clone())
+            .ok_or(SnapshotError::InvalidArena)?;
+        kernel.untyped = untyped;
+        kernel.active_vm = snapshot.active_vm;
+        kernel.call_stack = snapshot
+            .call_stack
+            .iter()
+            .map(restore_call_frame)
+            .collect::<Result<Vec<_>, _>>()?;
+        kernel.pending_protocol_call = Some(snapshot.pending_call);
+        kernel.recompiler_resume_cap = None;
+
+        let active_vm = kernel.vm_arena.vm(kernel.active_vm);
+        if active_vm.state != VmState::Running
+            || snapshot.pending_call.vm_index != kernel.active_vm
+            || snapshot.pending_call.resume_pc != active_vm.pc
+            || snapshot.pending_call.result_registers != [7, 8]
+        {
+            return Err(SnapshotError::InvalidScheduler);
+        }
+        validate_call_stack(&kernel)?;
+
+        #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
+        {
+            kernel.window_pool = WindowPool::new(crate::vm_pool::WINDOW_POOL_SIZE)
+                .ok_or(SnapshotError::InvalidMemory)?;
+            kernel.active_window = 0;
+            kernel.live_ctx = None;
+            crate::recompiler::signal::SIGNAL_STATE.with(|cell| cell.set(core::ptr::null_mut()));
+        }
+
+        Ok(kernel)
+    }
+
+    fn snapshot_vm(&self, vm: &VmInstance) -> Result<VmSnapshot, SnapshotError> {
+        let mut capabilities = Vec::new();
+        for slot in 0..=u8::MAX {
+            let Some(capability) = vm.cap_table.get(slot) else {
+                if vm.cap_table.is_original(slot) {
+                    return Err(SnapshotError::InvalidCapability);
+                }
+                continue;
+            };
+            capabilities.push(CapabilitySlotSnapshot {
+                slot,
+                original: vm.cap_table.is_original(slot),
+                capability: snapshot_capability(capability, &self.untyped)?,
+            });
+        }
+        Ok(VmSnapshot {
+            state: snapshot_vm_state(vm.state),
+            code_cap_id: vm.code_cap_id,
+            registers: vm.regs().to_vec(),
+            pc: vm.pc,
+            capabilities,
+            caller: vm.caller,
+            entry_index: vm.entry_index,
+            gas: vm.gas(),
+            heap_base: vm.heap_base(),
+            heap_top: vm.heap_top(),
+        })
+    }
+
     /// Create a capability from a manifest entry.
     fn create_cap_from_manifest(
         &mut self,
@@ -593,6 +804,7 @@ impl InvocationKernel {
 
                 let code_cap = Arc::new(CodeCap {
                     id,
+                    program_hash: cache_key.0,
                     compiled,
                     jump_table: code_blob.jump_table,
                     bitmask: code_blob.bitmask,
@@ -1705,6 +1917,8 @@ impl InvocationKernel {
             vm.set_regs(ctx.regs);
             vm.set_gas(ctx.gas.max(0) as u64);
             vm.pc = ctx.pc;
+            vm.set_heap_base(ctx.heap_base);
+            vm.set_heap_top(ctx.heap_top);
         }
     }
 
@@ -1741,9 +1955,41 @@ impl InvocationKernel {
 
     /// Resume after a protocol call was handled by the host.
     /// Sets return registers and continues execution.
-    pub fn resume_protocol_call(&mut self, result0: u64, result1: u64) {
+    pub fn resume_protocol_call(
+        &mut self,
+        result0: u64,
+        result1: u64,
+    ) -> Result<(), SnapshotError> {
+        let pending = self
+            .pending_protocol_call
+            .take()
+            .ok_or(SnapshotError::NotAtProtocolBoundary)?;
+        let vm = self.vm_arena.vm(self.active_vm);
+        if pending.vm_index != self.active_vm
+            || pending.resume_pc != vm.pc
+            || pending.result_registers != [7, 8]
+        {
+            self.pending_protocol_call = Some(pending);
+            return Err(SnapshotError::InvalidScheduler);
+        }
         self.set_active_reg(7, result0);
         self.set_active_reg(8, result1);
+        Ok(())
+    }
+
+    fn suspend_protocol_call(&mut self, slot: u8) -> KernelResult {
+        assert!(
+            self.pending_protocol_call.is_none(),
+            "protocol call must be resumed before another call can suspend"
+        );
+        let vm = self.vm_arena.vm(self.active_vm);
+        self.pending_protocol_call = Some(PendingProtocolCall {
+            slot,
+            vm_index: self.active_vm,
+            resume_pc: vm.pc,
+            result_registers: [7, 8],
+        });
+        KernelResult::ProtocolCall { slot }
     }
 
     // --- Window helpers ---
@@ -2213,6 +2459,10 @@ impl InvocationKernel {
 
     /// Run the kernel until it needs host interaction or terminates.
     pub fn run(&mut self) -> KernelResult {
+        assert!(
+            self.pending_protocol_call.is_none(),
+            "resume_protocol_call must inject the pending result before run"
+        );
         loop {
             // Ensure active VM has a window assigned (handles eviction + DATA cap mapping).
             #[cfg(all(feature = "std", target_os = "linux", target_arch = "x86_64"))]
@@ -2277,7 +2527,7 @@ impl InvocationKernel {
                             ) {
                                 self.recompiler_resume_cap = Some(code_cap_id);
                             }
-                            return KernelResult::ProtocolCall { slot };
+                            return self.suspend_protocol_call(slot);
                         }
                         DispatchResult::RootHalt => return KernelResult::Halt,
                         DispatchResult::RootPanic => return KernelResult::Panic,
@@ -2335,7 +2585,7 @@ impl InvocationKernel {
                     match self.dispatch_ecall(op) {
                         DispatchResult::Continue => continue,
                         DispatchResult::ProtocolCall { slot } => {
-                            return KernelResult::ProtocolCall { slot };
+                            return self.suspend_protocol_call(slot);
                         }
                         DispatchResult::RootHalt => return KernelResult::Halt,
                         DispatchResult::RootPanic => return KernelResult::Panic,
@@ -2656,6 +2906,307 @@ impl InvocationKernel {
                 }
             }
         }
+    }
+}
+
+fn snapshot_isa_mode(mode: crate::IsaMode) -> SnapshotIsaMode {
+    match mode {
+        crate::IsaMode::Jar => SnapshotIsaMode::Jar,
+        crate::IsaMode::Conformance => SnapshotIsaMode::Conformance,
+    }
+}
+
+fn restore_isa_mode(mode: SnapshotIsaMode) -> crate::IsaMode {
+    match mode {
+        SnapshotIsaMode::Jar => crate::IsaMode::Jar,
+        SnapshotIsaMode::Conformance => crate::IsaMode::Conformance,
+    }
+}
+
+fn snapshot_vm_state(state: VmState) -> SnapshotVmState {
+    match state {
+        VmState::Idle => SnapshotVmState::Idle,
+        VmState::Running => SnapshotVmState::Running,
+        VmState::WaitingForReply => SnapshotVmState::WaitingForReply,
+        VmState::Halted => SnapshotVmState::Halted,
+        VmState::Faulted => SnapshotVmState::Faulted,
+    }
+}
+
+fn restore_vm_state(state: SnapshotVmState) -> VmState {
+    match state {
+        SnapshotVmState::Idle => VmState::Idle,
+        SnapshotVmState::Running => VmState::Running,
+        SnapshotVmState::WaitingForReply => VmState::WaitingForReply,
+        SnapshotVmState::Halted => VmState::Halted,
+        SnapshotVmState::Faulted => VmState::Faulted,
+    }
+}
+
+fn snapshot_access(access: Access) -> SnapshotAccess {
+    match access {
+        Access::RO => SnapshotAccess::ReadOnly,
+        Access::RW => SnapshotAccess::ReadWrite,
+    }
+}
+
+fn restore_access(access: SnapshotAccess) -> Access {
+    match access {
+        SnapshotAccess::ReadOnly => Access::RO,
+        SnapshotAccess::ReadWrite => Access::RW,
+    }
+}
+
+fn snapshot_capability(
+    capability: &Cap,
+    untyped: &Arc<UntypedCap>,
+) -> Result<CapabilitySnapshot, SnapshotError> {
+    Ok(match capability {
+        Cap::Untyped(value) => {
+            if !Arc::ptr_eq(value, untyped) {
+                return Err(SnapshotError::InvalidCapability);
+            }
+            CapabilitySnapshot::Untyped
+        }
+        Cap::Data(value) => CapabilitySnapshot::Data {
+            backing_offset: value.backing_offset,
+            page_count: value.page_count,
+            base_offset: value.base_offset,
+            access: value.access.map(snapshot_access),
+            mapped_bitmap: value.mapped_bitmap.clone(),
+        },
+        Cap::Code(value) => CapabilitySnapshot::Code {
+            code_cap_id: value.id,
+        },
+        Cap::Handle(value) => CapabilitySnapshot::Handle {
+            vm_index: value.vm_id.index(),
+            vm_generation: value.vm_id.generation(),
+            max_gas: value.max_gas,
+        },
+        Cap::Callable(value) => CapabilitySnapshot::Callable {
+            vm_index: value.vm_id.index(),
+            vm_generation: value.vm_id.generation(),
+            max_gas: value.max_gas,
+        },
+        Cap::Protocol(value) => CapabilitySnapshot::Protocol { id: value.id },
+    })
+}
+
+fn restore_vm(
+    snapshot: &VmSnapshot,
+    code_caps: &[Arc<CodeCap>],
+    untyped: &Arc<UntypedCap>,
+    memory_pages: u32,
+) -> Result<VmInstance, SnapshotError> {
+    if snapshot.code_cap_id as usize >= code_caps.len() {
+        return Err(SnapshotError::InvalidArena);
+    }
+    let mut cap_table = CapTable::new();
+    let mut seen_slots = BTreeSet::new();
+    for slot in &snapshot.capabilities {
+        if !seen_slots.insert(slot.slot) {
+            return Err(SnapshotError::InvalidCapability);
+        }
+        let capability = restore_capability(&slot.capability, code_caps, untyped, memory_pages)?;
+        if slot.original {
+            if !matches!(capability, Cap::Protocol(ProtocolCap { id }) if id == slot.slot && slot.slot <= 28)
+            {
+                return Err(SnapshotError::InvalidCapability);
+            }
+            cap_table.set_original(slot.slot, capability);
+        } else {
+            cap_table.set(slot.slot, capability);
+        }
+    }
+    let mut vm = VmInstance::new(
+        snapshot.code_cap_id,
+        snapshot.entry_index,
+        cap_table,
+        snapshot.gas,
+    );
+    vm.state = restore_vm_state(snapshot.state);
+    let registers = snapshot
+        .registers
+        .as_slice()
+        .try_into()
+        .map_err(|_| SnapshotError::InvalidArena)?;
+    vm.set_regs(registers);
+    vm.pc = snapshot.pc;
+    vm.caller = snapshot.caller;
+    vm.set_heap_base(snapshot.heap_base);
+    vm.set_heap_top(snapshot.heap_top);
+    Ok(vm)
+}
+
+fn restore_capability(
+    snapshot: &CapabilitySnapshot,
+    code_caps: &[Arc<CodeCap>],
+    untyped: &Arc<UntypedCap>,
+    memory_pages: u32,
+) -> Result<Cap, SnapshotError> {
+    Ok(match snapshot {
+        CapabilitySnapshot::Untyped => Cap::Untyped(Arc::clone(untyped)),
+        CapabilitySnapshot::Data {
+            backing_offset,
+            page_count,
+            base_offset,
+            access,
+            mapped_bitmap,
+        } => {
+            let expected_bitmap_len = (*page_count as usize).div_ceil(8);
+            let backing_end = backing_offset
+                .checked_add(*page_count)
+                .ok_or(SnapshotError::InvalidCapability)?;
+            if *page_count == 0
+                || backing_end > memory_pages
+                || mapped_bitmap.len() != expected_bitmap_len
+                || base_offset.is_some() != access.is_some()
+            {
+                return Err(SnapshotError::InvalidCapability);
+            }
+            if let Some(last) = mapped_bitmap.last()
+                && page_count % 8 != 0
+            {
+                let used_mask = (1u8 << (page_count % 8)) - 1;
+                if last & !used_mask != 0 {
+                    return Err(SnapshotError::InvalidCapability);
+                }
+            }
+            if mapped_bitmap.iter().any(|byte| *byte != 0) && base_offset.is_none() {
+                return Err(SnapshotError::InvalidCapability);
+            }
+            if let Some(base) = base_offset {
+                let virtual_end = base
+                    .checked_add(*page_count)
+                    .ok_or(SnapshotError::InvalidCapability)?;
+                if virtual_end as u64 * crate::PVM_PAGE_SIZE as u64 > 1u64 << 32 {
+                    return Err(SnapshotError::InvalidCapability);
+                }
+            }
+            Cap::Data(DataCap {
+                backing_offset: *backing_offset,
+                page_count: *page_count,
+                base_offset: *base_offset,
+                access: access.map(restore_access),
+                mapped_bitmap: mapped_bitmap.clone(),
+            })
+        }
+        CapabilitySnapshot::Code { code_cap_id } => {
+            let code = code_caps
+                .get(*code_cap_id as usize)
+                .ok_or(SnapshotError::InvalidCapability)?;
+            Cap::Code(Arc::clone(code))
+        }
+        CapabilitySnapshot::Handle {
+            vm_index,
+            vm_generation,
+            max_gas,
+        } => Cap::Handle(HandleCap {
+            vm_id: VmId::new(*vm_index, *vm_generation),
+            max_gas: *max_gas,
+        }),
+        CapabilitySnapshot::Callable {
+            vm_index,
+            vm_generation,
+            max_gas,
+        } => Cap::Callable(CallableCap {
+            vm_id: VmId::new(*vm_index, *vm_generation),
+            max_gas: *max_gas,
+        }),
+        CapabilitySnapshot::Protocol { id } => Cap::Protocol(ProtocolCap { id: *id }),
+    })
+}
+
+fn snapshot_call_frame(frame: &CallFrame) -> CallFrameSnapshot {
+    let (ipc_base_page, ipc_access) = match frame.ipc_was_mapped {
+        Some((base_page, access)) => (Some(base_page), Some(snapshot_access(access))),
+        None => (None, None),
+    };
+    CallFrameSnapshot {
+        caller_vm_id: frame.caller_vm_id,
+        ipc_cap_idx: frame.ipc_cap_idx,
+        ipc_base_page,
+        ipc_access,
+    }
+}
+
+fn restore_call_frame(frame: &CallFrameSnapshot) -> Result<CallFrame, SnapshotError> {
+    let ipc_was_mapped = match (frame.ipc_base_page, frame.ipc_access) {
+        (None, None) => None,
+        (Some(base_page), Some(access)) => Some((base_page, restore_access(access))),
+        _ => return Err(SnapshotError::InvalidScheduler),
+    };
+    if frame.ipc_cap_idx.is_none() && ipc_was_mapped.is_some() {
+        return Err(SnapshotError::InvalidScheduler);
+    }
+    Ok(CallFrame {
+        caller_vm_id: frame.caller_vm_id,
+        ipc_cap_idx: frame.ipc_cap_idx,
+        ipc_was_mapped,
+    })
+}
+
+fn restore_memory(
+    backing: &mut BackingStore,
+    snapshot: &KernelSnapshot,
+) -> Result<(), SnapshotError> {
+    let mut blocks = BTreeMap::<[u8; 32], &[u8]>::new();
+    for block in &snapshot.blocks {
+        if block.bytes.len() != crate::PVM_PAGE_SIZE as usize
+            || grey_crypto::blake2b_256(&block.bytes).0 != block.hash
+            || blocks.insert(block.hash, &block.bytes).is_some()
+        {
+            return Err(SnapshotError::InvalidMemory);
+        }
+    }
+
+    let zero_page = vec![0u8; crate::PVM_PAGE_SIZE as usize];
+    for page_index in 0..backing.total_pages() {
+        if !backing.write_page(page_index, &zero_page) {
+            return Err(SnapshotError::InvalidMemory);
+        }
+    }
+
+    let mut seen_pages = BTreeSet::new();
+    let mut used_blocks = BTreeSet::new();
+    for page in &snapshot.memory {
+        if page.page_index >= backing.total_pages() || !seen_pages.insert(page.page_index) {
+            return Err(SnapshotError::InvalidMemory);
+        }
+        let bytes = blocks
+            .get(&page.block_hash)
+            .ok_or(SnapshotError::InvalidMemory)?;
+        if bytes.iter().all(|byte| *byte == 0) || !backing.write_page(page.page_index, bytes) {
+            return Err(SnapshotError::InvalidMemory);
+        }
+        used_blocks.insert(page.block_hash);
+    }
+    if used_blocks.len() != blocks.len() {
+        return Err(SnapshotError::InvalidMemory);
+    }
+    Ok(())
+}
+
+fn validate_call_stack(kernel: &InvocationKernel) -> Result<(), SnapshotError> {
+    let mut callers = BTreeSet::new();
+    for frame in &kernel.call_stack {
+        if !callers.insert(frame.caller_vm_id) {
+            return Err(SnapshotError::InvalidScheduler);
+        }
+        let generation = kernel.vm_arena.generation_of(frame.caller_vm_id);
+        let caller = kernel
+            .vm_arena
+            .get(VmId::new(frame.caller_vm_id, generation))
+            .ok_or(SnapshotError::InvalidScheduler)?;
+        if caller.state != VmState::WaitingForReply {
+            return Err(SnapshotError::InvalidScheduler);
+        }
+    }
+    let active = kernel.vm_arena.vm(kernel.active_vm);
+    match kernel.call_stack.last() {
+        Some(frame) if active.caller == Some(frame.caller_vm_id) => Ok(()),
+        None if active.caller.is_none() => Ok(()),
+        _ => Err(SnapshotError::InvalidScheduler),
     }
 }
 
@@ -3604,6 +4155,184 @@ mod tests {
 
         let k2 = InvocationKernel::new_warm(&blob, &[], 100_000, &flat_mem, hb, ht, None).unwrap();
         assert_eq!(k2.code_caps.len(), 1);
+    }
+
+    fn continuation_blob(reply_after_resume: bool) -> Vec<u8> {
+        // LoadImm64 T0, 41; Ecalli 7; Add64 T0 + A0 -> A0; then either
+        // REPLY (for a child VM) or return through RA (for the root VM).
+        let mut code = vec![20, 2];
+        code.extend_from_slice(&41u64.to_le_bytes());
+        code.extend_from_slice(&[10, 7]);
+        code.extend_from_slice(&[200, 0x72, 7]);
+        if reply_after_resume {
+            code.extend_from_slice(&[10, 0]);
+        } else {
+            code.extend_from_slice(&[50, 0, 0, 0, 0, 0]);
+        }
+        let mut bitmask = vec![0u8; code.len()];
+        bitmask[0] = 1;
+        bitmask[10] = 1;
+        bitmask[12] = 1;
+        bitmask[15] = 1;
+        make_blob_with(&code, &bitmask, &[])
+    }
+
+    fn snapshot_root_at_protocol_call(
+        blob: &[u8],
+        backend: crate::backend::PvmBackend,
+    ) -> KernelSnapshot {
+        let mut kernel = InvocationKernel::new_with_backend(blob, &[], 100_000, backend).unwrap();
+        let vm = kernel.vm_arena.vm_mut(0);
+        vm.set_heap_base(0x1200);
+        vm.set_heap_top(0x1800);
+        vm.transition(VmState::Running).unwrap();
+        assert!(kernel.write_data_cap(65, 19, b"durable-memory"));
+        assert!(matches!(
+            kernel.run(),
+            KernelResult::ProtocolCall { slot: 7 }
+        ));
+        assert_eq!(kernel.vm_arena.vm(0).pc, 12);
+        assert_eq!(kernel.active_reg(2), 41);
+        kernel.snapshot().unwrap()
+    }
+
+    #[test]
+    fn snapshot_resume_is_exact_and_backend_portable() {
+        let blob = continuation_blob(false);
+        let interpreter =
+            snapshot_root_at_protocol_call(&blob, crate::backend::PvmBackend::ForceInterpreter);
+        let recompiler =
+            snapshot_root_at_protocol_call(&blob, crate::backend::PvmBackend::ForceRecompiler);
+        assert_eq!(interpreter.to_bytes(), recompiler.to_bytes());
+
+        let bytes = interpreter.to_bytes();
+        let decoded = KernelSnapshot::from_bytes(&bytes).unwrap();
+        assert_eq!(decoded, interpreter);
+
+        for backend in [
+            crate::backend::PvmBackend::ForceInterpreter,
+            crate::backend::PvmBackend::ForceRecompiler,
+        ] {
+            let mut restored = InvocationKernel::restore(&blob, &decoded, backend, None).unwrap();
+            assert_eq!(restored.snapshot().unwrap(), decoded);
+            restored.resume_protocol_call(5, 9).unwrap();
+            assert!(matches!(restored.run(), KernelResult::Halt));
+            assert_eq!(restored.active_reg(2), 41);
+            assert_eq!(restored.active_reg(7), 46);
+            assert_eq!(restored.active_reg(8), 9);
+            let vm = restored.vm_arena.vm(0);
+            assert_eq!(vm.heap_base(), 0x1200);
+            assert_eq!(vm.heap_top(), 0x1800);
+            assert_eq!(
+                restored.read_data_cap(65, 19, 14).as_deref(),
+                Some(b"durable-memory".as_slice())
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_rejects_program_memory_and_wire_tampering() {
+        let blob = continuation_blob(false);
+        let snapshot =
+            snapshot_root_at_protocol_call(&blob, crate::backend::PvmBackend::ForceInterpreter);
+
+        let mut wrong_program = snapshot.clone();
+        wrong_program.code_hashes[0][0] ^= 1;
+        assert!(matches!(
+            InvocationKernel::restore(
+                &blob,
+                &wrong_program,
+                crate::backend::PvmBackend::ForceInterpreter,
+                None,
+            ),
+            Err(SnapshotError::ProgramMismatch)
+        ));
+
+        let mut corrupt_memory = snapshot.clone();
+        corrupt_memory.blocks[0].bytes[0] ^= 1;
+        assert!(matches!(
+            InvocationKernel::restore(
+                &blob,
+                &corrupt_memory,
+                crate::backend::PvmBackend::ForceInterpreter,
+                None,
+            ),
+            Err(SnapshotError::InvalidMemory)
+        ));
+
+        let mut trailing = snapshot.to_bytes();
+        trailing.push(0);
+        assert_eq!(
+            KernelSnapshot::from_bytes(&trailing),
+            Err(SnapshotError::TrailingBytes)
+        );
+    }
+
+    #[test]
+    fn nested_call_stack_restores_across_backends() {
+        let blob = continuation_blob(true);
+        let mut kernel = InvocationKernel::new_with_backend(
+            &blob,
+            &[],
+            1_000_000,
+            crate::backend::PvmBackend::ForceInterpreter,
+        )
+        .unwrap();
+        kernel
+            .vm_arena
+            .vm_mut(0)
+            .transition(VmState::Running)
+            .unwrap();
+
+        kernel.set_active_reg(7, 0);
+        kernel.set_active_reg(12, 66);
+        assert!(matches!(
+            kernel.dispatch_ecalli(64),
+            DispatchResult::Continue
+        ));
+        let child_handle = kernel.active_reg(7) as u8;
+        kernel
+            .vm_arena
+            .vm_mut(1)
+            .cap_table
+            .set(7, Cap::Protocol(ProtocolCap { id: 7 }));
+
+        kernel.set_active_reg(6, 0xfeed_cafe);
+        kernel.set_active_reg(7, 10);
+        kernel.set_active_reg(12, 0);
+        assert!(matches!(
+            kernel.dispatch_ecalli(child_handle as u32),
+            DispatchResult::Continue
+        ));
+        assert_eq!(kernel.active_vm, 1);
+        assert!(matches!(
+            kernel.run(),
+            KernelResult::ProtocolCall { slot: 7 }
+        ));
+        let snapshot = kernel.snapshot().unwrap();
+        assert_eq!(snapshot.call_stack.len(), 1);
+        assert_eq!(snapshot.active_vm, 1);
+
+        for backend in [
+            crate::backend::PvmBackend::ForceInterpreter,
+            crate::backend::PvmBackend::ForceRecompiler,
+        ] {
+            let mut restored = InvocationKernel::restore(&blob, &snapshot, backend, None).unwrap();
+            assert_eq!(restored.snapshot().unwrap(), snapshot);
+            restored.resume_protocol_call(1, 0).unwrap();
+
+            // The child resumes after its await, replies with 42, and only
+            // then does the root begin executing and reach its own call.
+            assert!(matches!(
+                restored.run(),
+                KernelResult::ProtocolCall { slot: 7 }
+            ));
+            assert_eq!(restored.active_vm, 0);
+            assert!(restored.call_stack.is_empty());
+            assert_eq!(restored.vm_arena.vm(1).state, VmState::Idle);
+            assert_eq!(restored.active_reg(6), 0xfeed_cafe);
+            assert_eq!(restored.active_reg(7), 42);
+        }
     }
 
     // === GP standard-program (SPI) init path =================================

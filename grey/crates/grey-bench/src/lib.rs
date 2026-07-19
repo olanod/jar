@@ -44,7 +44,9 @@ pub fn run_kernel_with_backend(blob: &[u8], gas: u64, backend: javm::PvmBackend)
                 let vm = &kernel.vm_arena.vm(kernel.active_vm);
                 panic!("kernel page fault at {a:#x} PC={} gas={}", vm.pc, vm.gas());
             }
-            javm::kernel::KernelResult::ProtocolCall { .. } => continue,
+            javm::kernel::KernelResult::ProtocolCall { .. } => {
+                kernel.resume_protocol_call(0, 0).unwrap();
+            }
         }
     }
 }

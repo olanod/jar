@@ -251,9 +251,9 @@ fn run_backend(
                 // identical.
                 if slot == 1 {
                     let (gas, phi8) = (kernel.active_gas(), kernel.active_reg(8));
-                    kernel.resume_protocol_call(gas, phi8);
+                    kernel.resume_protocol_call(gas, phi8).unwrap();
                 } else {
-                    kernel.resume_protocol_call(0, 0);
+                    kernel.resume_protocol_call(0, 0).unwrap();
                 }
             }
         }

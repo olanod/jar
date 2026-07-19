@@ -68,7 +68,9 @@ fn bench_mem_seq(c: &mut Criterion) {
                             javm::kernel::KernelResult::Halt => {
                                 break kernel.vm_arena.vm(kernel.active_vm).reg(7);
                             }
-                            javm::kernel::KernelResult::ProtocolCall { .. } => continue,
+                            javm::kernel::KernelResult::ProtocolCall { .. } => {
+                                kernel.resume_protocol_call(0, 0).unwrap();
+                            }
                             other => panic!("unexpected: {:?}", other),
                         }
                     }
@@ -98,7 +100,9 @@ fn bench_mem_rand(c: &mut Criterion) {
                             javm::kernel::KernelResult::Halt => {
                                 break kernel.vm_arena.vm(kernel.active_vm).reg(7);
                             }
-                            javm::kernel::KernelResult::ProtocolCall { .. } => continue,
+                            javm::kernel::KernelResult::ProtocolCall { .. } => {
+                                kernel.resume_protocol_call(0, 0).unwrap();
+                            }
                             other => panic!("unexpected: {:?}", other),
                         }
                     }

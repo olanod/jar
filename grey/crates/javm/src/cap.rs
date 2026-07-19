@@ -54,6 +54,23 @@ impl UntypedCap {
     pub fn remaining(&self) -> u32 {
         self.total - self.offset.load(Ordering::Relaxed)
     }
+
+    /// Pages already allocated from this capability.
+    pub fn allocated(&self) -> u32 {
+        self.offset.load(Ordering::Relaxed)
+    }
+
+    /// Reconstruct an allocator at an exact durable offset.
+    #[cfg(feature = "std")]
+    pub(crate) fn restored(total: u32, allocated: u32) -> Option<Self> {
+        if allocated > total {
+            return None;
+        }
+        Some(Self {
+            offset: AtomicU32::new(allocated),
+            total,
+        })
+    }
 }
 
 /// Physical pages with exclusive mapping and per-page bitmap. Move-only (not copyable).
@@ -223,6 +240,8 @@ impl DataCap {
 pub struct CodeCap {
     /// Identifier for this CODE cap (unique within invocation).
     pub id: u16,
+    /// Blake2b-256 of the canonical CODE sub-blob.
+    pub program_hash: [u8; 32],
     /// Compiled program — interpreter or recompiler backend.
     pub compiled: crate::backend::CompiledProgram,
     /// PVM jump table (for dynamic jump resolution).
@@ -235,6 +254,7 @@ impl core::fmt::Debug for CodeCap {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("CodeCap")
             .field("id", &self.id)
+            .field("program_hash", &self.program_hash)
             .field("compiled", &self.compiled)
             .finish()
     }

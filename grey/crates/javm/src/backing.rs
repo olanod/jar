@@ -12,6 +12,8 @@
 //! All VMs in an invocation share the same backing store. DATA caps
 //! reference offsets into this store.
 
+use alloc::{vec, vec::Vec};
+
 use crate::PVM_PAGE_SIZE;
 use crate::cap::Access;
 
@@ -61,6 +63,43 @@ impl BackingStore {
     /// The raw file descriptor (for mmap calls).
     pub fn fd(&self) -> i32 {
         self.fd
+    }
+
+    /// Copy one physical page out of the backing store.
+    pub fn read_page(&self, page_index: u32) -> Option<Vec<u8>> {
+        if page_index >= self.total_pages {
+            return None;
+        }
+        let len = PVM_PAGE_SIZE as usize;
+        let offset = page_index as libc::off_t * PVM_PAGE_SIZE as libc::off_t;
+        // SAFETY: the memfd was truncated to `total_pages * PVM_PAGE_SIZE`.
+        let ptr = unsafe {
+            libc::mmap(
+                core::ptr::null_mut(),
+                len,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                self.fd,
+                offset,
+            )
+        };
+        if ptr == libc::MAP_FAILED {
+            return None;
+        }
+        let mut bytes = vec![0u8; len];
+        // SAFETY: both regions are valid for exactly one page and do not overlap.
+        unsafe {
+            core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), bytes.as_mut_ptr(), len);
+            libc::munmap(ptr, len);
+        }
+        Some(bytes)
+    }
+
+    /// Replace one physical page in the backing store.
+    pub fn write_page(&mut self, page_index: u32, bytes: &[u8]) -> bool {
+        page_index < self.total_pages
+            && bytes.len() == PVM_PAGE_SIZE as usize
+            && self.write_init_data(page_index, bytes)
     }
 
     /// Map pages from the backing store into a CODE cap's window.
@@ -184,6 +223,23 @@ impl BackingStore {
 
     pub fn total_pages(&self) -> u32 {
         self.total_pages
+    }
+
+    /// Copy one physical page out of the backing store.
+    pub fn read_page(&self, page_index: u32) -> Option<Vec<u8>> {
+        if page_index >= self.total_pages {
+            return None;
+        }
+        Some(self.read_page_slice(page_index, 1).to_vec())
+    }
+
+    /// Replace one physical page in the backing store.
+    pub fn write_page(&mut self, page_index: u32, bytes: &[u8]) -> bool {
+        if page_index >= self.total_pages || bytes.len() != PVM_PAGE_SIZE as usize {
+            return false;
+        }
+        self.write_page_slice(page_index, bytes);
+        true
     }
 
     /// No-op on non-Linux: the window is not used by the interpreter.

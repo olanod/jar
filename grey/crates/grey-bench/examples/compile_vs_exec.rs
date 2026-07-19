@@ -32,7 +32,9 @@ fn main() {
         loop {
             match kernel.run() {
                 javm::kernel::KernelResult::Halt => break,
-                javm::kernel::KernelResult::ProtocolCall { .. } => continue,
+                javm::kernel::KernelResult::ProtocolCall { .. } => {
+                    kernel.resume_protocol_call(0, 0).unwrap();
+                }
                 other => panic!("grey: {:?}", other),
             }
         }
