@@ -1385,6 +1385,24 @@ impl InvocationKernel {
                 .vm_mut(caller_id)
                 .cap_table
                 .set(caller_slot, cap);
+
+            // Re-establish the physical mapping represented by the returned
+            // capability metadata. The caller mapping was revoked on CALL,
+            // so updating DataCap::mapped_bitmap alone would leave the CODE
+            // window inaccessible (or out of sync with the interpreter).
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            if let Some(Cap::Data(d)) = self.vm_arena.vm(caller_id).cap_table.get(caller_slot)
+                && d.has_any_mapped()
+                && let (Some(base_page), Some(access)) = (d.base_offset, d.access)
+                && let Some(wb) = self.vm_window_base(caller_id)
+            {
+                // SAFETY: wb is the caller's assigned 4GB CODE window and the
+                // returned DATA cap owns this exact backing range.
+                unsafe {
+                    self.backing
+                        .map_pages(wb, base_page, d.backing_offset, d.page_count, access);
+                }
+            }
         }
 
         // Pass φ[7] only + set φ[8]=0 (status = REPLY success)
@@ -4028,6 +4046,11 @@ mod tests {
             Some(Cap::Data(data))
                 if data.base_offset == Some(20) && data.mapped_page_count() == 1
         ));
+        assert!(kernel.backing.write_init_data(backing_offset, b"ipc"));
+        assert_eq!(
+            kernel.read_data_cap_window(20 * crate::PVM_PAGE_SIZE, 3),
+            Some(b"ipc".to_vec())
+        );
     }
 
     #[test]
