@@ -2999,6 +2999,11 @@ impl InvocationKernel {
         }
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         {
+            // A restored suspended kernel has canonical DATA-cap metadata but
+            // no native window assignment until its next `run()`. Protocol
+            // hosts must still be able to inject the one resume value before
+            // execution continues, so materialize the active mapping here.
+            self.ensure_active_window();
             let wb = self.active_window_base();
             // SAFETY: the range is fully covered by RW-mapped pages
             // (validated above).
@@ -4692,6 +4697,7 @@ mod tests {
         ] {
             let mut restored = InvocationKernel::restore(&blob, &decoded, backend, None).unwrap();
             assert_eq!(restored.snapshot().unwrap(), decoded);
+            assert!(restored.write_data_cap_window(19, b"durable-memory"));
             restored.resume_protocol_call(5, 9).unwrap();
             assert!(matches!(restored.run(), KernelResult::Halt));
             assert_eq!(restored.active_reg(2), 41);
