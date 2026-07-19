@@ -1283,6 +1283,16 @@ impl InvocationKernel {
             if let Some(mut cap) = self.vm_arena.vm_mut(caller_id).cap_table.take(ipc_cap_slot) {
                 if let Cap::Data(ref mut d) = cap {
                     ipc_was_mapped = d.unmap();
+                    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                    if let Some((base_page, _)) = ipc_was_mapped
+                        && let Some(wb) = self.vm_window_base(caller_id)
+                    {
+                        // SAFETY: wb is the caller's assigned 4GB CODE
+                        // window and the DATA cap owned this exact range.
+                        unsafe {
+                            BackingStore::unmap_pages(wb, base_page, d.page_count);
+                        }
+                    }
                 }
                 ipc_cap_idx = Some(ipc_cap_slot);
                 // Place in callee's IPC slot [0]
@@ -1344,10 +1354,27 @@ impl InvocationKernel {
         self.vm_arena.vm_mut(caller_id).set_gas(cg + unused_gas);
         self.vm_arena.vm_mut(callee_id).set_gas(0);
 
-        // Return IPC cap
+        // Return IPC cap. Moving a DATA cap out of the callee must revoke the
+        // callee's virtual mapping before the caller mapping is restored; the
+        // capability is exclusive and must never leave an accessible stale
+        // alias in a CNode that no longer owns it.
         if let Some(caller_slot) = frame.ipc_cap_idx
             && let Some(mut cap) = self.vm_arena.vm_mut(callee_id).cap_table.take(IPC_SLOT)
         {
+            if let Cap::Data(d) = &mut cap
+                && d.has_any_mapped()
+                && let Some(callee_base_page) = d.base_offset
+            {
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                if let Some(wb) = self.vm_window_base(callee_id) {
+                    // SAFETY: wb is the callee's assigned 4GB CODE window and
+                    // the DATA capability describes this exact mapped range.
+                    unsafe {
+                        BackingStore::unmap_pages(wb, callee_base_page, d.page_count);
+                    }
+                }
+                d.unmap_all();
+            }
             // Auto-remap DATA cap at caller's original base_page
             if let Some((base_page, access)) = frame.ipc_was_mapped
                 && let Cap::Data(d) = &mut cap
@@ -3932,6 +3959,75 @@ mod tests {
         // Caller received results: φ[7]=child's return, φ[8]=0 (status=REPLY)
         assert_eq!(kernel.active_reg(7), 100);
         assert_eq!(kernel.active_reg(8), 0);
+    }
+
+    #[test]
+    fn ipc_data_cap_mapping_follows_its_single_owner() {
+        let blob = make_simple_blob(10);
+        let mut kernel = InvocationKernel::new(&blob, &[], 100_000).unwrap();
+        let _ = kernel.vm_arena.vm_mut(0).transition(VmState::Running);
+
+        // Create the child and an invocation-owned DATA cap in the caller.
+        kernel.set_active_reg(7, 0);
+        kernel.set_active_reg(12, 66);
+        kernel.dispatch_ecalli(64);
+        let handle = kernel.active_reg(7) as u8;
+
+        let backing_offset = kernel.untyped.retype(1).unwrap();
+        kernel
+            .vm_arena
+            .vm_mut(0)
+            .cap_table
+            .set(67, Cap::Data(DataCap::new(backing_offset, 1)));
+        kernel.set_active_reg(7, 20);
+        kernel.set_active_reg(8, 0);
+        kernel.set_active_reg(9, 1);
+        kernel.set_active_reg(10, 1);
+        kernel.set_active_reg(12, (67u64) << 32);
+        assert!(matches!(
+            kernel.dispatch_ecall(0x02),
+            DispatchResult::Continue
+        ));
+
+        // CALL moves the cap into child IPC slot 0 and revokes the caller
+        // mapping. The child may then map the same capability into its CNode.
+        kernel.set_active_reg(12, 67);
+        assert!(matches!(
+            kernel.dispatch_ecalli(handle as u32),
+            DispatchResult::Continue
+        ));
+        assert!(kernel.vm_arena.vm(0).cap_table.get(67).is_none());
+        assert!(matches!(
+            kernel.vm_arena.vm(1).cap_table.get(IPC_SLOT),
+            Some(Cap::Data(data)) if !data.has_any_mapped()
+        ));
+
+        kernel.set_active_reg(7, 20);
+        kernel.set_active_reg(8, 0);
+        kernel.set_active_reg(9, 1);
+        kernel.set_active_reg(10, 1);
+        kernel.set_active_reg(12, 0);
+        assert!(matches!(
+            kernel.dispatch_ecall(0x02),
+            DispatchResult::Continue
+        ));
+        assert!(matches!(
+            kernel.vm_arena.vm(1).cap_table.get(IPC_SLOT),
+            Some(Cap::Data(data)) if data.mapped_page_count() == 1
+        ));
+
+        // REPLY moves ownership back, revokes the child mapping, and restores
+        // the caller's original mapping.
+        assert!(matches!(
+            kernel.dispatch_ecalli(IPC_SLOT as u32),
+            DispatchResult::Continue
+        ));
+        assert!(kernel.vm_arena.vm(1).cap_table.get(IPC_SLOT).is_none());
+        assert!(matches!(
+            kernel.vm_arena.vm(0).cap_table.get(67),
+            Some(Cap::Data(data))
+                if data.base_offset == Some(20) && data.mapped_page_count() == 1
+        ));
     }
 
     #[test]
