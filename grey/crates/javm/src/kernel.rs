@@ -503,6 +503,7 @@ impl InvocationKernel {
         vm0.set_reg(1, parsed.header.stack_top as u64); // φ[1] = SP (stack top)
         vm0.set_reg(7, args_base); // φ[7] = args address
         vm0.set_reg(8, args_len); // φ[8] = args length
+        vm0.seal_entry_registers();
         kernel.vm_arena.insert(vm0).ok_or(KernelError::TooManyVms)?; // VM 0 gets VmId(0, 0)
 
         // Dormant programs are complete VM instances, not CODE templates.
@@ -524,6 +525,7 @@ impl InvocationKernel {
             let mut vm = VmInstance::new(invoke_code_id, 0, imported_table, 0);
             vm.set_reg(0, crate::PVM_HALT_ADDR);
             vm.set_reg(1, imported.header.stack_top as u64);
+            vm.seal_entry_registers();
             let vm_id = kernel.vm_arena.insert(vm).ok_or(KernelError::TooManyVms)?;
             kernel.vm_arena.vm_mut(0).cap_table.set(
                 program.handle_slot,
@@ -916,6 +918,7 @@ impl InvocationKernel {
             state: snapshot_vm_state(vm.state),
             code_cap_id: vm.code_cap_id,
             registers: vm.regs().to_vec(),
+            entry_registers: vm.entry_regs().to_vec(),
             pc: vm.pc,
             capabilities,
             caller: vm.caller,
@@ -1320,6 +1323,7 @@ impl InvocationKernel {
 
         // Set up callee
         let callee = self.vm_arena.vm_mut(target_vm_id);
+        callee.reset_for_call();
         callee.set_gas(callee_gas);
         callee.caller = Some(caller_id);
         callee.set_reg(7, caller_regs[7]);
@@ -1412,6 +1416,7 @@ impl InvocationKernel {
 
         // Pass φ[7] only + set φ[8]=0 (status = REPLY success)
         let callee_r7 = self.vm_arena.vm(callee_id).reg(7);
+        self.vm_arena.vm_mut(callee_id).caller = None;
         self.vm_arena.vm_mut(caller_id).set_reg(7, callee_r7);
         self.vm_arena.vm_mut(caller_id).set_reg(8, 0);
 
@@ -3247,6 +3252,12 @@ fn restore_vm(
         .try_into()
         .map_err(|_| SnapshotError::InvalidArena)?;
     vm.set_regs(registers);
+    let entry_registers = snapshot
+        .entry_registers
+        .as_slice()
+        .try_into()
+        .map_err(|_| SnapshotError::InvalidArena)?;
+    vm.set_entry_regs(entry_registers);
     vm.pc = snapshot.pc;
     vm.caller = snapshot.caller;
     vm.set_heap_base(snapshot.heap_base);
@@ -3988,6 +3999,8 @@ mod tests {
         assert_eq!(kernel.active_reg(8), 99);
 
         // Child REPLYs with results
+        kernel.vm_arena.vm_mut(1).pc = 77;
+        kernel.vm_arena.vm_mut(1).set_reg(1, 1234);
         kernel.set_active_reg(7, 100);
         kernel.set_active_reg(8, 200);
         let result = kernel.dispatch_ecalli(IPC_SLOT as u32); // REPLY
@@ -4001,6 +4014,22 @@ mod tests {
         // Caller received results: φ[7]=child's return, φ[8]=0 (status=REPLY)
         assert_eq!(kernel.active_reg(7), 100);
         assert_eq!(kernel.active_reg(8), 0);
+
+        // A later CALL of the fully replied idle machine is a fresh entry,
+        // not a continuation after REPLY. Live suspended machines never pass
+        // through this reset boundary.
+        kernel.set_active_reg(7, 7);
+        kernel.set_active_reg(8, 8);
+        kernel.set_active_reg(12, 0);
+        assert!(matches!(
+            kernel.dispatch_ecalli(handle_idx as u32),
+            DispatchResult::Continue
+        ));
+        assert_eq!(kernel.active_vm, 1);
+        assert_eq!(kernel.vm_arena.vm(1).pc, 0);
+        assert_eq!(kernel.vm_arena.vm(1).reg(1), 0);
+        assert_eq!(kernel.active_reg(7), 7);
+        assert_eq!(kernel.active_reg(8), 8);
     }
 
     #[test]

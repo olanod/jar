@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 /// Current portable kernel snapshot wire version.
-pub const KERNEL_SNAPSHOT_VERSION: u16 = 2;
+pub const KERNEL_SNAPSHOT_VERSION: u16 = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, scale::Encode, scale::Decode)]
 pub enum SnapshotIsaMode {
@@ -70,6 +70,7 @@ pub struct VmSnapshot {
     pub state: SnapshotVmState,
     pub code_cap_id: u16,
     pub registers: Vec<u64>,
+    pub entry_registers: Vec<u64>,
     pub pc: u32,
     pub capabilities: Vec<CapabilitySlotSnapshot>,
     pub caller: Option<u16>,

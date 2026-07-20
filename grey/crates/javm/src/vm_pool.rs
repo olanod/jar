@@ -35,6 +35,9 @@ pub struct VmInstance {
     pub code_cap_id: u16,
     /// PVM registers (13 × 64-bit). Use reg()/set_reg()/regs() for access.
     registers: [u64; PVM_REGISTER_COUNT],
+    /// Sealed register baseline restored for every fresh IDLE → RUNNING CALL.
+    /// Suspended and waiting machines continue to use `registers` exactly.
+    entry_registers: [u64; PVM_REGISTER_COUNT],
     /// Program counter.
     pub pc: u32,
     /// Per-VM capability table.
@@ -59,6 +62,7 @@ impl VmInstance {
             state: VmState::Idle,
             code_cap_id,
             registers,
+            entry_registers: registers,
             pc: 0, // Will be set to jump_table[entry_index] on first CALL
             cap_table,
             caller: None,
@@ -87,6 +91,32 @@ impl VmInstance {
     /// Set all registers at once (cold path — JitContext sync, interpreter sync).
     pub fn set_regs(&mut self, regs: [u64; PVM_REGISTER_COUNT]) {
         self.registers = regs;
+    }
+
+    /// Seal the current register file as this machine's fresh CALL baseline.
+    pub(crate) fn seal_entry_registers(&mut self) {
+        self.entry_registers = self.registers;
+    }
+
+    /// Read the fresh CALL baseline for portable snapshots.
+    pub(crate) fn entry_regs(&self) -> &[u64; PVM_REGISTER_COUNT] {
+        &self.entry_registers
+    }
+
+    /// Restore a fresh CALL baseline from a portable snapshot.
+    pub(crate) fn set_entry_regs(&mut self, regs: [u64; PVM_REGISTER_COUNT]) {
+        self.entry_registers = regs;
+    }
+
+    /// Reset only a fully idle machine for a new CALL. Live suspended state is
+    /// never routed through this boundary.
+    pub(crate) fn reset_for_call(&mut self) {
+        debug_assert_eq!(self.state, VmState::Idle);
+        self.registers = self.entry_registers;
+        self.pc = self.entry_index;
+        self.caller = None;
+        self.heap_base = 0;
+        self.heap_top = 0;
     }
 
     /// Get gas (cold path).
