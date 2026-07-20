@@ -657,44 +657,11 @@ impl TranslationContext {
         rs2: u8,
         imm: i32,
     ) -> Result<(), TranspileError> {
-        // Fuse load_imm + store: check if the base address or stored value was constant.
-        if let Some((load_rd, load_val, undo_pos)) = self.pending_load_imm.take()
-            && load_val >= i32::MIN as i64
-            && load_val <= i32::MAX as i64
-        {
-            // Case 1: Base register was loaded with constant address → direct store.
-            // store_ind_* data, base, offset  where base = constant addr
-            //   → store_* data, (addr + offset)
-            if rs1 == load_rd && rs2 != load_rd && rs2 != 0 {
-                let combined = load_val.wrapping_add(imm as i64);
-                if combined >= i32::MIN as i64 && combined <= i32::MAX as i64 {
-                    let direct_opcode = match funct3 {
-                        0 => Some(59), // SB → store_u8
-                        1 => Some(60), // SH → store_u16
-                        2 => Some(61), // SW → store_u32
-                        3 => Some(62), // SD → store_u64
-                        _ => None,
-                    };
-                    if let Some(opc) = direct_opcode {
-                        self.code.truncate(undo_pos);
-                        self.bitmask.truncate(undo_pos);
-                        let pvm_rs2 = self.require_reg(rs2)?;
-                        self.emit_inst(opc);
-                        self.emit_data(pvm_rs2);
-                        self.emit_var_imm(combined as i32);
-                        return Ok(());
-                    }
-                }
-            }
-            // Case 2: Value register was loaded with constant → store_imm_ind.
-            // NOTE: We intentionally do NOT undo the load_imm here because
-            // the register may still be needed after the store (e.g., as a
-            // function argument). The load_imm was already emitted, so the
-            // register holds the correct value. Just emit a normal store.
-            // The load_imm + store costs two instructions instead of one
-            // fused store_imm_ind, but is always correct.
-        }
-        // Couldn't fuse — load_imm was already emitted, just clear tracking
+        // A store does not overwrite its base register. Removing a preceding
+        // `load_imm base, address` is therefore unsound without whole-block
+        // liveness: a later load/store may reuse `base`. Keep the already
+        // emitted address load and only clear the adjacent-fusion candidate.
+        self.pending_load_imm = None;
 
         // x0 (zero register) has no PVM equivalent — PVM reg 0 is RA, not zero.
         // Use store_imm_ind_* to store a literal zero instead.
@@ -2223,5 +2190,29 @@ mod tests {
                 "{what}: a register-form compare must follow the preserved load_imm",
             );
         }
+    }
+
+    #[test]
+    fn store_preserves_a_constant_base_for_later_memory_operations() {
+        let mut ctx = TranslationContext::new(true);
+        let undo = ctx.code.len();
+        ctx.emit_load_imm(10, 0x21ba0).unwrap();
+        let address_load = ctx.code.clone();
+        ctx.pending_load_imm = Some((10, 0x21ba0, undo));
+
+        ctx.translate_store(
+            3,  /* SD */
+            10, /* base: a0 */
+            11, /* value: a1 */
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            &ctx.code[..address_load.len()],
+            address_load.as_slice(),
+            "a store must not remove a base address that later instructions can reuse",
+        );
+        assert!(ctx.code.len() > address_load.len());
     }
 }

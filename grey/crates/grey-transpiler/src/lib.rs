@@ -389,9 +389,10 @@ pub fn peephole_fuse_load_imm_memory(
         }
     };
 
-    // For load_ind: rd is dest, ra is base. We fuse when base == load_imm's rd.
-    // For store_ind: rd is value, ra is base. We fuse when base == load_imm's rd.
-    // In both cases, ra (high nibble of reg byte) must match load_imm's destination.
+    // For load_ind: rd is dest, ra is base. Fusion is safe only when the load
+    // overwrites its own base, proving that the address register is dead.
+    // Stores never overwrite their base, so this local pass cannot prove it is
+    // dead and must retain the preceding load_imm.
     let is_load_ind = |op: u8| -> bool { (124..=130).contains(&op) };
 
     let mut fused = 0;
@@ -422,33 +423,9 @@ pub fn peephole_fuse_load_imm_memory(
                         let mem_rd = mem_reg_byte & 0x0F; // dest (load) or value (store)
                         let mem_ra = (mem_reg_byte >> 4) & 0x0F; // base address register
 
-                        // Fuse if: load_imm's rd == memory op's base register (ra)
-                        // AND the loaded register is not also used as the value in a store
-                        // (i.e., for store_ind: load_rd must be ra, not rd)
                         let base_matches = load_rd == mem_ra;
-
-                        // For load_ind: also check load_rd != mem_rd if load_rd == mem_ra,
-                        // because the direct form loses ra. But we keep mem_rd as the dest,
-                        // so the only constraint is base_matches.
-                        // For store_ind: load_rd == mem_ra is sufficient. If load_rd == mem_rd
-                        // too, the value is the same constant — still valid since the store
-                        // reads mem_rd BEFORE we'd clobber it.
-                        //
-                        // Additional safety: if load_rd is used as BOTH base and value in
-                        // store_ind (mem_ra == mem_rd == load_rd), the direct store still
-                        // reads the value from the register correctly.
                         let is_load = is_load_ind(mem_op);
-                        let safe = if is_load {
-                            // For load_ind: load_rd == mem_ra. If load_rd == mem_rd too,
-                            // the load overwrites the base register — but we don't need
-                            // the base anymore since we're using the direct address.
-                            base_matches
-                        } else {
-                            // For store_ind: load_rd == mem_ra. Must also ensure
-                            // load_rd != mem_rd OR the store doesn't need the original
-                            // register value (it needs the LOADED constant, which is fine).
-                            base_matches
-                        };
+                        let safe = is_load && base_matches && mem_rd == load_rd;
 
                         // Parse memory op's offset
                         let ly = mem_s.saturating_sub(1);
@@ -1008,13 +985,13 @@ mod tests {
 
     #[test]
     fn test_fuse_load_imm_load_ind() {
-        // load_imm φ[3], 0x100; load_ind_u32 φ[2], φ[3], 4
-        // → NOP; load_u32 φ[2], 0x104
+        // load_imm φ[3], 0x100; load_ind_u32 φ[3], φ[3], 4
+        // → NOP; load_u32 φ[3], 0x104. The load overwrites its base.
         // load_ind_u32 format: [128, rd|(ra<<4), offset_bytes]
-        // rd=2 (dest), ra=3 (base). reg byte = 2 | (3<<4) = 0x32.
+        // rd=3 (dest), ra=3 (base). reg byte = 3 | (3<<4) = 0x33.
         let mut code = vec![
             51, 3, 0, 1, // load_imm rd=3, imm=0x100 (skip=2: reg+2 imm bytes)
-            128, 0x32, 4, 0, 0, 0, // load_ind_u32 rd=2, ra=3, offset=4
+            128, 0x33, 4, 0, 0, 0, // load_ind_u32 rd=3, ra=3, offset=4
         ];
         let mut bitmask = vec![1, 0, 0, 0, 1, 0, 0, 0, 0, 0];
 
@@ -1023,10 +1000,28 @@ mod tests {
         // load_imm is NOP'd (bitmask[0]=0), memory op rewritten in-place
         assert_eq!(bitmask[0], 0, "load_imm should be NOP'd");
         assert_eq!(code[4], 56, "load_ind_u32(128) → load_u32(56)");
-        assert_eq!(code[5], 2, "dest register preserved");
+        assert_eq!(code[5], 3, "dest register preserved");
         // Combined address: 0x100 + 4 = 0x104
         let addr = u32::from_le_bytes([code[6], code[7], code[8], code[9]]);
         assert_eq!(addr, 0x104);
+    }
+
+    #[test]
+    fn test_does_not_fuse_memory_when_base_survives() {
+        for (memory, what) in [(128, "load"), (123, "store")] {
+            // The load writes φ[2], and the store writes memory; neither
+            // overwrites φ[3]. A later memory operation may reuse that base.
+            let original = vec![
+                51, 3, 0, 1, // load_imm φ[3], 0x100
+                memory, 0x32, 4, 0, 0, 0, // memory φ[2], [φ[3] + 4]
+            ];
+            let mut code = original.clone();
+            let mut bitmask = vec![1, 0, 0, 0, 1, 0, 0, 0, 0, 0];
+
+            let fused = peephole_fuse_load_imm_memory(&mut code, &mut bitmask, &[]);
+            assert_eq!(fused, 0, "{what} must preserve a reusable base");
+            assert_eq!(code, original);
+        }
     }
 
     // === parse_signed_imm tests ===
