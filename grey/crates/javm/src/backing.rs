@@ -166,6 +166,18 @@ impl BackingStore {
         if data.is_empty() {
             return true;
         }
+        let Some(start) = (backing_offset as usize).checked_mul(PVM_PAGE_SIZE as usize) else {
+            return false;
+        };
+        let Some(end) = start.checked_add(data.len()) else {
+            return false;
+        };
+        let Some(capacity) = (self.total_pages as usize).checked_mul(PVM_PAGE_SIZE as usize) else {
+            return false;
+        };
+        if end > capacity {
+            return false;
+        }
         let offset = backing_offset as libc::off_t * PVM_PAGE_SIZE as libc::off_t;
         let len = data.len();
         // SAFETY: fd is valid, offset is within ftruncate'd range (caller ensures).
@@ -546,5 +558,13 @@ mod tests {
             assert!(BackingStore::unmap_pages(win_a.base(), 0, 1));
             assert!(BackingStore::unmap_pages(win_b.base(), 3, 1));
         }
+    }
+
+    #[test]
+    fn test_write_init_data_rejects_backing_overflow() {
+        #[allow(unused_mut)]
+        let mut store = BackingStore::new(2).expect("BackingStore::new failed");
+        let oversized = vec![0xA5; PVM_PAGE_SIZE as usize + 1];
+        assert!(!store.write_init_data(1, &oversized));
     }
 }

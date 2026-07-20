@@ -478,7 +478,12 @@ impl InvocationKernel {
             if let Some(entry) = args_cap_entry {
                 args_base = entry.base_page as u64 * crate::PVM_PAGE_SIZE as u64;
                 if let Some(Cap::Data(d)) = cap_table.get(IPC_SLOT) {
-                    kernel.backing.write_init_data(d.backing_offset, _args);
+                    let capacity = d.page_count as usize * crate::PVM_PAGE_SIZE as usize;
+                    if _args.len() > capacity
+                        || !kernel.backing.write_init_data(d.backing_offset, _args)
+                    {
+                        return Err(KernelError::MemoryError);
+                    }
                 }
             }
         }
@@ -3738,6 +3743,20 @@ mod tests {
             });
         }
         build_blob(memory_pages, 64, 4096, &caps, &data_section)
+    }
+
+    #[test]
+    fn invocation_rejects_arguments_larger_than_ipc_cap() {
+        let code = [0u8];
+        let bitmask = [1u8];
+        let blob = make_blob_with_data_caps(&code, &bitmask, &[], &[(0, 1, 1, Access::RW, &[])], 2);
+        let fits = vec![0x5A; crate::PVM_PAGE_SIZE as usize];
+        assert!(InvocationKernel::new(&blob, &fits, 100_000).is_ok());
+        let oversized = vec![0x5A; crate::PVM_PAGE_SIZE as usize + 1];
+        assert!(matches!(
+            InvocationKernel::new(&blob, &oversized, 100_000),
+            Err(KernelError::MemoryError)
+        ));
     }
 
     fn run_mem_blob(
