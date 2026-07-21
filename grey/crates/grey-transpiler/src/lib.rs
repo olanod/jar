@@ -54,6 +54,15 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
     linker::link_elf(elf_data)
 }
 
+/// Link an ELF with an explicitly sized standard slot-0 argument DATA
+/// capability. No protocol capability or non-JAR execution path is added.
+pub fn link_elf_with_argument_pages(
+    elf_data: &[u8],
+    argument_pages: u32,
+) -> Result<Vec<u8>, TranspileError> {
+    linker::link_elf_with_argument_pages(elf_data, argument_pages)
+}
+
 /// Link a RISC-V rv64em ELF binary into a GP standard-program (SPI) blob —
 /// the format `javm::spi::parse_standard_program` consumes and
 /// `javm::refine::execute_with` runs. Same translation as [`link_elf`],

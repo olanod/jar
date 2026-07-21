@@ -123,8 +123,22 @@ struct TranspiledElf {
 
 /// Transpile an rv64em ELF into a JAR capability manifest PVM blob.
 pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
+    link_elf_with_argument_pages(elf_data, 1)
+}
+
+/// Transpile an ELF with an explicitly sized ordinary slot-0 argument DATA
+/// capability. The default [`link_elf`] remains one page.
+pub fn link_elf_with_argument_pages(
+    elf_data: &[u8],
+    argument_pages: u32,
+) -> Result<Vec<u8>, TranspileError> {
+    if argument_pages == 0 {
+        return Err(TranspileError::InvalidSection(
+            "argument DATA capability must contain at least one page".into(),
+        ));
+    }
     let t = transpile_elf(elf_data)?;
-    Ok(emitter::build_service_program(
+    Ok(emitter::build_service_program_with_args_pages(
         &t.code,
         &t.bitmask,
         &t.jump_table,
@@ -133,6 +147,7 @@ pub fn link_elf(elf_data: &[u8]) -> Result<Vec<u8>, TranspileError> {
         t.stack_size / 4096,
         t.heap_pages,
         t.heap_pages,
+        argument_pages,
     ))
 }
 

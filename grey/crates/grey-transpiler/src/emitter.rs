@@ -125,6 +125,38 @@ pub fn build_service_program(
     heap_pages: u32,
     memory_pages: u32,
 ) -> Vec<u8> {
+    build_service_program_with_args_pages(
+        code,
+        bitmask,
+        jump_table,
+        ro_data,
+        rw_data,
+        stack_pages,
+        heap_pages,
+        memory_pages,
+        1,
+    )
+}
+
+/// Build a JAR capability manifest with an explicitly sized ordinary slot-0
+/// argument DATA capability. This does not add protocol capabilities or
+/// change execution semantics.
+#[allow(clippy::too_many_arguments)]
+pub fn build_service_program_with_args_pages(
+    code: &[u8],
+    bitmask: &[u8],
+    jump_table: &[u32],
+    ro_data: &[u8],
+    rw_data: &[u8],
+    stack_pages: u32,
+    heap_pages: u32,
+    memory_pages: u32,
+    argument_pages: u32,
+) -> Vec<u8> {
+    assert!(
+        argument_pages > 0,
+        "argument DATA capability cannot be empty"
+    );
     use javm::cap::Access;
     use javm::program::{CapEntryType, CapManifestEntry, build_blob};
 
@@ -237,12 +269,12 @@ pub fn build_service_program(
         cap_index: 0x00,
         cap_type: CapEntryType::Data,
         base_page: next_page,
-        page_count: 1, // 4KB for args
+        page_count: argument_pages,
         init_access: Access::RW,
         data_offset: 0,
         data_len: 0,
     });
-    next_page += 1;
+    next_page += argument_pages;
 
     let total = memory_pages.max(next_page + heap_pages);
     // Host-owned SP (GP standard init): the stack DATA cap occupies pages
@@ -273,6 +305,26 @@ mod tests {
             "blob should be loadable: {:?}",
             kernel.err()
         );
+    }
+
+    #[test]
+    fn explicit_argument_pages_change_only_the_standard_data_window() {
+        let code = [0u8];
+        let bitmask = [1u8];
+        let default = build_service_program(&code, &bitmask, &[], &[], &[], 1, 0, 4);
+        let expanded =
+            build_service_program_with_args_pages(&code, &bitmask, &[], &[], &[], 1, 0, 4, 32);
+        let argument_pages = |blob: &[u8]| {
+            javm::program::parse_blob(blob)
+                .unwrap()
+                .caps
+                .iter()
+                .find(|cap| cap.cap_index == 0)
+                .unwrap()
+                .page_count
+        };
+        assert_eq!(argument_pages(&default), 1);
+        assert_eq!(argument_pages(&expanded), 32);
     }
 
     #[test]
