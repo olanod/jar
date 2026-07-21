@@ -176,6 +176,33 @@ pub enum KernelResult {
     },
 }
 
+/// One canonical instruction observed while the invocation kernel is running.
+///
+/// The metadata identifies the exact nested machine and canonical program that
+/// executed the instruction. `instruction` exposes immutable pre/post-step PVM
+/// state; capability dispatch and scheduler state remain owned by the kernel.
+pub struct KernelInstructionObservation<'a> {
+    /// VM arena index active for this instruction.
+    pub active_vm: u16,
+    /// Invocation-local CODE capability identifier.
+    pub code_cap_id: u16,
+    /// Blake2b-256 commitment to the canonical CODE sub-blob.
+    pub program_hash: [u8; 32],
+    /// Number of suspended callers below the active VM.
+    pub call_depth: usize,
+    /// Canonical interpreter instruction observation.
+    pub instruction: crate::interpreter::InstructionObservation<'a>,
+}
+
+/// Failure to start an observed kernel run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum KernelObservationError {
+    /// Instruction observations are defined by the canonical interpreter step
+    /// boundary. Construct or restore the invocation with `ForceInterpreter`.
+    #[error("kernel instruction observation requires the interpreter backend")]
+    InterpreterRequired,
+}
+
 /// The invocation kernel.
 pub struct InvocationKernel {
     /// Physical memory pool.
@@ -2478,8 +2505,15 @@ impl InvocationKernel {
     /// 4GB window (which would SIGSEGV on unmapped pages without the recompiler's
     /// signal handler). Mapped DATA cap pages are copied in before execution and
     /// written back after.
-    fn run_interpreter_segment(&mut self, code_cap_id: usize) -> (u32, u32) {
+    fn run_interpreter_segment(
+        &mut self,
+        code_cap_id: usize,
+        observer: Option<&mut dyn for<'a> FnMut(KernelInstructionObservation<'a>)>,
+    ) -> (u32, u32) {
         let code_cap = &self.code_caps[code_cap_id];
+        let active_vm = self.active_vm;
+        let program_hash = code_cap.program_hash;
+        let call_depth = self.call_stack.len();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         let prog = match &code_cap.compiled {
             crate::backend::CompiledProgram::Interpreter(p) => p,
@@ -2566,7 +2600,18 @@ impl InvocationKernel {
         interp.isa_mode = self.isa_mode;
         interp.set_page_perms(page_perms);
 
-        let (exit, _gas_used) = interp.run();
+        let (exit, _gas_used) = match observer {
+            Some(observer) => interp.run_observed(|instruction| {
+                observer(KernelInstructionObservation {
+                    active_vm,
+                    code_cap_id: code_cap_id as u16,
+                    program_hash,
+                    call_depth,
+                    instruction,
+                });
+            }),
+            None => interp.run(),
+        };
 
         // Write back modified pages to the CODE window (Linux) / backing store (non-Linux)
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -2661,20 +2706,55 @@ impl InvocationKernel {
     }
 
     /// Execute one segment of the active VM using the appropriate backend.
-    fn run_one_segment(&mut self, code_cap_id: usize) -> (u32, u32) {
+    fn run_one_segment(
+        &mut self,
+        code_cap_id: usize,
+        observer: Option<&mut dyn for<'a> FnMut(KernelInstructionObservation<'a>)>,
+    ) -> (u32, u32) {
         match &self.code_caps[code_cap_id].compiled {
             #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
             crate::backend::CompiledProgram::Recompiler(_) => {
+                debug_assert!(observer.is_none());
                 self.run_recompiler_segment(code_cap_id)
             }
             crate::backend::CompiledProgram::Interpreter(_) => {
-                self.run_interpreter_segment(code_cap_id)
+                self.run_interpreter_segment(code_cap_id, observer)
             }
         }
     }
 
     /// Run the kernel until it needs host interaction or terminates.
     pub fn run(&mut self) -> KernelResult {
+        self.run_inner(None)
+    }
+
+    /// Run the complete nested invocation while observing canonical PVM steps.
+    ///
+    /// The callback follows VM switches caused by CALL/REPLY and is invoked for
+    /// every actor and root-service instruction until the next host-visible
+    /// [`KernelResult`]. It cannot mutate either the interpreter or scheduler.
+    /// Use [`crate::backend::PvmBackend::ForceInterpreter`] when constructing or
+    /// restoring the invocation; the recompiler remains available for normal
+    /// execution and is checked for semantic parity independently.
+    pub fn run_observed(
+        &mut self,
+        mut observer: impl for<'a> FnMut(KernelInstructionObservation<'a>),
+    ) -> Result<KernelResult, KernelObservationError> {
+        if self.code_caps.iter().any(|cap| {
+            !matches!(
+                &cap.compiled,
+                crate::backend::CompiledProgram::Interpreter(_)
+            )
+        }) {
+            return Err(KernelObservationError::InterpreterRequired);
+        }
+        Ok(self.run_inner(Some(&mut observer)))
+    }
+
+    fn run_inner(
+        &mut self,
+        mut observer: Option<&mut dyn for<'a> FnMut(KernelInstructionObservation<'a>)>,
+    ) -> KernelResult {
         assert!(
             self.pending_protocol_call.is_none(),
             "resume_protocol_call must inject the pending result before run"
@@ -2689,7 +2769,10 @@ impl InvocationKernel {
             // Execute via the compiled backend.
             // After a ProtocolCall, recompiler_resume_cap is set so we can resume
             // with a cheap JitContext update instead of a full rebuild.
-            let (exit_reason, exit_arg) = if let Some(ccid) = self.recompiler_resume_cap.take() {
+            let (exit_reason, exit_arg) = if let Some(observer) = observer.as_mut() {
+                debug_assert!(self.recompiler_resume_cap.is_none());
+                self.run_one_segment(code_cap_id, Some(&mut **observer))
+            } else if let Some(ccid) = self.recompiler_resume_cap.take() {
                 // Fast path: resume recompiler after protocol call.
                 // Only updates regs/gas/pc in the existing JitContext.
                 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -2699,10 +2782,10 @@ impl InvocationKernel {
                 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
                 {
                     let _ = ccid;
-                    self.run_one_segment(code_cap_id)
+                    self.run_one_segment(code_cap_id, None)
                 }
             } else {
-                self.run_one_segment(code_cap_id)
+                self.run_one_segment(code_cap_id, None)
             };
 
             // Dispatch on the exit reason (shared for both backends).
@@ -4523,6 +4606,98 @@ mod tests {
         bitmask[0] = 1;
         bitmask[2] = 1;
         make_blob_with(&code, &bitmask, &[])
+    }
+
+    #[test]
+    fn observed_kernel_follows_nested_vm_switches_without_changing_state() {
+        let root = call_dormant_then_halt_blob(100);
+        let actor = continuation_blob(true);
+        let make_kernel = || {
+            let programs = [DormantProgram {
+                blob: actor.as_slice(),
+                handle_slot: 100,
+            }];
+            let mut kernel = InvocationKernel::new_with_dormant_programs(
+                &root,
+                &[],
+                1_000_000,
+                &programs,
+                crate::backend::PvmBackend::ForceInterpreter,
+            )
+            .unwrap();
+            kernel
+                .vm_arena
+                .vm_mut(1)
+                .cap_table
+                .set(7, Cap::Protocol(ProtocolCap { id: 7 }));
+            kernel
+                .vm_arena
+                .vm_mut(0)
+                .transition(VmState::Running)
+                .unwrap();
+            kernel
+        };
+
+        let mut baseline = make_kernel();
+        assert!(matches!(
+            baseline.run(),
+            KernelResult::ProtocolCall { slot: 7 }
+        ));
+        let expected = baseline.snapshot().unwrap();
+
+        let mut observed = make_kernel();
+        let root_hash = observed.code_caps[0].program_hash;
+        let actor_hash = observed.code_caps[1].program_hash;
+        let mut events = Vec::new();
+        let result = observed
+            .run_observed(|event| {
+                events.push((
+                    event.active_vm,
+                    event.code_cap_id,
+                    event.program_hash,
+                    event.call_depth,
+                    event.instruction.pc_before,
+                    event.instruction.exit.cloned(),
+                ));
+            })
+            .unwrap();
+
+        assert!(matches!(result, KernelResult::ProtocolCall { slot: 7 }));
+        assert_eq!(observed.snapshot().unwrap(), expected);
+        let first_child = events
+            .iter()
+            .position(|event| event.0 == 1)
+            .expect("child instructions must be observed");
+        assert!(
+            events[..first_child].iter().all(|event| {
+                event.0 == 0 && event.1 == 0 && event.2 == root_hash && event.3 == 0
+            })
+        );
+        assert!(events[first_child..].iter().all(|event| {
+            event.0 == 1 && event.1 == 1 && event.2 == actor_hash && event.3 == 1
+        }));
+        assert!(matches!(
+            events.last(),
+            Some((1, 1, _, 1, 10, Some(crate::ExitReason::HostCall(7))))
+        ));
+    }
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[test]
+    fn observed_kernel_rejects_the_recompiler_backend() {
+        let blob = continuation_blob(false);
+        let mut kernel = InvocationKernel::new_with_backend(
+            &blob,
+            &[],
+            100_000,
+            crate::backend::PvmBackend::ForceRecompiler,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            kernel.run_observed(|_| {}),
+            Err(KernelObservationError::InterpreterRequired)
+        ));
     }
 
     fn snapshot_dormant_program_call(
