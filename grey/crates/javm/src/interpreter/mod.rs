@@ -106,6 +106,22 @@ pub struct Interpreter {
     pub(crate) pc_to_idx: Vec<u32>,
 }
 
+/// Read-only observation of one canonical interpreter instruction.
+///
+/// The `machine_after` reference exposes the exact post-step registers, gas,
+/// PC, heap bounds, and memory without allowing an observer to perturb
+/// execution. Embedders can use this to construct diagnostics or proof
+/// witnesses while the interpreter remains the sole execution semantics.
+pub struct InstructionObservation<'a> {
+    pub pc_before: u32,
+    pub opcode_byte: u8,
+    pub registers_before: [u64; crate::PVM_REGISTER_COUNT],
+    pub gas_before: crate::Gas,
+    pub need_gas_charge_before: bool,
+    pub exit: Option<&'a crate::ExitReason>,
+    pub machine_after: &'a Interpreter,
+}
+
 impl Interpreter {
     /// Create a new PVM from parsed program components, with flat memory
     /// over `flat_mem` (zero-padded to whole pages).
@@ -2412,6 +2428,39 @@ impl Interpreter {
         }
     }
 
+    /// Run to the next exit while observing every canonical instruction.
+    ///
+    /// This follows [`Self::step`] exactly and invokes `observer` only after
+    /// the step has completed. The observer receives immutable state and
+    /// therefore cannot alter execution. The return value has the same shape
+    /// as [`Self::run`].
+    pub fn run_observed(
+        &mut self,
+        mut observer: impl FnMut(InstructionObservation<'_>),
+    ) -> (ExitReason, Gas) {
+        let initial_gas = self.gas;
+        loop {
+            let pc_before = self.pc;
+            let opcode_byte = self.code.get(pc_before as usize).copied().unwrap_or(0);
+            let registers_before = self.registers;
+            let gas_before = self.gas;
+            let need_gas_charge_before = self.need_gas_charge;
+            let exit = self.step();
+            observer(InstructionObservation {
+                pc_before,
+                opcode_byte,
+                registers_before,
+                gas_before,
+                need_gas_charge_before,
+                exit: exit.as_ref(),
+                machine_after: self,
+            });
+            if let Some(exit) = exit {
+                return (exit, initial_gas.saturating_sub(self.gas));
+            }
+        }
+    }
+
     /// Slow run path for tracing/stepping mode — uses step() with per-instruction gas.
     fn run_stepping(&mut self, initial_gas: Gas) -> (ExitReason, Gas) {
         loop {
@@ -3382,6 +3431,48 @@ mod tests {
             gas_used_step, gas_used_run,
             "step() and run() must consume the same gas"
         );
+    }
+
+    #[test]
+    fn observed_run_is_semantically_identical_and_reports_each_step() {
+        // Layout:
+        //   PC 0: Fallthrough (1)  — terminator
+        //   PC 1: MoveReg (100)    — NOT terminator
+        //   PC 3: Trap (0)
+        let code = vec![1, 100, 0x10, 0];
+        let bitmask = vec![1, 1, 0, 1];
+        let mut observed = Interpreter::new(
+            code,
+            bitmask,
+            vec![],
+            [0; 13],
+            Vec::new(),
+            1000,
+            crate::gas_cost::DEFAULT_MEM_CYCLES,
+        );
+        observed.registers[1] = 42;
+        let mut baseline = observed.clone();
+
+        let expected = baseline.run();
+        let mut pcs = Vec::new();
+        let mut saw_exit = false;
+        let actual = observed.run_observed(|event| {
+            pcs.push(event.pc_before);
+            assert_eq!(
+                event.opcode_byte,
+                event.machine_after.code[event.pc_before as usize]
+            );
+            assert!(event.machine_after.gas <= event.gas_before);
+            saw_exit |= event.exit.is_some();
+        });
+
+        assert_eq!(actual, expected);
+        assert_eq!(observed.pc, baseline.pc);
+        assert_eq!(observed.registers, baseline.registers);
+        assert_eq!(observed.gas, baseline.gas);
+        assert_eq!(observed.flat_mem(), baseline.flat_mem());
+        assert_eq!(pcs, vec![0, 1, 3]);
+        assert!(saw_exit);
     }
 
     /// Perf smoke for the flat-memory hot path: a 4-instruction loop with
